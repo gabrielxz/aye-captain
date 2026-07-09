@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>AYE CAPTAIN</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --bg: #06090d;
+      --panel: #0b1118;
+      --line: #1c2a38;
+      --fg: #c8d6e5;
+      --dim: #5c7185;
+      --accent: #4fd1c5;
+      --warn: #f6ad55;
+      --danger: #fc8181;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+      font-size: 13px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ---------- lobby ---------- */
+    #lobby {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+    }
+    #lobby h1 { font-size: 28px; letter-spacing: 8px; color: var(--accent); font-weight: normal; }
+    #lobby .sub { color: var(--dim); margin-bottom: 12px; }
+    #lobby button {
+      background: none; border: 1px solid var(--line); color: var(--fg);
+      font: inherit; padding: 10px 26px; cursor: pointer; min-width: 260px;
+      letter-spacing: 2px;
+    }
+    #lobby button:hover { border-color: var(--accent); color: var(--accent); }
+    #lobby input {
+      background: var(--panel); border: 1px solid var(--line); color: var(--fg);
+      font: inherit; padding: 10px; width: 120px; text-align: center;
+      text-transform: uppercase; letter-spacing: 4px;
+    }
+    #lobby .join-row { display: flex; gap: 8px; }
+    #lobby .join-row button { min-width: 132px; }
+    #lobby-status { color: var(--warn); min-height: 1.2em; }
+
+    /* ---------- game ---------- */
+    #game { flex: 1; display: none; min-height: 0; }
+    #game.active { display: flex; }
+
+    #map-wrap { flex: 1; position: relative; min-width: 0; }
+    #map { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+    #side {
+      width: 380px; display: flex; flex-direction: column;
+      border-left: 1px solid var(--line); background: var(--panel);
+    }
+
+    #hud {
+      border-bottom: 1px solid var(--line); padding: 8px 10px;
+      display: grid; grid-template-columns: 1fr 1fr; gap: 3px 14px;
+      color: var(--dim); line-height: 1.5;
+    }
+    #hud .v { color: var(--fg); }
+    #hud .full { grid-column: 1 / -1; }
+
+    #transcript {
+      flex: 1; overflow-y: auto; padding: 10px; line-height: 1.5;
+      scrollbar-width: thin; scrollbar-color: var(--line) transparent;
+    }
+    #transcript .entry { margin-bottom: 4px; word-wrap: break-word; }
+    #transcript .who { color: var(--dim); }
+    #transcript .capt .who { color: var(--accent); }
+    #transcript .xo .who { color: var(--warn); }
+    #transcript .sys { color: var(--dim); font-style: italic; }
+    #transcript .sys.alert { color: var(--danger); font-style: normal; }
+
+    #cmd-row { border-top: 1px solid var(--line); display: flex; align-items: center; }
+    #cmd-prompt { padding: 10px 0 10px 10px; color: var(--accent); }
+    #cmd {
+      flex: 1; background: none; border: none; outline: none;
+      color: var(--fg); font: inherit; padding: 10px;
+    }
+    #mic { display: none; padding-right: 10px; color: var(--danger); letter-spacing: 1px; }
+    #mic.listening { display: block; animation: mic-blink 1.2s step-start infinite; }
+    #mic.transcribing { display: block; color: var(--dim); }
+    @keyframes mic-blink { 50% { opacity: 0.35; } }
+
+    #banner {
+      position: absolute; inset: 0; display: none;
+      flex-direction: column; align-items: center; justify-content: center;
+      background: rgba(6, 9, 13, 0.85); gap: 14px; text-align: center;
+    }
+    #banner.active { display: flex; }
+    #banner h2 { font-size: 26px; letter-spacing: 6px; font-weight: normal; }
+    #banner .detail { color: var(--dim); }
+    #banner button {
+      background: none; border: 1px solid var(--line); color: var(--fg);
+      font: inherit; padding: 8px 22px; cursor: pointer; letter-spacing: 2px;
+    }
+    #banner button:hover { border-color: var(--accent); color: var(--accent); }
+  </style>
+</head>
+<body>
+  <div id="lobby">
+    <h1>AYE CAPTAIN</h1>
+    <div class="sub">voice-commanded space combat &mdash; type or hold space to talk</div>
+    <button id="btn-create">CREATE MATCH</button>
+    <div class="join-row">
+      <input id="join-code" maxlength="4" placeholder="CODE" autocomplete="off" />
+      <button id="btn-join">JOIN</button>
+    </div>
+    <button id="btn-practice">PRACTICE</button>
+    <div id="lobby-status"></div>
+  </div>
+
+  <div id="game">
+    <div id="map-wrap">
+      <canvas id="map"></canvas>
+      <div id="banner">
+        <h2 id="banner-title"></h2>
+        <div class="detail" id="banner-detail"></div>
+        <button id="btn-rematch">REMATCH</button>
+      </div>
+    </div>
+    <div id="side">
+      <div id="hud"></div>
+      <div id="transcript"></div>
+      <div id="cmd-row">
+        <span id="cmd-prompt">&gt;</span>
+        <input id="cmd" autocomplete="off" spellcheck="false"
+               placeholder="orders, captain? — hold SPACE to talk" />
+        <span id="mic">&#9679; REC</span>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>
