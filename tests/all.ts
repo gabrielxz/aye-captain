@@ -4,6 +4,7 @@ import "./physics.test.js";
 import "./subtick.test.js";
 import "./terrain.test.js";
 import "./torpedo.test.js";
+import "./pdc.test.js";
 import "./fog.test.js";
 import "./translator.test.js";
 import "./weapons.test.js";

@@ -315,13 +315,12 @@ export class Match {
     const data = this.sim.queryData(id, topic);
     // damage_report is a fixed template — no LLM call, instant answer
     if (topic === "damage_report") {
-      const laser = Number(data.laser_ready_in_s) > 0 ? `laser ready in ${data.laser_ready_in_s}s` : "laser ready";
       this.sendTranscript(
         id,
         "xo",
         `Hull ${data.hull} of ${data.hull_max}. Propellant ${data.propellant}. ` +
           `${String(data.tube_summary).charAt(0).toUpperCase()}${String(data.tube_summary).slice(1)}. ` +
-          `${data.missiles_aboard} missiles aboard, ${data.decoys} decoys, ${laser}.`
+          `${data.missiles_aboard} missiles aboard, ${data.decoys} decoys, PDC ${data.pdc_posture} with ${data.pdc_ammo_s}s of fire.`
       );
       return;
     }

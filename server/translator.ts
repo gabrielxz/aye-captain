@@ -43,7 +43,7 @@ function buildSystemPrompt(): string {
 - Ships drift (Newtonian): rotating does not change velocity. Braking = flip 180 and burn. Turning is free (reaction wheels).
 - Propellant: tank ${C.PROPELLANT_MAX}, burns ${C.PROPELLANT_BURN_AT_FULL}/s at 100% thrust (linear). Regenerates ${C.PROPELLANT_REGEN_PER_S}/s ONLY inside the zone with throttle set <= ${C.REGEN_MAX_THRUST_PCT}%. At zero: no thrust output (setting remembered), ship coasts; turning and weapons still work.
 - Detection: contact tiers. FAINT = approximate position only, no vector, cannot lock. TRACK = true position + velocity, lockable. ID = full detail. Detection range = ${C.SENSOR_BASE_M / 1000} km x (target signature / 100), line of sight permitting: a hard-burning ship shows ~181 km out, a dark drifter ~16 km. Rocks and dust clouds block sensors, locks, and seekers. Region radius ${C.REGION_RADIUS_M / 1000} km.
-- Laser: range ${C.LASER_RANGE_M / 1000} km, ${C.LASER_BEAM_WIDTH_DEG} deg half-angle off boresight, ${C.LASER_COOLDOWN_S}s cooldown, ${C.LASER_DAMAGE} damage; instantly kills missiles/decoys. Fires along current facing.
+- PDCs (point defense): AUTOMATED, commanded by posture via set_pdc. While FREE they engage inbound missiles within ${C.PDC_RANGE_M / 1000} km (${Math.round(C.PDC_KILL_PROB_PER_S * 100)}%/s kill chance each) and enemy ships within ${C.PDC_SHIP_RANGE_M / 1000} km (${C.PDC_SHIP_DPS} hull/s), line of sight permitting. HOLD silences them (ammo conservation / staying dark). Ammo: ${C.PDC_AMMO_S}s of cumulative fire, NO regeneration. Firing spikes our signature. There is NO laser on this ship — it was traded for the PDC mounts; if the captain calls for the laser, say so in character and offer the PDCs.
 - Missiles: ${C.MISSILE_MAGAZINE} aboard total, ${C.TUBE_COUNT} launch tubes (auto-reload ${C.TUBE_RELOAD_S}s each from reserves). FIRING REQUIRES A LOCK: automatic when we hold a TRACK-or-better contact within ${C.LOCK_RANGE_M / 1000} km and ${C.LOCK_CONE_HALF_ANGLE_DEG} deg of our nose for ${C.LOCK_TIME_S}s continuous (a faint contact cannot be locked). Missiles accelerate at ${C.MISSILE_ACCEL_MPS2} m/s^2 to ${C.MISSILE_MAX_SPEED_MPS} m/s, seeker locks strongest signature in a ${C.MISSILE_ACQ_CONE_DEG} deg cone after ${C.MISSILE_LAUNCH_DELAY_TICKS}s, ${C.MISSILE_DAMAGE} damage, proximity fuse ${C.MISSILE_PROX_FUSE_M} m. Firing spikes our signature hugely for ${C.SIG_SPIKE_LAUNCH_S}s — the enemy will likely see the launch flash.
 - Being painted: when the ENEMY is acquiring/holding a lock on us, we know (and can react via the being_painted metric).
 - Decoys: ${C.DECOY_SUPPLY} carried, hot signature for ${C.DECOY_LIFETIME_S}s, attracts missile seekers.
@@ -99,6 +99,7 @@ const TOPICS = [
   "enemy",
   "own_ship",
   "weapons",
+  "pdc",
   "propellant",
   "tubes",
   "damage_report",
@@ -184,9 +185,12 @@ export function validateCommand(raw: unknown, nested = false): Command | null {
       }
       return null;
     }
-    case "fire_laser":
     case "deploy_decoy":
       return out({});
+    case "set_pdc": {
+      if (p.posture !== "free" && p.posture !== "hold") return null;
+      return out({ posture: p.posture });
+    }
     case "fire_missile": {
       if (p.tubes === undefined) return out({});
       const tubes = validTubesParam(p.tubes);

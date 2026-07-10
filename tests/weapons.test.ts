@@ -12,38 +12,42 @@ const grantLock = (ship: Ship) => {
   ship.lock = { progress: C.LOCK_TIME_S, has: true, grace: C.LOCK_GRACE_S };
 };
 
-// 1. laser: hit, damage, cooldown reject, miss off-boresight
+// 1. PDCs at knife range: mutual mauling at 5 hull/s each way; 'hold' silences
 {
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 0);
-  const b = sim.addShip("B", 0, 4000, 180, true); // dead ahead, in range
-  fire(sim, "A", "fire_laser");
-  let ev = sim.tick();
-  assert(b.hull === C.DRONE_HULL_POINTS - C.LASER_DAMAGE, `laser hit: drone hull ${b.hull}`);
-  assert(ev.some(e => e.kind === "notice" && /Direct hit/.test((e as any).text)), "hit notice to attacker");
-  fire(sim, "A", "fire_laser");
-  ev = sim.tick();
-  assert(ev.some(e => e.kind === "reject" && /recharging/.test((e as any).reason)), "cooldown reject");
-  // wait out cooldown, then fire while aiming away
+  const b = sim.addShip("B", 0, 2500, 180, true); // inside PDC_SHIP_RANGE_M
   for (let i = 0; i < 4; i++) sim.tick();
-  a.facing = 90; a.goal = null;
-  const hullBefore = b.hull;
-  fire(sim, "A", "fire_laser");
-  sim.tick();
-  assert(b.hull === hullBefore, "off-boresight shot misses");
+  assert(
+    Math.abs(b.hull - (C.DRONE_HULL_POINTS - 4 * C.PDC_SHIP_DPS)) < 0.5,
+    `our PDCs chew the drone at ${C.PDC_SHIP_DPS}/s (hull ${b.hull.toFixed(1)})`
+  );
+  assert(
+    Math.abs(a.hull - (C.HULL_POINTS - 4 * C.PDC_SHIP_DPS)) < 0.5,
+    `mutual mauling: their PDCs chew us too (hull ${a.hull.toFixed(1)})`
+  );
+  assert(a.pdcAmmoS < C.PDC_AMMO_S, "firing drains ammo");
+
+  const sim2 = new Sim();
+  const a2 = sim2.addShip("A", 0, 0, 0);
+  const b2 = sim2.addShip("B", 0, 2500, 180, true);
+  sim2.enqueue("A", [{verb: "set_pdc", params: {posture: "hold"}} as any]);
+  b2.pdcPosture = "hold";
+  for (let i = 0; i < 4; i++) sim2.tick();
+  assert(b2.hull === C.DRONE_HULL_POINTS && a2.hull === C.HULL_POINTS, "'hold' silences the mounts");
 }
 
-// 2. laser: friendly decoy transparent, enemy missile behind it gets hit
+// 2. PDCs never target decoys; out-of-range ships are safe; sig spikes while firing
 {
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 0);
-  const b = sim.addShip("B", 0, 4500, 180, true);
-  // own decoy directly in the beam path, closer than the drone
-  (sim as any).decoys.push({id: 900, owner: "A", x: 0, y: 2000, vx: 0, vy: 0, age: 0});
-  fire(sim, "A", "fire_laser");
+  const b = sim.addShip("B", 0, 5000, 180, true); // outside PDC_SHIP_RANGE_M
+  (sim as any).decoys.push({id: 900, owner: "B", x: 0, y: 1000, vx: 0, vy: 0, age: 0});
+  const ammo = a.pdcAmmoS;
   sim.tick();
-  assert(b.hull === C.DRONE_HULL_POINTS - C.LASER_DAMAGE, "friendly decoy transparent, ship behind hit");
-  assert((sim as any).decoys.length === 1, "own decoy survives own laser");
+  assert((sim as any).decoys.length === 1, "PDCs ignore decoys");
+  assert(a.pdcAmmoS === ammo, "no targets in envelope => no ammo spent");
+  assert(sim.signatureOf(a) === C.SIG_BASE, "no PDC signature spike while silent");
 }
 
 // 3. missile: launch delay, seeker, accelerating kill of the drone + gameover
@@ -51,6 +55,7 @@ const grantLock = (ship: Ship) => {
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 0);
   const b = sim.addShip("B", 500, 6000, 90, true); // ahead, will drift east on its circle
+  a.pdcPosture = "hold"; b.pdcPosture = "hold"; // this test is about missiles, not point defense
   grantLock(a);
   let dead = false;
   let winner: string | null = null;
@@ -72,6 +77,7 @@ const grantLock = (ship: Ship) => {
   const a = sim.addShip("A", 0, 0, 0);
   const b = sim.addShip("B", 0, 5000, 0, false);
   b.thrust = 0; // quiet: sig 10 < decoy 150
+  a.pdcPosture = "hold"; b.pdcPosture = "hold";
   grantLock(a);
   fire(sim, "A", "fire_missile");
   sim.tick(); sim.tick(); sim.tick(); // past launch delay, locked on ship
@@ -86,6 +92,7 @@ const grantLock = (ship: Ship) => {
   const a2 = sim2.addShip("A", 0, 0, 0);
   const b2 = sim2.addShip("B", 0, 5000, 0, false);
   b2.thrust = 100; // sig 110 — still below the decoy's 150
+  a2.pdcPosture = "hold"; b2.pdcPosture = "hold";
   grantLock(a2);
   sim2.enqueue("A", [{verb: "fire_missile", params: {}} as any]);
   sim2.tick(); sim2.tick(); sim2.tick();
@@ -101,6 +108,7 @@ const grantLock = (ship: Ship) => {
   const a = sim.addShip("A", 0, 0, 0);
   const b = sim.addShip("B", 0, 3000, 180, false);
   b.vx = 0; b.vy = -280; b.thrust = 100; // charging at us fast, head-on
+  a.pdcPosture = "hold"; b.pdcPosture = "hold";
   grantLock(a);
   fire(sim, "A", "fire_missile");
   let hit = false;

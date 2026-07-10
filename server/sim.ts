@@ -26,7 +26,7 @@ export interface Command {
   verb:
     | "set_thrust"
     | "set_heading"
-    | "fire_laser"
+    | "set_pdc"
     | "fire_missile"
     | "reload_tubes"
     | "deploy_decoy"
@@ -35,6 +35,8 @@ export interface Command {
   params: Record<string, unknown>;
   acknowledgement?: string;
 }
+
+export type PdcPosture = "free" | "hold";
 
 // Goal heading as stored: ALL orders resolve to an absolute bearing at apply
 // time — target orders snapshot the target's bearing once (no continuous
@@ -87,8 +89,14 @@ export interface Ship {
   hull: number;
   reserve: number; // missiles in the magazine beyond what's loaded in tubes
   tubes: Tube[];
-  decoys: number;
-  laserCooldown: number; // seconds until ready (0 = ready)
+  decoys: number; // supply remaining
+  // Point-defense cannon: an automated system commanded by posture. While
+  // FREE it engages inbound missiles and knife-range ships on its own.
+  pdcPosture: PdcPosture;
+  pdcAmmoS: number; // seconds of cumulative fire remaining; no regeneration
+  pdcAmmoTier: number; // lowest ammo warning announced (100/50/25/10/0 %)
+  sigSpikePdc: number; // seconds of +SIG_SPIKE_PDC remaining after firing
+  underPdcFire: boolean; // edge flag: were we taking PDC hull fire last tick
   propellant: number; // 0..PROPELLANT_MAX (drones exempt: stays full)
   propellantTier: number; // lowest warning tier announced (100/50/25/10/0)
   lock: LockState; // my lock on the enemy
@@ -159,7 +167,7 @@ export interface Decoy {
 
 // Transient render effects, cleared after each broadcast.
 export type Fx =
-  | { type: "laser"; owner: ShipId; x1: number; y1: number; x2: number; y2: number; hit: boolean }
+  | { type: "pdc"; owner: ShipId; x1: number; y1: number; x2: number; y2: number }
   | { type: "boom"; x: number; y: number };
 
 export type SimEvent =
@@ -268,7 +276,11 @@ export class Sim {
       reserve: Math.max(0, C.MISSILE_MAGAZINE - C.TUBE_COUNT),
       tubes: Array.from({ length: C.TUBE_COUNT }, () => ({ loaded: true, reload: 0 })),
       decoys: C.DECOY_SUPPLY,
-      laserCooldown: 0,
+      pdcPosture: "free", // default at spawn
+      pdcAmmoS: C.PDC_AMMO_S,
+      pdcAmmoTier: 100,
+      sigSpikePdc: 0,
+      underPdcFire: false,
       propellant: C.PROPELLANT_MAX,
       propellantTier: 100,
       lock: { progress: 0, has: false, grace: 0 },
@@ -299,6 +311,7 @@ export class Sim {
     if (!("thrust" in obj)) return C.DECOY_SIGNATURE;
     let sig = C.SIG_BASE + effectiveThrust(obj);
     if (obj.sigSpikeLaunch > 0) sig += C.SIG_SPIKE_LAUNCH;
+    if (obj.sigSpikePdc > 0) sig += C.SIG_SPIKE_PDC;
     return sig;
   }
 
@@ -370,11 +383,12 @@ export class Sim {
         }
         return null;
       }
-      case "fire_laser": {
-        if (ship.laserCooldown > 0)
-          return `Laser's recharging, Captain — ${ship.laserCooldown.toFixed(0)}s.`;
-        ship.laserCooldown = C.LASER_COOLDOWN_S;
-        this.fireLaser(ship, events);
+      case "set_pdc": {
+        const posture = cmd.params.posture;
+        if (posture !== "free" && posture !== "hold") {
+          return "PDC posture is 'free' or 'hold', Captain.";
+        }
+        ship.pdcPosture = posture;
         return null;
       }
       case "fire_missile": {
@@ -604,6 +618,8 @@ export class Sim {
         return this.paintedState(ship) !== "none";
       case "propellant_percent":
         return (ship.propellant / C.PROPELLANT_MAX) * 100;
+      case "pdc_ammo_seconds":
+        return ship.pdcAmmoS;
       case "tubes_ready":
         return ship.tubes.filter((t) => t.loaded).length;
       case "enemy_bearing_off_nose": {
@@ -679,79 +695,93 @@ export class Sim {
     }
   }
 
-  // Hitscan: first (nearest) enemy object within the beam wedge and range.
-  // Friendly objects are transparent. A miss still shows a ray.
-  private fireLaser(ship: Ship, events: SimEvent[]): void {
-    const enemyId: ShipId = ship.id === "A" ? "B" : "A";
-    const enemy = this.ships.get(enemyId);
+  // Automated point defense, evaluated per substep. While FREE (and fed):
+  // (a) each inbound enemy missile within PDC_RANGE_M with LOS suffers a
+  // substep-scaled kill probability; (b) an enemy SHIP within
+  // PDC_SHIP_RANGE_M with LOS takes continuous hull damage. Never targets
+  // decoys or terrain. Firing costs ammo (cumulative seconds) and spikes
+  // signature. Weapon types are modular by design — v5 adds a railgun here.
+  private stepPdc(ship: Ship, deadMissiles: Set<number>, events: SimEvent[], dt: number): void {
+    if (ship.pdcPosture !== "free" || ship.pdcAmmoS <= 0 || this.winner) return;
+    let firing = false;
 
-    type Candidate =
-      | { kind: "ship"; ship: Ship; range: number }
-      | { kind: "missile"; missile: Missile; range: number }
-      | { kind: "decoy"; decoy: Decoy; range: number };
-    const candidates: Candidate[] = [];
-
-    const inWedge = (x: number, y: number): number | null => {
-      const range = dist(ship.x, ship.y, x, y);
-      if (range > C.LASER_RANGE_M) return null;
-      const off = Math.abs(angDiff(ship.facing, bearingTo(ship.x, ship.y, x, y)));
-      return off <= C.LASER_BEAM_WIDTH_DEG ? range : null;
-    };
-
-    if (enemy) {
-      const r = inWedge(enemy.x, enemy.y);
-      if (r !== null) candidates.push({ kind: "ship", ship: enemy, range: r });
-    }
+    // (a) inbound missiles
     for (const m of this.missiles) {
-      if (m.owner === ship.id) continue;
-      const r = inWedge(m.x, m.y);
-      if (r !== null) candidates.push({ kind: "missile", missile: m, range: r });
-    }
-    for (const d of this.decoys) {
-      if (d.owner === ship.id) continue;
-      const r = inWedge(d.x, d.y);
-      if (r !== null) candidates.push({ kind: "decoy", decoy: d, range: r });
+      if (m.owner === ship.id || deadMissiles.has(m.id)) continue;
+      if (dist(ship.x, ship.y, m.x, m.y) > C.PDC_RANGE_M) continue;
+      if (!this.losClear(ship.x, ship.y, m.x, m.y)) continue;
+      firing = true;
+      this.fx.push({ type: "pdc", owner: ship.id, x1: ship.x, y1: ship.y, x2: m.x, y2: m.y });
+      if (Math.random() < C.PDC_KILL_PROB_PER_S * dt) {
+        deadMissiles.add(m.id);
+        this.fx.push({ type: "boom", x: m.x, y: m.y });
+        events.push({ kind: "notice", ship: ship.id, text: "PDC splash — missile destroyed." });
+        events.push({ kind: "notice", ship: m.owner, text: "Their point defense got our missile." });
+      }
     }
 
-    candidates.sort((a, b) => a.range - b.range);
-    const hit = candidates[0];
-
-    const [fx, fy] = headingVec(ship.facing);
-    const reach = hit ? hit.range : C.LASER_RANGE_M;
-    this.fx.push({
-      type: "laser",
-      owner: ship.id,
-      x1: ship.x,
-      y1: ship.y,
-      x2: ship.x + fx * reach,
-      y2: ship.y + fy * reach,
-      hit: !!hit,
-    });
-
-    if (!hit) {
-      events.push({ kind: "notice", ship: ship.id, text: "Laser fired — clean miss." });
-      return;
+    // (b) enemy ship at knife range
+    const enemy = this.enemyOf(ship.id);
+    if (
+      enemy &&
+      dist(ship.x, ship.y, enemy.x, enemy.y) <= C.PDC_SHIP_RANGE_M &&
+      this.losClear(ship.x, ship.y, enemy.x, enemy.y)
+    ) {
+      firing = true;
+      this.fx.push({ type: "pdc", owner: ship.id, x1: ship.x, y1: ship.y, x2: enemy.x, y2: enemy.y });
+      if (!enemy.underPdcFire) {
+        enemy.underPdcFire = true;
+        if (!enemy.isDrone) {
+          events.push({
+            kind: "notice",
+            ship: enemy.id,
+            text: "We're inside their PDC envelope — taking fire!",
+            alert: true,
+          });
+        }
+        if (!ship.isDrone) {
+          events.push({ kind: "notice", ship: ship.id, text: "PDCs are chewing on their hull, Captain." });
+        }
+      }
+      enemy.hull = Math.max(0, enemy.hull - C.PDC_SHIP_DPS * dt);
+      if (enemy.hull <= 0 && !this.winner) {
+        this.winner = ship.id;
+        events.push({ kind: "gameover", winner: ship.id });
+      }
+    } else if (enemy && enemy.underPdcFire) {
+      // our guns stopped bearing on them; re-arm the edge notice
+      enemy.underPdcFire = false;
     }
-    if (hit.kind === "ship") {
-      this.fx.push({ type: "boom", x: hit.ship.x, y: hit.ship.y });
-      this.damageShip(hit.ship, C.LASER_DAMAGE, "laser", events);
-    } else if (hit.kind === "missile") {
-      this.missiles = this.missiles.filter((m) => m !== hit.missile);
-      this.fx.push({ type: "boom", x: hit.missile.x, y: hit.missile.y });
-      events.push({ kind: "notice", ship: ship.id, text: "Missile destroyed — good shooting." });
-      events.push({ kind: "notice", ship: enemyId, text: "They've shot down our missile." });
-    } else {
-      this.decoys = this.decoys.filter((d) => d !== hit.decoy);
-      this.fx.push({ type: "boom", x: hit.decoy.x, y: hit.decoy.y });
-      events.push({ kind: "notice", ship: ship.id, text: "Decoy destroyed." });
-      events.push({ kind: "notice", ship: enemyId, text: "They've burned down our decoy." });
+
+    if (firing) {
+      ship.pdcAmmoS = Math.max(0, ship.pdcAmmoS - dt);
+      ship.sigSpikePdc = C.SIG_SPIKE_PDC_S;
+      this.announcePdcAmmo(ship, events);
     }
+  }
+
+  // Ammo warnings at falling 50/25/10/0 percent, re-armed never (no regen).
+  private announcePdcAmmo(ship: Ship, events: SimEvent[]): void {
+    if (ship.isDrone) return;
+    const pct = (ship.pdcAmmoS / C.PDC_AMMO_S) * 100;
+    const tier = pct <= 0 ? 0 : pct <= 10 ? 10 : pct <= 25 ? 25 : pct <= 50 ? 50 : 100;
+    if (tier < ship.pdcAmmoTier) {
+      const lines: Record<number, [string, boolean]> = {
+        50: ["PDC ammunition at one-half.", false],
+        25: ["PDC ammunition at one-quarter, Captain.", false],
+        10: ["PDC ammunition critical — ten percent.", true],
+        0: ["PDC magazines dry, Captain.", true],
+      };
+      const [text, alert] = lines[tier];
+      events.push({ kind: "notice", ship: ship.id, text, alert });
+    }
+    ship.pdcAmmoTier = tier;
   }
 
   private damageShip(
     target: Ship,
     amount: number,
-    source: "laser" | "missile" | "rock",
+    source: "missile" | "rock",
     events: SimEvent[]
   ): void {
     if (this.winner) return;
@@ -762,11 +792,10 @@ export class Sim {
       events.push({
         kind: "notice",
         ship: attackerId,
-        text: source === "laser" ? "Direct hit on the enemy ship." : "Missile strike on the enemy ship!",
+        text: "Missile strike on the enemy ship!",
       });
     }
-    const word =
-      source === "laser" ? "Laser hit" : source === "missile" ? "Missile strike" : "Collision";
+    const word = source === "missile" ? "Missile strike" : "Collision";
     events.push({
       kind: "notice",
       ship: target.id,
@@ -886,7 +915,7 @@ export class Sim {
         this.evaluateStandingOrders(ship, events, tickDt);
       }
 
-      // 2. execute queued commands (lasers resolve here; missiles/decoys spawn)
+      // 2. execute queued commands (missiles/decoys spawn here)
       for (const [id, queue] of this.queues) {
         const ship = this.ships.get(id);
         if (!ship) continue;
@@ -1075,6 +1104,11 @@ export class Sim {
     // so a 450 m/s missile can't tunnel past a 150 m fuse between ticks)
     const deadMissiles = new Set<number>();
     const deadDecoys = new Set<number>();
+
+    // --- point defense fires before fuses resolve (defense gets the last word)
+    for (const ship of this.ships.values()) {
+      this.stepPdc(ship, deadMissiles, events, dt);
+    }
 
     // --- terrain: rocks are solid; ordnance impacting one is destroyed
     // (missiles detonate harmlessly)
@@ -1349,8 +1383,8 @@ export class Sim {
   private stepShip(ship: Ship, events: SimEvent[], dt: number): void {
     // Housekeeping shared by drones and players: cooldowns, launch flash,
     // tube reloads.
-    ship.laserCooldown = Math.max(0, ship.laserCooldown - dt);
     ship.sigSpikeLaunch = Math.max(0, ship.sigSpikeLaunch - dt);
+    ship.sigSpikePdc = Math.max(0, ship.sigSpikePdc - dt);
     for (let i = 0; i < ship.tubes.length; i++) {
       const t = ship.tubes[i];
       if (!t.loaded && t.reload > 0) {
@@ -1573,7 +1607,7 @@ export class Sim {
       `Position: ${(zoneDist / 1000).toFixed(1)} km from zone center (${this.insideZone(ship) ? "inside" : "OUTSIDE"} the zone).`
     );
     lines.push(
-      `Weapons: laser ${ship.laserCooldown > 0 ? `recharging ${ship.laserCooldown.toFixed(0)}s` : "ready"}, ${this.tubeSummary(ship)}, missiles aboard ${missilesAboard(ship)}/${C.MISSILE_MAGAZINE}, decoys ${ship.decoys}/${C.DECOY_SUPPLY}.`
+      `Weapons: PDC posture ${ship.pdcPosture.toUpperCase()} (ammo ${Math.round(ship.pdcAmmoS)}s of fire left), ${this.tubeSummary(ship)}, missiles aboard ${missilesAboard(ship)}/${C.MISSILE_MAGAZINE}, decoys ${ship.decoys}/${C.DECOY_SUPPLY}.`
     );
     const painted = this.paintedState(ship);
     lines.push(
@@ -1663,9 +1697,15 @@ export class Sim {
       missiles_aboard: missilesAboard(ship),
       lock: ship.lock.has ? "held" : ship.lock.progress > 0 ? "acquiring" : "none",
     };
+    const pdc = {
+      pdc_posture: ship.pdcPosture,
+      pdc_ammo_seconds_of_fire: Math.round(ship.pdcAmmoS),
+      pdc_missile_range_m: C.PDC_RANGE_M,
+      pdc_ship_range_m: C.PDC_SHIP_RANGE_M,
+      pdc_note: "automated: engages inbound missiles and knife-range ships while posture=free; hold conserves ammo and stays dark",
+    };
     const weapons = {
-      laser: ship.laserCooldown > 0 ? `recharging, ready in ${ship.laserCooldown.toFixed(0)}s` : "ready",
-      laser_range_m: C.LASER_RANGE_M,
+      ...pdc,
       missiles_remaining: missilesAboard(ship),
       ...tubes,
       decoys_remaining: ship.decoys,
@@ -1716,8 +1756,11 @@ export class Sim {
           tube_summary: this.tubeSummary(ship),
           missiles_aboard: missilesAboard(ship),
           decoys: ship.decoys,
-          laser_ready_in_s: Math.ceil(ship.laserCooldown),
+          pdc_ammo_s: Math.round(ship.pdcAmmoS),
+          pdc_posture: ship.pdcPosture,
         };
+      case "pdc":
+        return pdc;
       case "missiles_inbound":
         return missilesInbound;
       case "standing_orders":
@@ -1797,7 +1840,7 @@ export class Sim {
         },
         painted: this.paintedState(ship),
         decoys: ship.decoys,
-        laserCooldown: ship.laserCooldown,
+        pdc: { posture: ship.pdcPosture, ammoS: Math.round(ship.pdcAmmoS) },
         insideZone: this.insideZone(ship),
         inDust: this.inDust(ship),
         collisionWarning: ship.collisionWarnS === null ? null : Math.round(ship.collisionWarnS),
@@ -1828,7 +1871,7 @@ export class Sim {
         })),
       ],
       fx: this.fx.filter((f) => {
-        if (f.type === "laser") return f.owner === id || ship.contactTier >= 1;
+        if (f.type === "pdc") return f.owner === id || ship.contactTier >= 1;
         // explosions are bright: visible anywhere the sensor base could
         // reach an average target, LOS permitting
         return (

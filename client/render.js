@@ -789,30 +789,34 @@ function drawOrdnance() {
   }
 }
 
-const LASER_FX_MS = 300;
+const PDC_FX_MS = 260;
 const BOOM_FX_MS = 700;
 const BIG_BOOM_FX_MS = 1600;
 
 function drawFx() {
   const now = performance.now();
   state.fxBuffer = state.fxBuffer.filter(({ fx, at }) => {
-    const ttl = fx.type === "laser" ? LASER_FX_MS : fx.big ? BIG_BOOM_FX_MS : BOOM_FX_MS;
+    const ttl = fx.type === "pdc" ? PDC_FX_MS : fx.big ? BIG_BOOM_FX_MS : BOOM_FX_MS;
     return now - at < ttl;
   });
   for (const entry of state.fxBuffer) {
     const { fx, at } = entry;
     const age = now - at;
-    if (fx.type === "laser") {
-      const alpha = 1 - age / LASER_FX_MS;
+    if (fx.type === "pdc") {
+      // tracer stream: dashed line walking from mount to target
+      const alpha = 1 - age / PDC_FX_MS;
       const [x1, y1] = worldToScreen(fx.x1, fx.y1);
       const [x2, y2] = worldToScreen(fx.x2, fx.y2);
       ctx.beginPath();
       ctx.moveTo(x1, y1);
       ctx.lineTo(x2, y2);
-      ctx.strokeStyle = fx.hit ? "#ff6666" : "#7a6a55";
-      ctx.globalAlpha = alpha * (fx.hit ? 1 : 0.4);
-      ctx.lineWidth = fx.hit ? 2.5 : 1;
+      ctx.strokeStyle = "#ffd28a";
+      ctx.globalAlpha = alpha * 0.8;
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([3, 9]);
+      ctx.lineDashOffset = -(now / 4) % 12; // tracers crawl toward the target
       ctx.stroke();
+      ctx.setLineDash([]);
       ctx.globalAlpha = 1;
     } else if (fx.type === "boom") {
       const ttl = fx.big ? BIG_BOOM_FX_MS : BOOM_FX_MS;

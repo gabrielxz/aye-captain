@@ -37,6 +37,7 @@ function injectMissile(sim: Sim, owner: "A" | "B", x: number, y: number, course:
   const sim = new Sim();
   sim.addShip("A", -20000, 0, 0);
   const b = sim.addShip("B", 0, 7137, 180); // range not substep-aligned
+  b.pdcPosture = "hold"; // tunneling test: point defense must not save it
   b.vy = -C.MAX_SPEED_MPS; // charging straight down the missile's throat
   injectMissile(sim, "A", 0, 0, 0);
   let hit = false;
@@ -55,6 +56,7 @@ function injectMissile(sim: Sim, owner: "A" | "B", x: number, y: number, course:
   const sim = new Sim();
   sim.addShip("A", -30000, -30000, 0);
   const b = sim.addShip("B", 0, 0, 270);
+  b.pdcPosture = "hold";
   const meetT = 4.73; // seconds; deliberately between substep boundaries
   b.x = C.MAX_SPEED_MPS * meetT;
   b.vx = -C.MAX_SPEED_MPS; // westbound through the origin

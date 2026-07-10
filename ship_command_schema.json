@@ -14,7 +14,7 @@
           "enum": [
             "set_thrust",
             "set_heading",
-            "fire_laser",
+            "set_pdc",
             "fire_missile",
             "reload_tubes",
             "deploy_decoy",
@@ -75,15 +75,18 @@
       ]
     },
 
-    "fire_laser": {
-      "description": "Fire the laser straight along the ship's current facing. Hitscan: hits the FIRST object within beam_width_degrees of the boresight, in range (ship, missile, or decoy). Subject to cooldown; server rejects with 'recharging' if fired early. No ammo limit.",
+    "set_pdc": {
+      "description": "Set the point-defense cannon posture. The PDCs are AUTOMATED: while posture=free they engage inbound enemy missiles (within pdc range, line of sight) and enemy ships at knife range on their own — there is no manual fire command. posture=hold silences them entirely (conserve ammo / stay dark). Ammo is a fixed budget of cumulative fire seconds with NO regeneration; firing spikes our sensor signature. Default posture at spawn: free. NOTE: this ship has NO laser — it was traded for the PDC mounts. 'Fire the laser' and similar get an in-character explanation, not an error.",
       "type": "object",
-      "properties": {},
-      "examples": [ {} ]
+      "required": ["posture"],
+      "properties": {
+        "posture": { "enum": ["free", "hold"] }
+      },
+      "examples": [ { "posture": "hold" }, { "posture": "free" } ]
     },
 
     "fire_missile": {
-      "description": "Launch missile(s) straight ahead. REQUIRES an active missile lock on the enemy ship (lock is automatic: enemy within lock cone+range on sensors for the lock time) — rejected with 'No lock' otherwise. After launch_delay ticks, the seeker locks the strongest signature inside its forward acquisition cone. Missiles accelerate to max speed, can be destroyed by lasers, and detonate on proximity. Firing an empty/reloading tube is rejected.",
+      "description": "Launch missile(s) straight ahead. REQUIRES an active missile lock on the enemy ship (lock is automatic: a TRACK-or-better contact within lock cone+range for the lock time) — rejected with 'No lock' otherwise. After launch_delay ticks, the seeker locks the strongest signature inside its forward acquisition cone. Torpedoes burn hard then coast ballistic; enemy PDCs can shoot them down; they detonate on proximity. Firing an empty/reloading tube is rejected.",
       "type": "object",
       "properties": {
         "tubes": {
@@ -221,6 +224,7 @@
             "enemy",
             "own_ship",
             "weapons",
+            "pdc",
             "propellant",
             "tubes",
             "damage_report",
@@ -229,7 +233,7 @@
             "zone",
             "full_report"
           ],
-          "description": "damage_report is answered by a fixed server template (hull, propellant, tubes, missiles, decoys, laser) with no LLM phrasing — leave its acknowledgement empty."
+          "description": "damage_report is answered by a fixed server template (hull, propellant, tubes, missiles, decoys, PDC) with no LLM phrasing — leave its acknowledgement empty. pdc = point-defense posture, ammo, and envelope."
         }
       },
       "examples": [
@@ -304,32 +308,27 @@
         ]
       },
       {
-        "captain": "Point us at him and fire when ready",
+        "captain": "Point us at him and fire when you have the lock",
         "commands": [
           { "verb": "set_heading", "params": { "mode": "target", "target": "enemy_ship" }, "acknowledgement": "Coming about to face the contact." },
           { "verb": "set_standing_order", "params": {
-              "label": "fire when ready",
-              "condition": { "all": [
-                { "metric": "enemy_bearing_off_nose", "op": "lt", "value": 4 },
-                { "metric": "enemy_range", "op": "lt", "value": 5000 }
-              ]},
-              "actions": [ { "verb": "fire_laser", "params": {} } ],
+              "label": "fire on lock",
+              "condition": { "metric": "have_lock", "op": "eq", "value": true },
+              "actions": [ { "verb": "fire_missile", "params": {} } ],
               "repeat": false
-          }, "acknowledgement": "Guns will fire as she bears." }
+          }, "acknowledgement": "Tube one will fire the moment we have him." }
         ]
       },
       {
-        "captain": "If a missile comes at us, turn into it and shoot it down",
+        "captain": "Guns free — if anything comes at us the PDCs handle it",
         "commands": [
-          { "verb": "set_standing_order", "params": {
-              "label": "missile defense",
-              "condition": { "metric": "missile_inbound", "op": "eq", "value": true },
-              "actions": [
-                { "verb": "set_heading", "params": { "mode": "target", "target": "nearest_missile" } },
-                { "verb": "fire_laser", "params": {} }
-              ],
-              "repeat": true
-          }, "acknowledgement": "Point defense doctrine set, Captain." }
+          { "verb": "set_pdc", "params": { "posture": "free" }, "acknowledgement": "PDCs weapons-free." }
+        ]
+      },
+      {
+        "captain": "Hold PDC fire, we're staying dark",
+        "commands": [
+          { "verb": "set_pdc", "params": { "posture": "hold" }, "acknowledgement": "PDCs holding. Running quiet." }
         ]
       },
       {

@@ -65,6 +65,7 @@ function handleMessage(msg) {
       state.lastSnapAt = now;
       for (const fx of msg.fx ?? []) {
         state.fxBuffer.push({ fx, at: now });
+        if (fx.type === "pdc") audio.sfxPdc(fx.owner === state.role); // internally rate-limited
       }
       soundFromSnapshot(msg);
       updateHUDFromSnapshot(msg);
@@ -142,14 +143,22 @@ function soundFromSnapshot(snap) {
     }
     // decoy deployed (ours)
     if ((you.decoys ?? 0) < prevAudio.decoys) audio.sfxDecoy();
-    // any hull drop we can see: crunch (ours = received)
-    if (you.hull < prevAudio.hull) audio.sfxBoom(false, true);
+    // any hull drop we take: rock hits crunch, weapons fire booms
+    if (you.hull < prevAudio.hull) {
+      if (prevAudio.collisionWarning !== null) audio.sfxCrunch();
+      else audio.sfxBoom(false, true);
+    }
   }
+  // collision klaxon while an impact is projected inside 10 s
+  audio.setCollisionKlaxon(
+    you.collisionWarning !== null && you.collisionWarning !== undefined && you.collisionWarning <= 10
+  );
   prevAudio = {
     tubes: (you.tubes ?? []).map((t) => ({ state: t.state })),
     enemyMissiles: new Set((snap.missiles ?? []).filter((m) => !m.own).map((m) => m.id)),
     decoys: you.decoys ?? 0,
     hull: you.hull,
+    collisionWarning: you.collisionWarning ?? null,
   };
 }
 
@@ -157,7 +166,6 @@ const TUBE_LABEL = { ready: "RDY", reloading: null, empty: "—" };
 function updateHUDFromSnapshot(snap) {
   const you = snap.you;
   if (!you) return;
-  const laser = you.laserCooldown > 0 ? `${you.laserCooldown.toFixed(0)}s` : "READY";
   const tanksDry = (you.propellant ?? 0) <= 0;
   const tubes = (you.tubes ?? [])
     .map((t, i) => `${i + 1}:${TUBE_LABEL[t.state] ?? `${t.t}s`}`)
@@ -185,7 +193,11 @@ function updateHUDFromSnapshot(snap) {
     { label: "TUBES", value: tubes || "—" },
     { label: "MSL", value: `${you.missiles}` },
     { label: "DECOY", value: `${you.decoys}` },
-    { label: "LASER", value: laser },
+    {
+      label: "PDC",
+      value: `${(you.pdc?.posture ?? "free").toUpperCase()} ${you.pdc?.ammoS ?? 0}s`,
+      cls: (you.pdc?.ammoS ?? 0) <= 6 ? "alert" : (you.pdc?.ammoS ?? 0) <= 15 ? "warn" : you.pdc?.posture === "free" ? "good" : "",
+    },
     { label: "ZONE", value: you.insideZone ? "inside" : "OUTSIDE", cls: you.insideZone ? "" : "warn" },
     {
       label: "COLL",

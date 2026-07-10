@@ -63,11 +63,15 @@ export const TUBE_COUNT = 2;
 export const TUBE_RELOAD_S = 20; // per tube, tubes reload in parallel
 export const AUTO_RELOAD = true; // reload_tubes verb is a no-op while true
 
-// Laser
-export const LASER_RANGE_M = 5000;
-export const LASER_BEAM_WIDTH_DEG = 6; // half-angle off boresight (4 -> 6 after playtest: visual hits read as misses)
-export const LASER_COOLDOWN_S = 4;
-export const LASER_DAMAGE = 10; // vs ships; instantly destroys missiles/decoys
+// PDCs (point-defense cannons; replaced the laser in v4 §6). Automated,
+// commanded by POSTURE (free|hold). Mutual PDC range is a mutual mauling —
+// closing to knife range is a deterrent by design. Saturation salvos are
+// SUPPOSED to leak: don't tune the kill probability up.
+export const PDC_RANGE_M = 8000; // vs inbound missiles, LOS required
+export const PDC_KILL_PROB_PER_S = 0.25; // per engaged missile, substep-scaled
+export const PDC_SHIP_RANGE_M = 3000; // vs enemy ships, LOS required
+export const PDC_SHIP_DPS = 5; // continuous hull damage
+export const PDC_AMMO_S = 60; // seconds of cumulative fire; no regeneration
 
 // Missiles: burn-and-coast torpedoes. MAGAZINE is everything aboard:
 // TUBE_COUNT start loaded, the rest are reserves (6 total shots per match).

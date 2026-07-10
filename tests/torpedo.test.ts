@@ -57,6 +57,7 @@ const grantLock = (ship: Ship) => {
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 0);
   const b = sim.addShip("B", 0, 15000, 180, false); // dead ahead on the launch line
+  b.pdcPosture = "hold"; // ballistic-lethality test: keep point defense out of it
   grantLock(a);
   sim.enqueue("A", [{ verb: "fire_missile", params: {} }]);
   sim.tick();

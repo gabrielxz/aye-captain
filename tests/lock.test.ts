@@ -78,7 +78,8 @@ const assert = (cond: boolean, msg: string) => {
 {
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 0);
-  sim.addShip("B", 0, 8000, 180, false);
+  const bT = sim.addShip("B", 0, 8000, 180, false);
+  bT.pdcPosture = "hold"; // tube accounting is under test, not point defense
   for (let i = 0; i < C.LOCK_TIME_S + 1; i++) sim.tick(); // acquire for real
   assert(a.lock.has, "locked for tube tests");
 
@@ -155,6 +156,7 @@ const assert = (cond: boolean, msg: string) => {
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 0);
   const drone = sim.addShip("B", 0, 6000, 180, true);
+  a.pdcPosture = "hold"; // don't let point defense eat the drone's shot mid-test
   (drone as any).lock = { progress: C.LOCK_TIME_S, has: true, grace: C.LOCK_GRACE_S };
   sim.tick();
   const droneShots = (sim as any).missiles.filter((m: any) => m.owner === "B").length;

@@ -18,7 +18,7 @@ const so = (params: any) => ({ verb: "set_standing_order", params } as any);
       { metric: "enemy_bearing_off_nose", op: "lt", value: 4 },
       { metric: "enemy_range", op: "lt", value: 5000 },
     ]},
-    actions: [{ verb: "fire_laser", params: {}, acknowledgement: "Guns firing." }],
+    actions: [{ verb: "set_pdc", params: { posture: "free" }, acknowledgement: "Guns firing." }],
   })]);
   let ev = sim.tick(); // registers; conditions eval next tick (sensors updated end of this tick)
   assert(a.standingOrders.length === 1, "order stored");
@@ -36,7 +36,7 @@ const so = (params: any) => ({ verb: "set_standing_order", params } as any);
   sim.enqueue("A", [so({
     label: "pd",
     condition: { metric: "enemy_on_sensors", op: "eq", value: true },
-    actions: [{ verb: "fire_laser", params: {} }],
+    actions: [{ verb: "set_pdc", params: { posture: "free" } }],
     repeat: true,
   })]);
   sim.tick();
@@ -58,7 +58,7 @@ const so = (params: any) => ({ verb: "set_standing_order", params } as any);
   sim.enqueue("A", [so({
     label: "blind",
     condition: { metric: "enemy_range", op: "lt", value: 50000 },
-    actions: [{ verb: "fire_laser", params: {} }],
+    actions: [{ verb: "set_pdc", params: { posture: "free" } }],
   })]);
   for (let i = 0; i < 5; i++) {
     const ev = sim.tick();
@@ -74,12 +74,13 @@ const so = (params: any) => ({ verb: "set_standing_order", params } as any);
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 0);
   const b = sim.addShip("B", 0, 5500, 180, false);
+  a.pdcPosture = "hold"; // the trigger, not the guns, is under test
   sim.enqueue("A", [so({
     label: "missile defense",
     condition: { metric: "missile_inbound", op: "eq", value: true },
     actions: [
       { verb: "set_heading", params: { mode: "target", target: "nearest_missile" } },
-      { verb: "fire_laser", params: {} },
+      { verb: "set_pdc", params: { posture: "free" } },
     ],
     repeat: true,
   })]);
@@ -102,7 +103,7 @@ const so = (params: any) => ({ verb: "set_standing_order", params } as any);
     sim.enqueue("A", [so({
       label: `o${i}`,
       condition: { metric: "own_speed", op: "gt", value: 99999 },
-      actions: [{ verb: "fire_laser", params: {} }],
+      actions: [{ verb: "set_pdc", params: { posture: "free" } }],
     })]);
   }
   let ev = sim.tick();
@@ -124,7 +125,7 @@ const so = (params: any) => ({ verb: "set_standing_order", params } as any);
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 0);
   sim.addShip("B", 0, 25000, 180, true);
-  const mk = (v: number) => so({ label: "pd", condition: { metric: "own_speed", op: "gt", value: v }, actions: [{ verb: "fire_laser", params: {} }] });
+  const mk = (v: number) => so({ label: "pd", condition: { metric: "own_speed", op: "gt", value: v }, actions: [{ verb: "set_pdc", params: { posture: "free" } }] });
   sim.enqueue("A", [mk(1000)]);
   sim.tick();
   sim.enqueue("A", [mk(2000)]);
@@ -139,7 +140,7 @@ const so = (params: any) => ({ verb: "set_standing_order", params } as any);
   sim.addShip("B", 0, 25000, 180, true);
   sim.enqueue("A", [so({
     condition: { metric: "own_speed", op: "gt", value: 0 },
-    actions: [so({ condition: { metric: "own_speed", op: "gt", value: 0 }, actions: [{ verb: "fire_laser", params: {} }] })],
+    actions: [so({ condition: { metric: "own_speed", op: "gt", value: 0 }, actions: [{ verb: "set_pdc", params: { posture: "free" } }] })],
   })]);
   const ev = sim.tick();
   assert(ev.some(e => e.kind === "reject" && /nest/.test((e as any).reason)), "nested order rejected");
