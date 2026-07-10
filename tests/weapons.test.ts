@@ -70,36 +70,41 @@ const grantLock = (ship: Ship) => {
   assert(sim.winner === "A", "sim.winner set");
 }
 
-// 4. decoy steals lock: v4 numbers make a decoy (sig 150) out-shine even a
-// full-burn ship (sig 110) — in the seeker cone, the decoy always wins.
+// 4. decoy seduction (v4.1): an AUTONOMOUS seeker is out-shone by a decoy
+// (90) only while the ship's signature stays below it — throttle discipline
+// is back. Uplinked immunity lives in tests/uplink.test.ts.
 {
+  // quiet ship (sig 10 < 90): decoy wins
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 0);
   const b = sim.addShip("B", 0, 5000, 0, false);
-  b.thrust = 0; // quiet: sig 10 < decoy 150
+  b.thrust = 0;
   a.pdcPosture = "hold"; b.pdcPosture = "hold";
   grantLock(a);
   fire(sim, "A", "fire_missile");
-  sim.tick(); sim.tick(); sim.tick(); // past launch delay, locked on ship
+  sim.tick(); sim.tick(); sim.tick(); // past launch delay
   const m = (sim as any).missiles[0];
-  assert(m.lock?.type === "ship", "locked on ship first");
-  // B drops a decoy right at its position
+  m.guidance = "autonomous"; // orphan the bird: seeker-only rules under test
+  sim.tick();
+  assert(m.lock?.type === "ship", "autonomous seeker holds the quiet ship while nothing louder shows");
   sim.enqueue("B", [{verb: "deploy_decoy", params: {}} as any]);
   sim.tick();
-  assert(m.lock?.type === "decoy", "decoy (sig 150) steals lock from quiet ship (sig 10)");
+  assert(m.lock?.type === "decoy", "decoy (90) seduces the seeker off a quiet ship (10)");
 
+  // full-burn ship (sig 110 > 90): the ship out-shines its own decoy
   const sim2 = new Sim();
   const a2 = sim2.addShip("A", 0, 0, 0);
   const b2 = sim2.addShip("B", 0, 5000, 0, false);
-  b2.thrust = 100; // sig 110 — still below the decoy's 150
+  b2.thrust = 100;
   a2.pdcPosture = "hold"; b2.pdcPosture = "hold";
   grantLock(a2);
   sim2.enqueue("A", [{verb: "fire_missile", params: {}} as any]);
   sim2.tick(); sim2.tick(); sim2.tick();
+  const m2 = (sim2 as any).missiles[0];
+  m2.guidance = "autonomous";
   sim2.enqueue("B", [{verb: "deploy_decoy", params: {}} as any]);
   sim2.tick();
-  const m2 = (sim2 as any).missiles[0];
-  assert(m2.lock?.type === "decoy", "even a full-burn ship (sig 110) loses the seeker to a decoy (150)");
+  assert(m2.lock?.type === "ship", "a full-burn ship (110) out-shines its decoy (90) — spoof fails");
 }
 
 // 5. prox fuse via segment check: fast head-on crossing detonates
@@ -144,16 +149,21 @@ assert(segmentMinDist(0,0, 1000,0, 500,-50, 500,50) === 0, "crossing paths -> 0"
   assert(ev.some(e => e.kind === "reject" && /No decoys/.test((e as any).reason)), "no decoys reject");
 }
 
-// 8. missile goes ballistic when nothing in cone, expires at lifetime
+// 8. a target-less autonomous bird holds its course (no reacquire timeout
+// in v4.1 — blind birds must fly far without a candidate) and expires at
+// lifetime
 {
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 180); // firing south, away from B
-  const b = sim.addShip("B", 0, 20000, 0, true);
+  const b = sim.addShip("B", 0, 200000, 0, true);
   grantLock(a); // test bypass: aiming away on purpose
   fire(sim, "A", "fire_missile");
-  for (let i = 0; i < 6; i++) sim.tick();
+  sim.tick(); // spawned, still inside the launch delay — no steering yet
   const m = (sim as any).missiles[0];
-  assert(m.ballistic === true, "no candidates in cone -> ballistic after reacquire window");
+  m.guidance = "autonomous"; // orphaned, nothing in the cone
+  for (let i = 0; i < 6; i++) sim.tick();
+  assert(m.lock === null && m.course === 180, `no candidate: holds course (${m.course})`);
+  assert(m.fuel > 0, "still has fuel — not ballistic, just patient");
   for (let i = 0; i < C.MISSILE_LIFETIME_S; i++) sim.tick();
   assert((sim as any).missiles.length === 0, "missile expires at lifetime");
 }

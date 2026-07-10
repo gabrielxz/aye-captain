@@ -118,6 +118,11 @@ const STOCK_LINES = [
   "Close-range ID, Captain — full readout on the contact.",
   // v4: torpedoes
   "Torpedo has gone ballistic — I've lost it.",
+  // v4.1: guidance + blind fire + close bark
+  "Bird away, running blind.",
+  "Uplink lost — bird is autonomous.",
+  "Ballistic inbound, close!",
+  "No lock, Captain — I can fire blind on a bearing if you want it.",
   // v4: PDCs
   "PDC splash — missile destroyed.",
   "Their point defense got our missile.",

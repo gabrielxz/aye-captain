@@ -21,9 +21,11 @@ function injectMissile(sim: Sim, owner: "A" | "B", x: number, y: number, course:
     speed: C.MISSILE_MAX_SPEED_MPS,
     vx: 0, vy: 0,
     age: C.MISSILE_LAUNCH_DELAY_TICKS / C.TICK_RATE_HZ + 1,
+    fuel: 0, // dry = no steering: pure kinematics under test
+    burning: false,
+    guidance: "autonomous",
+    cmdBearing: null,
     lock: null,
-    seekTimer: 0,
-    ballistic: true, // no steering: pure kinematics under test
   };
   (sim as any).missiles.push(m);
   return m;

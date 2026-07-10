@@ -123,11 +123,14 @@ canvas.addEventListener(
 );
 
 let drag = null;
+let hover = null; // pointer position over the map (canvas coords), for the bearing readout
 canvas.addEventListener("pointerdown", (e) => {
   drag = { x: e.clientX, y: e.clientY, moved: false };
   canvas.setPointerCapture(e.pointerId);
 });
 canvas.addEventListener("pointermove", (e) => {
+  const rect = canvas.getBoundingClientRect();
+  hover = { x: e.clientX - rect.left, y: e.clientY - rect.top };
   if (!drag || camera.zoom === 0) return;
   const dx = e.clientX - drag.x;
   const dy = e.clientY - drag.y;
@@ -141,6 +144,7 @@ canvas.addEventListener("pointermove", (e) => {
 });
 canvas.addEventListener("pointerup", () => (drag = null));
 canvas.addEventListener("pointercancel", () => (drag = null));
+canvas.addEventListener("pointerleave", () => (hover = null));
 
 const heldKeys = new Set();
 document.addEventListener("keydown", (e) => {
@@ -642,7 +646,32 @@ function draw() {
 
   drawContacts();
   drawVectorOverlay(you);
+  drawCursorReadout(you);
   drawInset(you);
+}
+
+// The captain's plotting table: bearing and range from own ship to the
+// cursor. Makes blind fire, contact callouts, and dust-cloud speculation
+// speakable. Always on while the pointer is over the map.
+function drawCursorReadout(you) {
+  if (!hover || !you || camera.zoom === 0) return;
+  const wx = camera.x + (hover.x - canvas.clientWidth / 2) / camera.zoom;
+  const wy = camera.y - (hover.y - canvas.clientHeight / 2) / camera.zoom;
+  const dx = wx - you.x;
+  const dy = wy - you.y;
+  const brg = String(Math.round(((Math.atan2(dx, dy) * 180) / Math.PI + 360) % 360)).padStart(3, "0");
+  const rangeKm = Math.hypot(dx, dy) / 1000;
+  const label = `BRG ${brg} · ${rangeKm < 100 ? rangeKm.toFixed(1) : Math.round(rangeKm)} km`;
+  ctx.font = "11px monospace";
+  const w = ctx.measureText(label).width;
+  let tx = hover.x + 16;
+  let ty = hover.y - 12;
+  if (tx + w + 8 > canvas.clientWidth) tx = hover.x - w - 16;
+  if (ty < 14) ty = hover.y + 22;
+  ctx.fillStyle = "rgba(6, 9, 13, 0.75)";
+  ctx.fillRect(tx - 4, ty - 11, w + 8, 15);
+  ctx.fillStyle = "#8fa8bf";
+  ctx.fillText(label, tx, ty);
 }
 
 // Contacts by tier: faint = a position smudge with no vector; track = full
@@ -676,10 +705,11 @@ function drawContacts() {
       ctx.fillText("faint contact", sx + pulse + 6, sy + 3);
       continue;
     }
-    // track/id: interpolate across consecutive snapshots holding a vector contact
+    // track/id: interpolate across consecutive snapshots, matched by the
+    // stable contact id (multiple contacts may coexist — decoys deceive)
     const ent =
       interpolate((s) => {
-        const p = (s.contacts ?? []).find((k) => k.tier >= 2);
+        const p = (s.contacts ?? []).find((k) => k.cid === c.cid && k.tier >= 2);
         return p ?? null;
       }) ?? c;
     drawShip(ent, "enemy", {

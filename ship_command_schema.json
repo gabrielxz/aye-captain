@@ -88,16 +88,24 @@
     },
 
     "fire_missile": {
-      "description": "Launch missile(s) straight ahead. REQUIRES an active missile lock on the enemy ship (lock is automatic: a TRACK-or-better contact within lock cone+range for the lock time) — rejected with 'No lock' otherwise. After launch_delay ticks, the seeker locks the strongest signature inside its forward acquisition cone. Torpedoes burn hard then coast ballistic; enemy PDCs can shoot them down; they detonate on proximity. Firing an empty/reloading tube is rejected.",
+      "description": "Launch missile(s). Default guidance 'locked' REQUIRES an active missile lock (automatic: a TRACK-or-better contact within lock cone+range for the lock time) — rejected with 'No lock' otherwise. A locked bird flies UPLINKED: it steers an intercept off the mother ship's live track and IGNORES DECOYS for as long as the ship holds the lock (and lives); if the lock breaks, the bird goes autonomous (one-way, seeker-only, decoy-susceptible). guidance 'bearing' is BLIND FIRE: no lock needed, the bird launches out the nose and steers itself onto bearing_degrees (or straight ahead if omitted), autonomous from birth — its own weak seeker only grabs what it can detect (a flushing tool, not a sniper rifle). Torpedoes burn hard then coast ballistic; enemy PDCs can shoot them down; they detonate on proximity. Firing an empty/reloading tube is rejected.",
       "type": "object",
       "properties": {
         "tubes": {
           "type": "array",
           "items": { "type": "integer", "minimum": 1, "maximum": 2 },
           "description": "Which launch tubes to fire, 1-based: [1], [2], or [1,2] for a full salvo ('fire everything'). OMIT to fire one missile from the first ready tube (the default for a plain 'fire missile')."
+        },
+        "guidance": {
+          "enum": ["locked", "bearing"],
+          "description": "OMIT for a normal locked shot. Use 'bearing' ONLY when the captain explicitly asks for unlocked/blind/bearing fire ('put a torpedo down bearing 220', 'fire blind into that cloud', 'torpedo out the nose, no lock'). An ambiguous 'fire missile' without a lock must stay a locked attempt (the XO will offer blind fire in the rejection)."
+        },
+        "bearing_degrees": {
+          "type": "number",
+          "description": "Absolute compass bearing for guidance='bearing'. Omit to fire straight out the nose."
         }
       },
-      "examples": [ {}, { "tubes": [1, 2] } ]
+      "examples": [ {}, { "tubes": [1, 2] }, { "guidance": "bearing", "bearing_degrees": 220 } ]
     },
 
     "reload_tubes": {
@@ -438,6 +446,12 @@
         ]
       },
       {
+        "captain": "Put a torpedo down bearing two two zero, fire blind",
+        "commands": [
+          { "verb": "fire_missile", "params": { "guidance": "bearing", "bearing_degrees": 220 }, "acknowledgement": "Bird away on two-two-zero, running blind." }
+        ]
+      },
+      {
         "captain": "If they get a lock on us, deploy a decoy and turn hard starboard",
         "commands": [
           { "verb": "set_standing_order", "params": {
@@ -471,7 +485,8 @@
       "Vague quantities get sensible defaults, stated aloud: 'slow down' -> thrust 25%, 'ease off' -> reduce by ~25 points, 'hard about' -> relative 180.",
       "Acknowledgements are at most 12 words. Every word is spoken aloud by the ship's voice — brevity is a feature.",
       "Continuous tracking ('keep facing him', 'stay pointed at him') is not a helm capability: execute a single set_heading target snapshot and say so — you can point the ship on command; the captain flies the ship.",
-      "A plain 'fire missile' fires ONE tube (omit the tubes param). Only an explicit salvo ('fire everything', 'both tubes', 'full salvo') uses tubes [1,2]."
+      "A plain 'fire missile' fires ONE tube (omit the tubes param). Only an explicit salvo ('fire everything', 'both tubes', 'full salvo') uses tubes [1,2].",
+      "Blind fire (guidance='bearing') ONLY when the captain explicitly asks for unlocked/blind/bearing fire. A plain 'fire missile' with no lock stays a locked attempt and gets the server's rejection, which offers blind fire as the follow-up."
     ]
   }
 }

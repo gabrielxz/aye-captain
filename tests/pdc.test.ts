@@ -17,7 +17,7 @@ function injectSlowMissile(sim: Sim, owner: "A" | "B", x: number, y: number): Mi
     id: 9000, owner, x, y, prevX: x, prevY: y,
     course: 0, speed: 0, vx: 0, vy: 0,
     age: 10, fuel: 0, burning: false,
-    lock: null, seekTimer: 0, ballistic: true,
+    guidance: "autonomous", cmdBearing: null, lock: null,
   };
   (sim as any).missiles.push(m);
   return m;

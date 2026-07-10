@@ -28,18 +28,29 @@ quality, decides engagements. Going dark is the only stealth.
   FAINT (a smudge — approximate position, no vector), TRACK (true position
   + velocity, **lockable**), ID (full readout). Rocks and dust block
   line of sight — inside a dust cloud you're blind and unseen.
-- **Weapons**: 6 torpedoes in 2 auto-reloading tubes. You need a **lock**:
-  a TRACK-or-better contact within 30° of your nose, inside 80 km, held
-  5 s. The target FEELS your lock ("we're being painted!") and launching
-  spikes your signature hugely. Torpedoes burn hard (~40g to 6 km/s, 25 s
-  of fuel) then coast ballistic — nearly invisible, blind to maneuver,
-  still lethal on their line.
+- **Weapons**: 6 torpedoes in 2 auto-reloading tubes. A locked shot needs
+  a **lock**: a TRACK-or-better contact within 30° of your nose, inside
+  80 km, held 5 s. The target FEELS your lock ("we're being painted!") and
+  launching spikes your signature hugely. **A lock buys guidance**: while
+  you hold it, your bird flies UPLINKED — intercept geometry off your
+  track, immune to decoys. Lose the lock and it goes autonomous on its own
+  weak seeker. You can also **fire blind** down a bearing with no lock at
+  all ("put a torpedo down bearing 220") — a flushing tool for dust clouds
+  and rock shadows. Torpedoes burn hard (~40g to 6 km/s, 25 s of fuel)
+  then coast ballistic — nearly invisible, blind to maneuver, still lethal
+  on their line.
 - **Point defense**: automated PDCs engage inbound missiles (8 km) and
   enemy ships at knife range (3 km) while "guns free"; "hold fire" keeps
-  you dark. 60 s of ammo, no resupply. Mutual PDC range is a mutual mauling.
-- **Countermeasures**: 4 decoys (hotter than anything a ship can burn);
-  terrain (break line of sight behind a rock, vanish into dust); outrun
-  the torpedo's burn; dodge late to waste its fuel.
+  you dark. 60 s of ammo, no resupply. Mutual PDC range is a mutual
+  mauling. The mounts are **sensor-slaved** — they can't shoot what your
+  sensors can't see, so a ballistic torpedo out of a dust shadow may
+  arrive with almost no warning.
+- **Countermeasures**: 4 decoys — hotter than a cruising ship but not a
+  hard burn, so the doctrine is **break the lock, throttle down, decoy**
+  (an uplinked bird ignores decoys; you must orphan it first via rocks,
+  dust, or going dark). A drifting decoy also reads as an ordinary contact
+  on enemy sensors until they close — fake contacts are a strategy. Plus:
+  outrun the torpedo's burn, or dodge late to waste its fuel.
 - **Propellant is delta-v**: a full tank is 100 s of hard burn — enough to
   reach flank speed and kill it once. It regenerates only inside the region
   with throttle ≤ 20%. Dry tanks = you drift. Turning is free.
@@ -56,7 +67,9 @@ quality, decides engagements. Going dark is the only stealth.
 - **Questions**: "how far out is he?", "any rocks nearby we could hide
   behind?", "pdc status?", "full report".
 - **Map**: wheel zoom, drag/WASD pan, F follows your ship, M toggles the
-  region overview, V toggles your velocity vector.
+  region overview, V toggles your velocity vector. The cursor always shows
+  bearing and range from your ship — your plotting table for callouts and
+  blind fire.
 - Win by reducing the enemy hull to zero. Rematch from the banner.
 
 Debug/dev harness: any input starting with `{` or `[` is parsed as raw

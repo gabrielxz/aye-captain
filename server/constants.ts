@@ -91,14 +91,23 @@ export const NEWTONIAN_MISSILES = false;
 export const MISSILE_LIFETIME_S = 120; // absolute self-destruct
 export const MISSILE_LAUNCH_DELAY_TICKS = 2; // flies straight, no seeking, during delay
 export const MISSILE_ACQ_CONE_DEG = 60; // half-angle of seeker cone
-export const MISSILE_REACQUIRE_S = 2; // grace period after losing lock
+// Seekers use the standard detection formula with their own (weak) base:
+// seeker detection = MISSILE_SEEKER_BASE_M x target signature / 100, LOS
+// required -> full-burn ship (110) at ~44 km; dark drifter (10) at ~4 km.
+// Blind fire is a flushing tool, not a sniper rifle.
+export const MISSILE_SEEKER_BASE_M = 40000;
 export const MISSILE_PROX_FUSE_M = 200;
 export const MISSILE_DAMAGE = 35;
 
-// Decoys
+// Decoys. Signature sits BETWEEN cruise and full burn (v4.1 retune): a ship
+// at effective thrust <~80% is out-shone by its decoy (spoof works); hotter
+// out-shines it (spoof fails). Doctrine: "break the lock, throttle down,
+// decoy." Side effect to preserve: a drifting decoy reads as an ordinary
+// faint/track contact to enemy SHIP sensors (~148 km) — strategic deception;
+// it resolves as a decoy only at ID tier.
 export const DECOY_SUPPLY = 4;
 export const DECOY_LIFETIME_S = 20;
-export const DECOY_SIGNATURE = 150;
+export const DECOY_SIGNATURE = 90;
 export const DECOY_DRIFT_MPS = 10; // small random drift added on ejection
 
 // Standing orders
@@ -133,8 +142,9 @@ export const DISCONNECT_GRACE_S = 60; // pause sim awaiting reconnect, then forf
 export const DRONE_SPEED_MPS = 800; // cruise
 export const DRONE_TURN_RATE_DPS = 3; // used only for the no-terrain circle
 export const DRONE_PATROL_TURN_DPS = 12; // waypoint steering agility
-export const DRONE_WAYPOINT_RADIUS_M = 12000; // close enough; next waypoint
-export const DRONE_AVOID_LOOKAHEAD_S = 25; // rock-dodge projection
+export const DRONE_WAYPOINT_RADIUS_M = 12000; // arrival radius at dust/center waypoints
+export const DRONE_ROCK_SKIM_M = 4000; // rocks are reached at surface + this: the patrol WEAVES the field so pursuers lose LOS (v4.1 §7 verification)
+export const DRONE_AVOID_LOOKAHEAD_S = 10; // rock-dodge projection (short: graze, don't orbit)
 export const DRONE_HULL_POINTS = 60;
 export const DRONE_THRUST_PERCENT = 50; // signature as a ship at 50% thrust
 export const DRONE_FIRES_BACK = true; // reduced aggression: locks + one missile at a time

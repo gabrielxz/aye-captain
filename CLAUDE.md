@@ -8,15 +8,18 @@ into schema-JSON commands; an authoritative Node server executes them.
 `ship_command_schema.json` is the LLM<->server contract. **Where they
 disagree on constants, the handoff specs (HANDOFF.md, HANDOFF-v4.md) win.**
 
-**Status: v4 built ("The Big Dark", spec: `HANDOFF-v4.md`) — NOT yet
-deployed.** Detection-warfare overhaul on top of v3: 250 km region, 3 km/s
-ships, 10 Hz physics substeps + swept collision, signature-scaled sensing
-with contact tiers (faint/track/id), seeded terrain (rocks block LOS + are
-solid; dust blinds both ways), edge gravity instead of a wall, 6 km/s
-burn-and-coast torpedoes, PDCs replacing the laser, full-stop maneuver,
-vector overlay, camera (zoom/pan/follow/inset). ~250 headless assertions in
-`tests/`. Production still runs v3 at https://aye-captain.fly.dev; v4 ships
-as ONE release (constants desync old clients mid-match).
+**Status: v4 + v4.1 built (specs: `HANDOFF-v4.md` + `HANDOFF-v4.1.md`,
+which WINS where they conflict) — NOT yet deployed.** Detection-warfare
+overhaul on top of v3: 250 km region, 3 km/s ships, 10 Hz physics substeps
++ swept collision, signature-scaled sensing with contact tiers
+(faint/track/id), seeded terrain (rocks block LOS + are solid; dust blinds
+both ways), edge gravity instead of a wall, 6 km/s burn-and-coast
+torpedoes with UPLINKED/AUTONOMOUS guidance + blind bearing fire,
+sensor-slaved PDCs replacing the laser, decoys doubling as fake contacts,
+full-stop maneuver, vector overlay + cursor bearing readout, camera
+(zoom/pan/follow/inset). 280 headless assertions in `tests/`. Production
+still runs v3 at https://aye-captain.fly.dev; this ships as ONE release
+(constants desync old clients mid-match).
 
 ## Commands
 
@@ -95,16 +98,28 @@ Note: on this machine's rootless Docker, `-p` port publishing doesn't route
    fast-object interaction uses swept segments (`segmentMinDist`,
    `segCircleHitT`) — never point-in-radius alone. The tunneling regression
    test in `tests/subtick.test.ts` is mandatory-green.
-7. fire_missile REQUIRES a held lock, and LOCKS REQUIRE TIER_TRACK; target
-   headings are one-shot snapshots — no continuous tracking code path
-   exists. The full_stop maneuver is fine (defined end state).
+7. A LOCKED fire_missile requires a held lock, and LOCKS REQUIRE
+   TIER_TRACK. What a lock buys: the bird flies UPLINKED (intercept off the
+   mother ship's track, decoy-immune) until the lock breaks or the launcher
+   dies — then AUTONOMOUS, one-way, seeker-only, decoy-susceptible. Blind
+   fire (guidance "bearing") skips the lock and is autonomous from birth;
+   the translator emits it ONLY on explicit request. Target headings are
+   one-shot snapshots — no continuous tracking code path exists. The
+   full_stop maneuver is fine (defined end state).
 8. Propellant regen gates on the throttle SETTING (not output); signature
    uses EFFECTIVE thrust; drones are exempt from propellant.
 9. Detection: range = SENSOR_BASE_M x signature/100, always LOS-gated
    (rocks + dust). Outside the region = signature-max (tier ID at any
-   range). Ordnance uses the same math via its own signature.
+   range). Ordnance uses the same math via its own signature. Missile
+   seekers use the same formula with MISSILE_SEEKER_BASE_M; PDCs are
+   SENSOR-SLAVED (only engage ordnance the ship currently detects).
 10. Rocks are solid for everything; ordnance dies on them; ships bounce
-    with normal-component damage. Dust has no physical presence.
+    with normal-component damage (drones bounce damage-free — a practice
+    drone suiciding on terrain is a degenerate win). Dust has no physical
+    presence.
+11. Decoys (sig 90, between cruise and full burn) read as ORDINARY
+    unresolved contacts to enemy ships at faint/track tier — the snapshot
+    must never label them as decoys until ID tier resolves them.
 
 ## Judgment calls already made (user-visible, flagged in check-ins)
 
@@ -121,16 +136,24 @@ Note: on this machine's rootless Docker, `-p` port publishing doesn't route
   capture uses a continuous 0.8s pre-roll ring (voice.js).
 - Translator responses go through bracket-repair (`repairJson`) before
   rejection; raw output is logged whenever parsing fails or drops elements.
-- v4: decoys (sig 150) now out-shine even a full-burn ship (sig 110) — the
-  v3 "burn hard to keep the seeker" counterplay is gone, per spec'd numbers.
+- v4.1: DECOY_SIGNATURE retuned 150 -> 90 after the flag on the 150 value —
+  throttle discipline is back ("break the lock, throttle down, decoy").
+- v4.1: the 2 s seeker-reacquire-then-permanently-ballistic rule was
+  REMOVED: a target-less autonomous bird holds course and may acquire
+  later (blind fire needs long candidate-less flight); only dry fuel ends
+  steering.
+- v4.1: decoy contacts get no XO transition lines (only the enemy SHIP
+  drives contact-tier announcements) — snapshot-level deception only.
 - v4: "tell me when X" standing orders use a harmless `show_vector` action —
   the trigger log line itself is the telling (there is no notify verb).
 - v4: PDC ship-fire hull damage is applied directly (fractional per substep)
   with edge-triggered notices, not via damageShip (which would spam 10
   notices/s).
 - v4: drone with no terrain flies the legacy circle (keeps headless tests
-  deterministic); with terrain it patrols rock/dust waypoints with a
-  projected-impact dodge.
+  deterministic); with terrain it patrols SKIM POINTS off rock flanks
+  (never rock centers) with a padded, direction-committed dodge — measured
+  to occlude it from a trailing pursuer 15-30% of the time on most seeds
+  (v4.1 §7 verification).
 - Explosion fx are shown within SENSOR_BASE_M + LOS regardless of tier
   (bright events), a deliberate mild softening of fog.
 

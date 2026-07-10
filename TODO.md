@@ -1,11 +1,14 @@
 # TODO — next steps
 
-## v4 "The Big Dark" — BUILT (2026-07-10), awaiting playtest + deploy
+## v4 "The Big Dark" + v4.1 addendum — BUILT (2026-07-10), awaiting playtest + deploy
 
-All ten build-order steps of `HANDOFF-v4.md` are implemented and committed
-on branch `v4-big-dark` (~250 headless assertions green; English-path
-verified end-to-end in the browser: translator → flank speed → vector
-overlay → full-stop maneuver, plus terrain/camera/tier HUD).
+All ten build-order steps of `HANDOFF-v4.md` plus the full `HANDOFF-v4.1.md`
+addendum (sensor-slaved PDCs, blind fire, uplinked/autonomous guidance,
+seeker detection math, decoy retune 90 + fake-contact deception, cursor
+bearing readout) are implemented and committed on branch `v4-big-dark`
+(280 headless assertions green; English-path verified in the browser:
+flank speed, vector overlay, full stop, and "put a torpedo down bearing
+zero four five, fire blind" → bird curving onto 045 with no lock).
 
 **Remaining before this milestone is DONE:**
 
@@ -28,6 +31,14 @@ overlay → full-stop maneuver, plus terrain/camera/tier HUD).
   ~10 km (track band of sig 10) — provoking a burn matters. Working?
 - **PDC kill prob 0.25/s**: spec says saturation salvos are SUPPOSED to
   leak — resist tuning up (there's a leak-rate test pinning the intent).
+- **"Break lock, then spoof" two-step escape** (v4.1 §3 design
+  consequence, flagged for playtest): does breaking the uplink via
+  rocks/dust/going-dark and THEN decoying the orphaned bird actually land
+  as a learnable doctrine?
+- **Blind fire usefulness**: seeker base 40 km — does firing into dust
+  clouds/shadows ever pay off, or is it pure ammo waste?
+- **Decoy-as-fake-contact**: does dropping a decoy at range actually fool
+  anyone into a chase? (It reads as an ordinary faint contact to ~148 km.)
 - **Propellant as delta-v** (6000 m/s budget): do matches stall dry?
   EDGE pull returns strays, but a dry drifting duel could be long.
 - **Collision damage curve**: 600 m/s hit = 14 hull. Punchy enough?

@@ -2,9 +2,11 @@
 import * as C from "./constants.js";
 import {
   type Terrain,
+  type Rock,
   emptyTerrain,
   generateTerrain,
   firstRockHit,
+  segCircleHitT,
   losClear,
   insideDust,
 } from "./terrain.js";
@@ -112,6 +114,7 @@ export interface Ship {
   sigSpikeLaunch: number; // seconds of +SIG_SPIKE_LAUNCH remaining after firing
   droneCooldown: number; // drone-only: seconds until it may fire again
   droneWaypoint: number; // drone-only: index into the patrol route
+  droneDodge: -1 | 0 | 1; // drone-only: committed dodge direction (hysteresis)
   isDrone: boolean;
   standingOrders: StandingOrder[];
   orderCounter: number; // for generated labels
@@ -157,12 +160,16 @@ export interface Missile {
   course: number; // compass deg; guidance steers this, velocity follows it
   speed: number; // ramps from inherited launch speed to MISSILE_MAX_SPEED_MPS
   age: number; // seconds since launch
-  fuel: number; // engine-on seconds remaining; dry = no accel, no turning
+  fuel: number; // engine-on seconds remaining; dry = ballistic (no accel, no turning)
   burning: boolean; // engine state last substep (drives signature)
-  // lock: what the seeker is steering at right now
+  // UPLINKED: the launching ship holds lock and feeds the track — the bird
+  // flies an intercept and IGNORES decoys. AUTONOMOUS: seeker-only (blind
+  // fired, or the uplink was severed — one-way). See HANDOFF-v4.1 §3.
+  guidance: "uplinked" | "autonomous";
+  cmdBearing: number | null; // blind fire: absolute bearing to steer onto
+  // lock: what the seeker is steering at right now (autonomous only; an
+  // uplinked bird's target is the mother ship's track)
   lock: { type: "ship"; id: ShipId } | { type: "decoy"; id: number } | null;
-  seekTimer: number; // seconds spent unlocked while seeking (reacquire window)
-  ballistic: boolean; // seeker gave up; flies straight until lifetime expiry
 }
 
 export interface Decoy {
@@ -260,6 +267,9 @@ export class Sim {
   // per-viewer set of enemy missile ids visible last sensor pass (drives the
   // "torpedo has gone ballistic — I've lost it" report)
   private prevVisibleMissiles = new Map<ShipId, Set<number>>();
+  // per-viewer noisy faint fixes for enemy decoys read as unresolved
+  // contacts (strategic deception, HANDOFF-v4.1 §7)
+  private decoyFaint = new Map<ShipId, Map<number, { x: number; y: number; t: number }>>();
 
   // No seed = empty terrain (headless tests build exact fields by hand);
   // matches always pass one.
@@ -300,6 +310,7 @@ export class Sim {
       sigSpikeLaunch: 0,
       droneCooldown: 0,
       droneWaypoint: 0,
+      droneDodge: 0,
       isDrone,
       standingOrders: [],
       orderCounter: 0,
@@ -316,6 +327,7 @@ export class Sim {
     this.queues.set(id, []);
     this.announcedMissiles.set(id, new Set());
     this.prevVisibleMissiles.set(id, new Set());
+    this.decoyFaint.set(id, new Map());
     return ship;
   }
 
@@ -421,7 +433,17 @@ export class Sim {
         return null;
       }
       case "fire_missile": {
-        if (!ship.lock.has) return "No lock, Captain.";
+        // guidance: "locked" (default; needs a held lock -> UPLINKED bird)
+        // or "bearing" (blind fire, no lock -> AUTONOMOUS from birth)
+        const blind = cmd.params.guidance === "bearing";
+        if (!blind && !ship.lock.has) {
+          return "No lock, Captain — I can fire blind on a bearing if you want it.";
+        }
+        const rawBearing = cmd.params.bearing_degrees;
+        const cmdBearing =
+          blind && typeof rawBearing === "number" && Number.isFinite(rawBearing)
+            ? norm360(rawBearing)
+            : null; // blind with no bearing = straight out the nose
 
         // Which tubes? Explicit list (1-based) or the first ready tube.
         let requested: number[];
@@ -456,7 +478,7 @@ export class Sim {
             });
             continue;
           }
-          this.launchMissile(ship, n, events);
+          this.launchMissile(ship, n, events, blind, cmdBearing);
           fired++;
         }
         if (fired === 0) {
@@ -553,12 +575,20 @@ export class Sim {
   // Fire one missile out of tube `tubeNo` (1-based; caller checked loaded).
   // Model (b): guidance steers the velocity vector; speed ramps from the
   // ship's forward momentum at launch up to MISSILE_MAX_SPEED_MPS. Course
-  // starts along the ship's facing (nose-launched).
-  private launchMissile(ship: Ship, tubeNo: number, events: SimEvent[]): void {
+  // starts along the ship's facing (nose-launched); a blind bird then
+  // steers itself onto its commanded bearing.
+  private launchMissile(
+    ship: Ship,
+    tubeNo: number,
+    events: SimEvent[],
+    blind = false,
+    cmdBearing: number | null = null
+  ): void {
     const tube = ship.tubes[tubeNo - 1];
     tube.loaded = false;
     const [fx, fy] = headingVec(ship.facing);
     const inherited = clamp(ship.vx * fx + ship.vy * fy, 0, C.MISSILE_MAX_SPEED_MPS);
+    const enemyId: ShipId = ship.id === "A" ? "B" : "A";
     this.missiles.push({
       id: this.nextId++,
       owner: ship.id,
@@ -573,10 +603,13 @@ export class Sim {
       age: 0,
       fuel: C.MISSILE_PROPELLANT_S,
       burning: true,
-      lock: null,
-      seekTimer: 0,
-      ballistic: false,
+      guidance: blind ? "autonomous" : "uplinked",
+      cmdBearing: blind ? cmdBearing : null,
+      lock: blind ? null : { type: "ship", id: enemyId },
     });
+    if (blind && !ship.isDrone) {
+      events.push({ kind: "notice", ship: ship.id, text: "Bird away, running blind." });
+    }
 
     // Launch flash: a +SIG_SPIKE_LAUNCH signature spike. The distinct XO
     // notice fires iff the spike actually makes the launcher detectable
@@ -732,10 +765,15 @@ export class Sim {
     if (ship.pdcPosture !== "free" || ship.pdcAmmoS <= 0 || this.winner) return;
     let firing = false;
 
-    // (a) inbound missiles
+    // (a) inbound missiles. SENSOR-SLAVED: the mount shares the ship's
+    // sensor picture — it can only engage ordnance the ship currently
+    // detects (signature detection range + LOS). A ballistic torpedo
+    // arriving from sensor shadow may never be engaged. Intended.
     for (const m of this.missiles) {
       if (m.owner === ship.id || deadMissiles.has(m.id)) continue;
-      if (dist(ship.x, ship.y, m.x, m.y) > C.PDC_RANGE_M) continue;
+      const range = dist(ship.x, ship.y, m.x, m.y);
+      if (range > C.PDC_RANGE_M) continue;
+      if (range > this.detectionRange(this.missileSignature(m))) continue;
       if (!this.losClear(ship.x, ship.y, m.x, m.y)) continue;
       firing = true;
       this.fx.push({ type: "pdc", owner: ship.id, x1: ship.x, y1: ship.y, x2: m.x, y2: m.y });
@@ -852,13 +890,49 @@ export class Sim {
     );
   }
 
+  // Contact tier this viewer earns on an enemy decoy. At faint/track a
+  // decoy is an ordinary unresolved contact — indistinguishable from a
+  // quietly cruising ship; only at ID does it resolve as a decoy.
+  decoyTierFor(viewer: Ship, d: Decoy): 0 | 1 | 2 | 3 {
+    if (!this.losClear(viewer.x, viewer.y, d.x, d.y)) return 0;
+    const frac = dist(viewer.x, viewer.y, d.x, d.y) / this.detectionRange(C.DECOY_SIGNATURE);
+    if (frac <= C.TIER_ID_FRAC) return 3;
+    if (frac <= C.TIER_TRACK_FRAC) return 2;
+    if (frac <= C.TIER_FAINT_FRAC) return 1;
+    return 0;
+  }
+
+  // Enemy decoys RESOLVED as decoys (ID tier) — what the helm may point at
+  // and what the snapshot labels as a decoy.
   private visibleEnemyDecoys(ship: Ship): Decoy[] {
     return this.decoys.filter(
-      (d) =>
-        d.owner !== ship.id &&
-        dist(ship.x, ship.y, d.x, d.y) <= this.detectionRange(C.DECOY_SIGNATURE) &&
-        this.losClear(ship.x, ship.y, d.x, d.y)
+      (d) => d.owner !== ship.id && this.decoyTierFor(ship, d) === 3
     );
+  }
+
+  // Refresh this viewer's noisy faint fixes for unresolved enemy decoys
+  // (sensor phase, 1 Hz — same cadence and noise as ship faint contacts).
+  private updateDecoyContacts(ship: Ship): void {
+    const cache = this.decoyFaint.get(ship.id)!;
+    const live = new Set<number>();
+    for (const d of this.decoys) {
+      if (d.owner === ship.id) continue;
+      if (this.decoyTierFor(ship, d) !== 1) continue;
+      live.add(d.id);
+      const fix = cache.get(d.id);
+      if (!fix || this.tickCount - fix.t >= C.FAINT_UPDATE_INTERVAL_S * C.TICK_RATE_HZ) {
+        const ang = Math.random() * Math.PI * 2;
+        const noise = Math.random() * C.FAINT_POS_NOISE_M;
+        cache.set(d.id, {
+          x: d.x + Math.cos(ang) * noise,
+          y: d.y + Math.sin(ang) * noise,
+          t: this.tickCount,
+        });
+      }
+    }
+    for (const id of cache.keys()) {
+      if (!live.has(id)) cache.delete(id);
+    }
   }
 
   private nearestOf<T extends { x: number; y: number }>(ship: Ship, list: T[]): T | null {
@@ -983,6 +1057,7 @@ export class Sim {
     // painted warnings (needs both locks updated)
     for (const ship of this.ships.values()) {
       this.updateSensors(ship, events);
+      this.updateDecoyContacts(ship);
       this.announceInboundMissiles(ship, events);
       this.updateCollisionWarning(ship, events);
       this.announceDust(ship, events);
@@ -1001,28 +1076,49 @@ export class Sim {
   private droneSteer(ship: Ship): number {
     if (this.terrain.rocks.length === 0) return C.DRONE_TURN_RATE_DPS; // legacy circle
 
-    // rock-aware: dodge first
-    const ahead = firstRockHit(
-      ship.x,
-      ship.y,
-      ship.x + ship.vx * C.DRONE_AVOID_LOOKAHEAD_S,
-      ship.y + ship.vy * C.DRONE_AVOID_LOOKAHEAD_S,
-      this.terrain
-    );
-    if (ahead) {
-      // steer away from the rock's center
-      const away = angDiff(ship.facing, bearingTo(ship.x, ship.y, ahead.rock.x, ahead.rock.y));
-      return away >= 0 ? -C.DRONE_PATROL_TURN_DPS : C.DRONE_PATROL_TURN_DPS;
+    // rock-aware: dodge first, with a padded hit test (the ray is the
+    // drone's center line; grazing arcs clip rocks the raw ray misses).
+    // The dodge direction COMMITS until the path clears (hysteresis) —
+    // re-picking per substep oscillates and wedges the drone on a face.
+    const lookX = ship.x + ship.vx * C.DRONE_AVOID_LOOKAHEAD_S;
+    const lookY = ship.y + ship.vy * C.DRONE_AVOID_LOOKAHEAD_S;
+    let aheadRock: Rock | null = null;
+    let aheadT = Infinity;
+    for (const rock of this.terrain.rocks) {
+      const t = segCircleHitT(ship.x, ship.y, lookX, lookY, rock.x, rock.y, rock.r + 1500);
+      if (t !== null && t < aheadT) {
+        aheadT = t;
+        aheadRock = rock;
+      }
     }
+    if (aheadRock) {
+      if (ship.droneDodge === 0) {
+        const away = angDiff(ship.facing, bearingTo(ship.x, ship.y, aheadRock.x, aheadRock.y));
+        ship.droneDodge = away >= 0 ? -1 : 1;
+      }
+      return ship.droneDodge * 2 * C.DRONE_PATROL_TURN_DPS;
+    }
+    ship.droneDodge = 0;
 
-    // waypoint route: every rock and dust center, then the region center
-    const route: { x: number; y: number }[] = [
-      ...this.terrain.rocks,
-      ...this.terrain.dust,
-      { x: 0, y: 0 },
+    // Waypoint route: a SKIM POINT off each rock's flank (never the rock
+    // body itself — the patrol weaves the field close enough that pursuers
+    // lose LOS behind it), the dust centers, then the region center.
+    const skim = (r: Rock, i: number): { x: number; y: number; arrive: number } => {
+      const side = i % 2 === 0 ? Math.PI / 2 : -Math.PI / 2;
+      const ang = Math.atan2(r.y, r.x) + side;
+      return {
+        x: r.x + Math.cos(ang) * (r.r + C.DRONE_ROCK_SKIM_M),
+        y: r.y + Math.sin(ang) * (r.r + C.DRONE_ROCK_SKIM_M),
+        arrive: C.DRONE_ROCK_SKIM_M * 1.5,
+      };
+    };
+    const route: { x: number; y: number; arrive: number }[] = [
+      ...this.terrain.rocks.map(skim),
+      ...this.terrain.dust.map((d) => ({ x: d.x, y: d.y, arrive: C.DRONE_WAYPOINT_RADIUS_M })),
+      { x: 0, y: 0, arrive: C.DRONE_WAYPOINT_RADIUS_M },
     ];
     const wp = route[ship.droneWaypoint % route.length];
-    if (dist(ship.x, ship.y, wp.x, wp.y) < C.DRONE_WAYPOINT_RADIUS_M) {
+    if (dist(ship.x, ship.y, wp.x, wp.y) < wp.arrive) {
       // seeded-enough hop: stride by a prime so the tour mixes
       ship.droneWaypoint = (ship.droneWaypoint + 7) % route.length;
     }
@@ -1041,25 +1137,35 @@ export class Sim {
     if (!reason) ship.droneCooldown = C.DRONE_MISSILE_COOLDOWN_S;
   }
 
-  // Burn-and-coast: while fuel remains, guidance steers the course toward
-  // the lock (clamped to MISSILE_TURN_RATE) and the engine pushes toward max
-  // speed. The engine is ON iff fuel > 0 AND (below max speed OR turning to
-  // track); engine-on drains fuel at 1/s. Dry = ballistic: no acceleration,
-  // no turning — it flies its line, still lethal on prox.
+  // Burn-and-coast: while fuel remains, guidance steers the course (clamped
+  // to MISSILE_TURN_RATE) and the engine pushes toward max speed. The engine
+  // is ON iff fuel > 0 AND (below max speed OR turning); engine-on drains
+  // fuel at 1/s. Dry = ballistic: no acceleration, no turning — it flies its
+  // line, still lethal on prox.
+  //
+  // What the guidance steers at:
+  //  - UPLINKED: an intercept point led off the mother ship's live track
+  //    (position + velocity), regardless of the bird's own seeker.
+  //  - AUTONOMOUS with a seeker target: direct pursuit of that target.
+  //  - AUTONOMOUS with no target: the commanded blind-fire bearing, if any
+  //    (a target-less bird holds course — it may still acquire later).
   private stepMissile(m: Missile, dt: number): void {
     m.prevX = m.x;
     m.prevY = m.y;
 
     let turning = false;
-    const canSteer =
-      m.fuel > 0 &&
-      m.lock &&
-      !m.ballistic &&
-      m.age >= C.MISSILE_LAUNCH_DELAY_TICKS / C.TICK_RATE_HZ;
-    if (canSteer) {
-      const target = this.lockPos(m.lock!);
-      if (target) {
-        const want = bearingTo(m.x, m.y, target.x, target.y);
+    if (m.fuel > 0 && m.age >= C.MISSILE_LAUNCH_DELAY_TICKS / C.TICK_RATE_HZ) {
+      let want: number | null = null;
+      if (m.guidance === "uplinked") {
+        const target = this.ships.get(m.owner === "A" ? "B" : "A");
+        if (target) want = this.interceptBearing(m, target);
+      } else if (m.lock) {
+        const target = this.lockPos(m.lock);
+        if (target) want = bearingTo(m.x, m.y, target.x, target.y);
+      } else if (m.cmdBearing !== null) {
+        want = m.cmdBearing;
+      }
+      if (want !== null) {
         const diff = angDiff(m.course, want);
         if (Math.abs(diff) > 0.1) turning = true;
         const step = clamp(diff, -C.MISSILE_TURN_RATE_DPS * dt, C.MISSILE_TURN_RATE_DPS * dt);
@@ -1079,6 +1185,36 @@ export class Sim {
     m.x += m.vx * dt;
     m.y += m.vy * dt;
     m.age += dt;
+  }
+
+  // Lead pursuit: bearing to the point where target and missile meet,
+  // assuming both hold velocity. Falls back to direct pursuit when no
+  // positive-time solution exists.
+  private interceptBearing(m: Missile, target: Ship): number {
+    const rx = target.x - m.x;
+    const ry = target.y - m.y;
+    const s = Math.max(m.speed, C.MISSILE_ACCEL_MPS2); // ramping birds still lead
+    const a = target.vx * target.vx + target.vy * target.vy - s * s;
+    const b = 2 * (rx * target.vx + ry * target.vy);
+    const c = rx * rx + ry * ry;
+    let t: number | null = null;
+    if (Math.abs(a) < 1e-6) {
+      if (Math.abs(b) > 1e-9) {
+        const t0 = -c / b;
+        if (t0 > 0) t = t0;
+      }
+    } else {
+      const disc = b * b - 4 * a * c;
+      if (disc >= 0) {
+        const sq = Math.sqrt(disc);
+        const roots = [(-b - sq) / (2 * a), (-b + sq) / (2 * a)].filter((r) => r > 0);
+        if (roots.length > 0) t = Math.min(...roots);
+      }
+    }
+    if (t === null || t > C.MISSILE_LIFETIME_S) {
+      return bearingTo(m.x, m.y, target.x, target.y);
+    }
+    return bearingTo(m.x, m.y, target.x + target.vx * t, target.y + target.vy * t);
   }
 
   // ---------- ship-to-ship missile lock ----------
@@ -1254,40 +1390,61 @@ export class Sim {
     this.missiles = this.missiles.filter((m) => !deadMissiles.has(m.id));
     this.decoys = this.decoys.filter((d) => !deadDecoys.has(d.id));
 
-    // --- seeker lock evaluation for surviving missiles (post-move, so next
-    // tick's turn uses this lock)
+    // --- guidance upkeep for surviving missiles (post-move, so the next
+    // substep's turn uses fresh data)
     for (const m of this.missiles) {
-      if (m.ballistic || m.age < C.MISSILE_LAUNCH_DELAY_TICKS / C.TICK_RATE_HZ) continue;
+      if (deadMissiles.has(m.id)) continue;
+
+      // uplink severance: the mother ship must live and still hold lock.
+      // One-way — a re-acquired lock does NOT re-uplink a bird in flight.
+      if (m.guidance === "uplinked") {
+        const owner = this.ships.get(m.owner);
+        if (!owner || owner.hull <= 0 || !owner.lock.has) {
+          m.guidance = "autonomous";
+          if (owner && !owner.isDrone) {
+            events.push({
+              kind: "notice",
+              ship: m.owner,
+              text: "Uplink lost — bird is autonomous.",
+              alert: true,
+            });
+          }
+        }
+      }
+
+      if (m.age < C.MISSILE_LAUNCH_DELAY_TICKS / C.TICK_RATE_HZ) continue;
+      if (m.guidance === "uplinked") {
+        // the bird trusts the track: target is the ship, decoys ignored
+        m.lock = { type: "ship", id: m.owner === "A" ? "B" : "A" };
+        continue;
+      }
+
+      // AUTONOMOUS seeker: strongest signature it can DETECT in the cone
+      // (seeker detection = MISSILE_SEEKER_BASE_M x sig / 100, LOS
+      // required). Fully decoy-susceptible. No candidate = hold course;
+      // it may acquire later (only dry fuel ends steering for good).
       const course = m.course;
       const enemy = this.ships.get(m.owner === "A" ? "B" : "A");
-
-      // every-tick re-evaluation: highest signature wins, so a fresh decoy
-      // can steal lock from a quiet ship (intended behavior)
       type Cand = { lock: NonNullable<Missile["lock"]>; sig: number };
       const cands: Cand[] = [];
+      const seekerSees = (x: number, y: number, sig: number): boolean =>
+        dist(m.x, m.y, x, y) <= C.MISSILE_SEEKER_BASE_M * (sig / 100) &&
+        Math.abs(angDiff(course, bearingTo(m.x, m.y, x, y))) <= C.MISSILE_ACQ_CONE_DEG &&
+        this.losClear(m.x, m.y, x, y);
       if (enemy) {
-        const off = Math.abs(angDiff(course, bearingTo(m.x, m.y, enemy.x, enemy.y)));
-        if (off <= C.MISSILE_ACQ_CONE_DEG && this.losClear(m.x, m.y, enemy.x, enemy.y)) {
-          cands.push({ lock: { type: "ship", id: enemy.id }, sig: this.signatureOf(enemy) });
+        const sig = this.signatureOf(enemy);
+        if (seekerSees(enemy.x, enemy.y, sig)) {
+          cands.push({ lock: { type: "ship", id: enemy.id }, sig });
         }
       }
       for (const d of this.decoys) {
-        if (d.owner === m.owner) continue;
-        const off = Math.abs(angDiff(course, bearingTo(m.x, m.y, d.x, d.y)));
-        if (off <= C.MISSILE_ACQ_CONE_DEG && this.losClear(m.x, m.y, d.x, d.y)) {
-          cands.push({ lock: { type: "decoy", id: d.id }, sig: this.signatureOf(d) });
+        if (d.owner === m.owner || deadDecoys.has(d.id)) continue;
+        if (seekerSees(d.x, d.y, C.DECOY_SIGNATURE)) {
+          cands.push({ lock: { type: "decoy", id: d.id }, sig: C.DECOY_SIGNATURE });
         }
       }
       cands.sort((a, b) => b.sig - a.sig);
-
-      if (cands.length > 0) {
-        m.lock = cands[0].lock;
-        m.seekTimer = 0;
-      } else {
-        m.lock = null;
-        m.seekTimer += dt;
-        if (m.seekTimer > C.MISSILE_REACQUIRE_S) m.ballistic = true;
-      }
+      m.lock = cands.length > 0 ? cands[0].lock : null;
     }
   }
 
@@ -1302,13 +1459,19 @@ export class Sim {
     for (const m of visible) {
       if (seen.has(m.id)) continue;
       seen.add(m.id);
-      const brg = bearingTo(ship.x, ship.y, m.x, m.y);
-      events.push({
-        kind: "notice",
-        ship: ship.id,
-        text: `Missile inbound — bearing ${fmtBearing(brg)}!`,
-        alert: true,
-      });
+      // first detected already inside the PDC envelope = it came out of
+      // sensor shadow on top of us: urgent bark
+      if (dist(ship.x, ship.y, m.x, m.y) <= C.PDC_RANGE_M) {
+        events.push({ kind: "notice", ship: ship.id, text: "Ballistic inbound, close!", alert: true });
+      } else {
+        const brg = bearingTo(ship.x, ship.y, m.x, m.y);
+        events.push({
+          kind: "notice",
+          ship: ship.id,
+          text: `Missile inbound — bearing ${fmtBearing(brg)}!`,
+          alert: true,
+        });
+      }
     }
     const prev = this.prevVisibleMissiles.get(ship.id)!;
     for (const id of prev) {
@@ -1600,7 +1763,9 @@ export class Sim {
     ship.x = rock.x + nx * (rock.r + 1);
     ship.y = rock.y + ny * (rock.r + 1);
 
-    if (impactSpeed > C.COLLISION_HARMLESS_BELOW_MPS) {
+    // Drones bounce without hull damage: a practice drone suiciding on a
+    // rock would end the match with no shot fired (degenerate win).
+    if (impactSpeed > C.COLLISION_HARMLESS_BELOW_MPS && !ship.isDrone) {
       const f =
         (impactSpeed - C.COLLISION_HARMLESS_BELOW_MPS) /
         (C.COLLISION_LETHAL_AT_MPS - C.COLLISION_HARMLESS_BELOW_MPS);
@@ -1780,6 +1945,14 @@ export class Sim {
     } else {
       lines.push("Missiles inbound: none detected.");
     }
+    const ownBirds = this.missiles.filter((m) => m.owner === id);
+    if (ownBirds.length > 0) {
+      lines.push(
+        `Own birds in flight: ${ownBirds
+          .map((m) => (m.fuel <= 0 ? "ballistic" : m.guidance))
+          .join(", ")} (uplinked = flying our track, decoy-immune; autonomous = own seeker; ballistic = dry, no steering).`
+      );
+    }
     if (ship.standingOrders.length > 0) {
       lines.push(
         `Active standing orders (${ship.standingOrders.length}/${C.STANDING_ORDER_MAX}): ${ship.standingOrders
@@ -1844,6 +2017,9 @@ export class Sim {
       ...pdc,
       missiles_remaining: missilesAboard(ship),
       ...tubes,
+      own_birds_in_flight: this.missiles
+        .filter((m) => m.owner === ship.id)
+        .map((m) => (m.fuel <= 0 ? "ballistic" : m.guidance)),
       decoys_remaining: ship.decoys,
     };
     const zone = {
@@ -1966,6 +2142,7 @@ export class Sim {
     const contacts: Record<string, unknown>[] = [];
     if (enemy && ship.contactTier === 1 && ship.faintContact) {
       contacts.push({
+        cid: "s1", // stable per-object contact id for client interpolation
         tier: 1,
         x: ship.faintContact.x,
         y: ship.faintContact.y,
@@ -1973,6 +2150,7 @@ export class Sim {
       });
     } else if (enemy && ship.contactTier >= 2) {
       contacts.push({
+        cid: "s1",
         tier: ship.contactTier,
         x: enemy.x,
         y: enemy.y,
@@ -1985,8 +2163,32 @@ export class Sim {
           : {}),
       });
     }
-    // last-known ghost while we hold no live contact
-    const ghost = contacts.length === 0 && ship.lastKnownEnemy ? ship.lastKnownEnemy : null;
+    // Enemy decoys at faint/track read as ordinary unresolved contacts —
+    // deliberately indistinguishable from a quiet ship (a fake facing is
+    // derived from drift so the sprite renders like any track). They only
+    // resolve as decoys at ID tier (the decoys[] list below).
+    const faintFixes = this.decoyFaint.get(id)!;
+    for (const d of this.decoys) {
+      if (d.owner === id) continue;
+      const tier = this.decoyTierFor(ship, d);
+      if (tier === 1) {
+        const fix = faintFixes.get(d.id);
+        if (fix) contacts.push({ cid: `d${d.id}`, tier: 1, x: fix.x, y: fix.y });
+      } else if (tier === 2) {
+        contacts.push({
+          cid: `d${d.id}`,
+          tier: 2,
+          x: d.x,
+          y: d.y,
+          vx: d.vx,
+          vy: d.vy,
+          facing: Math.hypot(d.vx, d.vy) > 1 ? norm360(bearingTo(0, 0, d.vx, d.vy)) : 0,
+        });
+      }
+    }
+    // last-known ghost while we hold no live ship contact
+    const ghost =
+      !contacts.some((c) => c.cid === "s1") && ship.lastKnownEnemy ? ship.lastKnownEnemy : null;
 
     return {
       tick: this.tickCount,
@@ -2029,7 +2231,10 @@ export class Sim {
       missiles: [
         ...this.missiles
           .filter((m) => m.owner === id)
-          .map((m) => ({ id: m.id, x: m.x, y: m.y, vx: m.vx, vy: m.vy, burning: m.burning, own: true })),
+          .map((m) => ({
+            id: m.id, x: m.x, y: m.y, vx: m.vx, vy: m.vy, burning: m.burning,
+            guidance: m.guidance, own: true,
+          })),
         ...this.visibleEnemyMissiles(ship).map((m) => ({
           id: m.id, x: m.x, y: m.y, vx: m.vx, vy: m.vy, burning: m.burning, own: false,
         })),
