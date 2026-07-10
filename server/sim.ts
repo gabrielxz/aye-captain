@@ -1,5 +1,13 @@
 // tick loop, physics, weapons, standing orders
 import * as C from "./constants.js";
+import {
+  type Terrain,
+  emptyTerrain,
+  generateTerrain,
+  firstRockHit,
+  losClear,
+  insideDust,
+} from "./terrain.js";
 
 export type ShipId = "A" | "B";
 
@@ -94,6 +102,10 @@ export interface Ship {
   // zone transition tracking (edge-triggered transcript events)
   wasInsideZone: boolean;
   atHardLimit: boolean;
+  // collision warning: projected seconds to rock impact (null = clear) and
+  // the last announced countdown tier (re-armed when the vector clears)
+  collisionWarnS: number | null;
+  collisionTier: number | null;
   // Fog of war, per viewer: is the enemy on MY sensors right now, and where
   // did I last see it.
   enemyVisible: boolean;
@@ -214,6 +226,7 @@ export class Sim {
   ships = new Map<ShipId, Ship>();
   missiles: Missile[] = [];
   decoys: Decoy[] = [];
+  terrain: Terrain;
   tickCount = 0;
   winner: ShipId | null = null;
   private nextId = 1;
@@ -221,6 +234,17 @@ export class Sim {
   private queues = new Map<ShipId, Command[]>();
   // per-viewer set of enemy missile ids already announced as inbound
   private announcedMissiles = new Map<ShipId, Set<number>>();
+
+  // No seed = empty terrain (headless tests build exact fields by hand);
+  // matches always pass one.
+  constructor(seed: string | null = null) {
+    this.terrain = seed ? generateTerrain(seed) : emptyTerrain();
+  }
+
+  // A sensor/lock/seeker ray between two points, blocked by rocks and dust.
+  losClear(x1: number, y1: number, x2: number, y2: number): boolean {
+    return losClear(x1, y1, x2, y2, this.terrain);
+  }
 
   addShip(id: ShipId, x: number, y: number, facing: number, isDrone = false): Ship {
     const ship: Ship = {
@@ -250,6 +274,8 @@ export class Sim {
       orderCounter: 0,
       wasInsideZone: true, // spawn is well inside the zone
       atHardLimit: false,
+      collisionWarnS: null,
+      collisionTier: null,
       enemyVisible: false,
       lastKnownEnemy: null,
     };
@@ -677,16 +703,25 @@ export class Sim {
     }
   }
 
-  private damageShip(target: Ship, amount: number, source: "laser" | "missile", events: SimEvent[]): void {
+  private damageShip(
+    target: Ship,
+    amount: number,
+    source: "laser" | "missile" | "rock",
+    events: SimEvent[]
+  ): void {
     if (this.winner) return;
     target.hull = Math.max(0, target.hull - amount);
     const attackerId: ShipId = target.id === "A" ? "B" : "A";
-    const word = source === "laser" ? "Laser hit" : "Missile strike";
-    events.push({
-      kind: "notice",
-      ship: attackerId,
-      text: source === "laser" ? "Direct hit on the enemy ship." : "Missile strike on the enemy ship!",
-    });
+    if (source !== "rock") {
+      // terrain kills credit the survivor, but nobody "scored" the hit
+      events.push({
+        kind: "notice",
+        ship: attackerId,
+        text: source === "laser" ? "Direct hit on the enemy ship." : "Missile strike on the enemy ship!",
+      });
+    }
+    const word =
+      source === "laser" ? "Laser hit" : source === "missile" ? "Missile strike" : "Collision";
     events.push({
       kind: "notice",
       ship: target.id,
@@ -704,12 +739,14 @@ export class Sim {
     return ship.goal ? ship.goal.degrees : null;
   }
 
-  // Enemy ordnance this ship's sensors can see (within detect range).
+  // Enemy ordnance this ship's sensors can see (within detect range, LOS
+  // permitting — rocks and dust hide ordnance like anything else).
   private visibleEnemyMissiles(ship: Ship): Missile[] {
     return this.missiles.filter(
       (m) =>
         m.owner !== ship.id &&
-        dist(ship.x, ship.y, m.x, m.y) <= C.ORDNANCE_DETECT_RANGE_M
+        dist(ship.x, ship.y, m.x, m.y) <= C.ORDNANCE_DETECT_RANGE_M &&
+        this.losClear(ship.x, ship.y, m.x, m.y)
     );
   }
 
@@ -717,7 +754,8 @@ export class Sim {
     return this.decoys.filter(
       (d) =>
         d.owner !== ship.id &&
-        dist(ship.x, ship.y, d.x, d.y) <= C.ORDNANCE_DETECT_RANGE_M
+        dist(ship.x, ship.y, d.x, d.y) <= C.ORDNANCE_DETECT_RANGE_M &&
+        this.losClear(ship.x, ship.y, d.x, d.y)
     );
   }
 
@@ -842,6 +880,7 @@ export class Sim {
     for (const ship of this.ships.values()) {
       this.updateSensors(ship, events);
       this.announceInboundMissiles(ship, events);
+      this.updateCollisionWarning(ship, events);
     }
     for (const ship of this.ships.values()) {
       this.updateLock(ship, events, tickDt);
@@ -970,7 +1009,25 @@ export class Sim {
     const deadMissiles = new Set<number>();
     const deadDecoys = new Set<number>();
 
+    // --- terrain: rocks are solid; ordnance impacting one is destroyed
+    // (missiles detonate harmlessly)
+    if (this.terrain.rocks.length > 0) {
+      for (const m of this.missiles) {
+        const hit = firstRockHit(m.prevX, m.prevY, m.x, m.y, this.terrain);
+        if (hit) {
+          deadMissiles.add(m.id);
+          this.fx.push({ type: "boom", x: m.x, y: m.y });
+        }
+      }
+      for (const d of this.decoys) {
+        if (firstRockHit(d.x - d.vx * dt, d.y - d.vy * dt, d.x, d.y, this.terrain)) {
+          deadDecoys.add(d.id);
+        }
+      }
+    }
+
     for (const m of this.missiles) {
+      if (deadMissiles.has(m.id)) continue;
       if (m.age < C.MISSILE_LAUNCH_DELAY_TICKS / C.TICK_RATE_HZ) continue; // still in launch delay
       const enemy = this.ships.get(m.owner === "A" ? "B" : "A");
 
@@ -1046,14 +1103,14 @@ export class Sim {
       const cands: Cand[] = [];
       if (enemy) {
         const off = Math.abs(angDiff(course, bearingTo(m.x, m.y, enemy.x, enemy.y)));
-        if (off <= C.MISSILE_ACQ_CONE_DEG) {
+        if (off <= C.MISSILE_ACQ_CONE_DEG && this.losClear(m.x, m.y, enemy.x, enemy.y)) {
           cands.push({ lock: { type: "ship", id: enemy.id }, sig: this.signatureOf(enemy) });
         }
       }
       for (const d of this.decoys) {
         if (d.owner === m.owner) continue;
         const off = Math.abs(angDiff(course, bearingTo(m.x, m.y, d.x, d.y)));
-        if (off <= C.MISSILE_ACQ_CONE_DEG) {
+        if (off <= C.MISSILE_ACQ_CONE_DEG && this.losClear(m.x, m.y, d.x, d.y)) {
           cands.push({ lock: { type: "decoy", id: d.id }, sig: this.signatureOf(d) });
         }
       }
@@ -1088,6 +1145,44 @@ export class Sim {
     }
   }
 
+  // Project own velocity COLLISION_WARNING_S ahead; if the path crosses a
+  // rock, keep a countdown for the HUD and announce at coarse steps
+  // (20/15/10/5). Re-arms when the vector clears.
+  private updateCollisionWarning(ship: Ship, events: SimEvent[]): void {
+    let secs: number | null = null;
+    if (this.terrain.rocks.length > 0) {
+      const hit = firstRockHit(
+        ship.x,
+        ship.y,
+        ship.x + ship.vx * C.COLLISION_WARNING_S,
+        ship.y + ship.vy * C.COLLISION_WARNING_S,
+        this.terrain
+      );
+      if (hit) secs = hit.t * C.COLLISION_WARNING_S;
+    }
+    const tier = secs === null ? null : secs > 15 ? 20 : secs > 10 ? 15 : secs > 5 ? 10 : 5;
+    if (
+      tier !== null &&
+      (ship.collisionTier === null || tier < ship.collisionTier) &&
+      !ship.isDrone
+    ) {
+      const words: Record<number, string> = { 20: "twenty", 15: "fifteen", 10: "ten", 5: "five" };
+      events.push({
+        kind: "notice",
+        ship: ship.id,
+        text: `Rock on our vector — impact in ${words[tier]} seconds!`,
+        alert: tier <= 10,
+      });
+    }
+    ship.collisionTier = tier;
+    ship.collisionWarnS = secs;
+  }
+
+  // Inside a dust cloud you are blind and unseen (both directions).
+  inDust(ship: Ship): boolean {
+    return insideDust(ship.x, ship.y, this.terrain);
+  }
+
   sensorRangeOf(ship: Ship): number {
     return (
       C.SENSOR_RANGE_M * (this.insideZone(ship) ? 1 : C.OUTSIDE_ZONE_SENSOR_MULT)
@@ -1106,8 +1201,11 @@ export class Sim {
     let baseVisible = false;
     if (enemy) {
       const range = dist(ship.x, ship.y, enemy.x, enemy.y);
-      baseVisible = range <= this.sensorRangeOf(ship) || !this.insideZone(enemy);
-      visible = baseVisible || enemy.launchFlash > 0;
+      // every detection path — range, outside-zone reveal, launch flash —
+      // needs an unobstructed ray (rocks and dust block LOS)
+      const clear = this.losClear(ship.x, ship.y, enemy.x, enemy.y);
+      baseVisible = clear && (range <= this.sensorRangeOf(ship) || !this.insideZone(enemy));
+      visible = baseVisible || (clear && enemy.launchFlash > 0);
       if (visible) {
         ship.lastKnownEnemy = {
           x: enemy.x,
@@ -1158,10 +1256,13 @@ export class Sim {
     if (ship.isDrone) {
       ship.facing = norm360(ship.facing + C.DRONE_TURN_RATE_DPS * dt);
       const [fx, fy] = headingVec(ship.facing);
+      const ox = ship.x;
+      const oy = ship.y;
       ship.vx = fx * C.DRONE_SPEED_MPS;
       ship.vy = fy * C.DRONE_SPEED_MPS;
       ship.x += ship.vx * dt;
       ship.y += ship.vy * dt;
+      this.resolveRockCollision(ship, ox, oy, events);
       return;
     }
     // rotate toward goal at fixed turn rate, clamped (no overshoot).
@@ -1189,10 +1290,46 @@ export class Sim {
       ship.vy *= k;
     }
 
+    const ox = ship.x;
+    const oy = ship.y;
     ship.x += ship.vx * dt;
     ship.y += ship.vy * dt;
+    this.resolveRockCollision(ship, ox, oy, events);
 
     this.stepPropellant(ship, effective, events, dt);
+  }
+
+  // Rocks are solid. Swept check over the substep movement; on impact the
+  // ship is placed at the surface, the normal velocity component reflects
+  // and dampens (tangential survives), and hull damage scales with how hard
+  // the ship drove into the surface.
+  private resolveRockCollision(ship: Ship, ox: number, oy: number, events: SimEvent[]): void {
+    const hit = firstRockHit(ox, oy, ship.x, ship.y, this.terrain);
+    if (!hit) return;
+    const rock = hit.rock;
+    const ix = ox + (ship.x - ox) * hit.t;
+    const iy = oy + (ship.y - oy) * hit.t;
+    let nx = ix - rock.x;
+    let ny = iy - rock.y;
+    const nl = Math.hypot(nx, ny) || 1;
+    nx /= nl;
+    ny /= nl;
+
+    const vN = ship.vx * nx + ship.vy * ny; // negative = driving into the rock
+    const impactSpeed = Math.max(0, -vN);
+    ship.vx -= (1 + C.COLLISION_RESTITUTION) * Math.min(0, vN) * nx;
+    ship.vy -= (1 + C.COLLISION_RESTITUTION) * Math.min(0, vN) * ny;
+    ship.x = rock.x + nx * (rock.r + 1);
+    ship.y = rock.y + ny * (rock.r + 1);
+
+    if (impactSpeed > C.COLLISION_HARMLESS_BELOW_MPS) {
+      const f =
+        (impactSpeed - C.COLLISION_HARMLESS_BELOW_MPS) /
+        (C.COLLISION_LETHAL_AT_MPS - C.COLLISION_HARMLESS_BELOW_MPS);
+      const dmg = Math.round(100 * f * f);
+      this.fx.push({ type: "boom", x: ix, y: iy });
+      if (dmg > 0) this.damageShip(ship, dmg, "rock", events);
+    }
   }
 
   // Burn scales linearly with EFFECTIVE thrust; the ramscoop regenerates
@@ -1536,6 +1673,8 @@ export class Sim {
         decoys: ship.decoys,
         laserCooldown: ship.laserCooldown,
         insideZone: this.insideZone(ship),
+        inDust: this.inDust(ship),
+        collisionWarning: ship.collisionWarnS === null ? null : Math.round(ship.collisionWarnS),
         sensorRange: this.sensorRangeOf(ship),
         standingOrders: ship.standingOrders.map((o) => ({
           label: o.label,

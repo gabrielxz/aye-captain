@@ -2,6 +2,7 @@
 // sets process.exitCode = 1 on any failure. Run with: npm test
 import "./physics.test.js";
 import "./subtick.test.js";
+import "./terrain.test.js";
 import "./fog.test.js";
 import "./translator.test.js";
 import "./weapons.test.js";

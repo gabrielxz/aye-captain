@@ -259,6 +259,99 @@ function drawStars() {
   ctx.globalAlpha = 1;
 }
 
+// ---------- terrain (rocks + dust nebulae) ----------
+
+// Deterministic craggy outline per rock: radial jitter on a polygon, seeded
+// by rock index so it's stable frame to frame and identical for both players.
+let rockShapeCache = null; // [{points: [[dx,dy],...]}] normalized to r=1
+let rockShapeSeed = null;
+
+function rockShapes() {
+  const terrain = state.terrain;
+  if (!terrain) return [];
+  if (rockShapeCache && rockShapeSeed === terrain.seed) return rockShapeCache;
+  rockShapeSeed = terrain.seed;
+  rockShapeCache = terrain.rocks.map((rock, i) => {
+    const rand = mulberry32(1000 + i * 7919);
+    const n = rock.centerpiece ? 22 : 14;
+    const points = [];
+    for (let k = 0; k < n; k++) {
+      const a = (k / n) * Math.PI * 2;
+      const jitter = 0.82 + rand() * 0.3;
+      points.push([Math.cos(a) * jitter, Math.sin(a) * jitter]);
+    }
+    // a few craters on the bigger bodies
+    const craters = [];
+    if (rock.r > 4000) {
+      const count = rock.centerpiece ? 4 : 2;
+      for (let k = 0; k < count; k++) {
+        craters.push({ x: (rand() - 0.5) * 1.1, y: (rand() - 0.5) * 1.1, r: 0.1 + rand() * 0.16 });
+      }
+    }
+    return { points, craters };
+  });
+  return rockShapeCache;
+}
+
+function drawTerrain() {
+  const terrain = state.terrain;
+  if (!terrain) return;
+
+  // dust first: soft nebula patches under everything else
+  for (const d of terrain.dust ?? []) {
+    const [sx, sy] = worldToScreen(d.x, d.y);
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate((d.rot * Math.PI) / 180);
+    ctx.scale(d.rx * camera.zoom, d.ry * camera.zoom);
+    const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+    grad.addColorStop(0, "rgba(96, 126, 158, 0.16)");
+    grad.addColorStop(0.6, "rgba(96, 126, 158, 0.09)");
+    grad.addColorStop(1, "rgba(96, 126, 158, 0)");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(0, 0, 1, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  const shapes = rockShapes();
+  (terrain.rocks ?? []).forEach((rock, i) => {
+    const [sx, sy] = worldToScreen(rock.x, rock.y);
+    // legibility clamp: a rock never vanishes entirely when zoomed out
+    const rpx = Math.max(2, rock.r * camera.zoom);
+    if (
+      sx + rpx < 0 || sx - rpx > canvas.clientWidth ||
+      sy + rpx < 0 || sy - rpx > canvas.clientHeight
+    ) {
+      return;
+    }
+    const shape = shapes[i];
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.beginPath();
+    shape.points.forEach(([dx, dy], k) => {
+      if (k === 0) ctx.moveTo(dx * rpx, dy * rpx);
+      else ctx.lineTo(dx * rpx, dy * rpx);
+    });
+    ctx.closePath();
+    ctx.fillStyle = rock.centerpiece ? "#1b2029" : "#171d26";
+    ctx.strokeStyle = "#2c3846";
+    ctx.lineWidth = 1;
+    ctx.fill();
+    ctx.stroke();
+    if (rpx > 14) {
+      ctx.fillStyle = "rgba(0,0,0,0.35)";
+      for (const c of shape.craters) {
+        ctx.beginPath();
+        ctx.arc(c.x * rpx, c.y * rpx, c.r * rpx, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+  });
+}
+
 // ---------- particles (smoke, explosion debris) ----------
 
 const particles = []; // {x, y, vx, vy, born, life, r0, color}
@@ -462,6 +555,7 @@ function draw() {
     drawRing(0, 0, state.config.zoneRadius, COLORS.zone, 1.25);
     drawRing(0, 0, state.config.hardLimitRadius, COLORS.hardLimit, 1, [4, 6]);
   }
+  drawTerrain();
   if (you) drawRangeRings(you);
 
   drawParticles();
@@ -550,6 +644,24 @@ function drawInset(you) {
   ctx.globalAlpha = 0.9;
   ctx.stroke();
   ctx.globalAlpha = 1;
+
+  // terrain: rocks as dots, dust as faint blobs
+  if (state.terrain) {
+    ctx.fillStyle = "rgba(96, 126, 158, 0.18)";
+    for (const d of state.terrain.dust ?? []) {
+      const [dx, dy] = toInset(d.x, d.y);
+      ctx.beginPath();
+      ctx.ellipse(dx, dy, Math.max(2, d.rx * s), Math.max(2, d.ry * s), (d.rot * Math.PI) / 180, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = "#39485a";
+    for (const rock of state.terrain.rocks ?? []) {
+      const [rx, ry] = toInset(rock.x, rock.y);
+      ctx.beginPath();
+      ctx.arc(rx, ry, Math.max(1, rock.r * s), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
 
   // current viewport rectangle
   const [vcx, vcy] = toInset(camera.x, camera.y);

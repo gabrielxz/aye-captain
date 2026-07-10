@@ -7,7 +7,7 @@ import { logUtterance } from "./datalog.js";
 import { ensureSpeech } from "./tts.js";
 
 export class Match {
-  sim = new Sim();
+  sim: Sim;
   readonly code: string | null;
   readonly practice: boolean;
   private sockets = new Map<ShipId, WebSocket | null>();
@@ -16,14 +16,25 @@ export class Match {
   private forfeitTimer: ReturnType<typeof setTimeout> | null = null;
   private started = false; // both players have been present at least once
 
-  constructor(practice: boolean, code: string | null = null) {
+  constructor(practice: boolean, code: string | null = null, seed: string = Match.randomSeed()) {
     this.practice = practice;
     this.code = code;
-    // Standard spawn: opposite sides of center, facing each other, v = 0.
-    this.sim.addShip("A", 0, -C.SPAWN_DIST_FROM_CENTER_M, 0);
-    this.sim.addShip("B", 0, C.SPAWN_DIST_FROM_CENTER_M, 180, practice); // drone in practice
+    this.sim = Match.buildSim(practice, seed);
     this.sockets.set("A", null);
     this.sockets.set("B", null);
+  }
+
+  static randomSeed(): string {
+    return Math.random().toString(36).slice(2, 10);
+  }
+
+  // Fresh sim on a terrain seed with the standard spawn: opposite sides of
+  // center, facing each other, v = 0.
+  private static buildSim(practice: boolean, seed: string): Sim {
+    const sim = new Sim(seed);
+    sim.addShip("A", 0, -C.SPAWN_DIST_FROM_CENTER_M, 0);
+    sim.addShip("B", 0, C.SPAWN_DIST_FROM_CENTER_M, 180, practice); // drone in practice
+    return sim;
   }
 
   static createPractice(ws: WebSocket): Match {
@@ -87,7 +98,15 @@ export class Match {
   private sendStart(id: ShipId): void {
     const ws = this.sockets.get(id);
     if (ws && ws.readyState === ws.OPEN) {
-      ws.send(JSON.stringify({ type: "start", role: id, practice: this.practice }));
+      // terrain travels with start (per-match, static, known to both sides)
+      ws.send(
+        JSON.stringify({
+          type: "start",
+          role: id,
+          practice: this.practice,
+          terrain: this.sim.terrain,
+        })
+      );
     }
   }
 
@@ -195,16 +214,14 @@ export class Match {
     return [...this.sockets.values()].every((s) => s !== null);
   }
 
-  // Fresh sim in the same room ("Rematch" button).
-  reset(): void {
+  // Fresh sim in the same room ("Rematch" button): same field by default,
+  // or a fresh seed when the players want a new one.
+  reset(newField = false): void {
     this.stop();
-    this.sim = new Sim();
-    this.sim.addShip("A", 0, -C.SPAWN_DIST_FROM_CENTER_M, 0);
-    this.sim.addShip("B", 0, C.SPAWN_DIST_FROM_CENTER_M, 180, this.practice);
-    for (const [id, ws] of this.sockets) {
-      if (ws && ws.readyState === ws.OPEN) {
-        ws.send(JSON.stringify({ type: "start", role: id, practice: this.practice }));
-      }
+    const seed = newField ? Match.randomSeed() : this.sim.terrain.seed;
+    this.sim = Match.buildSim(this.practice, seed);
+    for (const id of this.sockets.keys()) {
+      this.sendStart(id);
     }
     this.start();
   }

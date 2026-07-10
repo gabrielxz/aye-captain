@@ -132,7 +132,7 @@ wss.on("connection", (ws: WebSocket) => {
           ws.send(JSON.stringify({ type: "error", message: "opponent is gone — no rematch" }));
           break;
         }
-        match.reset();
+        match.reset(msg.newField === true); // same field unless asked
         break;
       }
       // stage 8: create / join

@@ -78,6 +78,22 @@ export const STANDING_ORDER_RETRIGGER_COOLDOWN_S = 5; // for repeat:true orders
 // Fog of war
 export const ORDNANCE_DETECT_RANGE_M = 6000; // missiles & decoys visible at half sensor range
 
+// Terrain (generated per match from a seed; see terrain.ts)
+export const ROCK_COUNT = 30; // field rocks, plus ONE centerpiece body
+export const ROCK_RADIUS_MIN_M = 1000;
+export const ROCK_RADIUS_MAX_M = 8000;
+export const CENTERPIECE_RADIUS_M = 15000; // cracked moonlet in the middle third
+export const ROCK_MIN_GAP_M = 8000; // edge-to-edge; keeps fields navigable
+export const ROCK_SPAWN_CLEAR_M = 20000; // no rock this close to a spawn point
+export const DUST_COUNT = 3;
+export const DUST_SIZE_MIN_M = 30000; // full width of a dust ellipse
+export const DUST_SIZE_MAX_M = 60000;
+// Ship-vs-rock impacts: damage = 100 x ((v_impact - HARMLESS) / (LETHAL - HARMLESS))^2
+export const COLLISION_HARMLESS_BELOW_MPS = 50; // gentle bump
+export const COLLISION_LETHAL_AT_MPS = 1500;
+export const COLLISION_RESTITUTION = 0.5; // bounce: reflect + dampen normal component
+export const COLLISION_WARNING_S = 20; // project own velocity this far ahead
+
 // Spawn
 export const SPAWN_DIST_FROM_CENTER_M = 150000; // LINKED to REGION_RADIUS_M (60%): opposite sides, 300 km apart, facing each other, v=0
 

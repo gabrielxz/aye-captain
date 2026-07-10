@@ -37,6 +37,9 @@ export function initUI() {
   document.getElementById("btn-rematch").addEventListener("click", () => {
     send({ type: "rematch" });
   });
+  document.getElementById("btn-rematch-new").addEventListener("click", () => {
+    send({ type: "rematch", newField: true });
+  });
 
   cmdEl.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {

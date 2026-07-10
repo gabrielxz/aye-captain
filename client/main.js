@@ -5,6 +5,7 @@ import * as audio from "./audio.js";
 
 export const state = {
   config: null, // {zoneRadius, hardLimitRadius} from server hello
+  terrain: null, // {seed, rocks[], dust[]} — arrives with each match start
   role: null, // "A" | "B"
   practice: false,
   prevSnap: null, // previous snapshot (for interpolation)
@@ -45,6 +46,7 @@ function handleMessage(msg) {
     case "start":
       state.role = msg.role;
       state.practice = !!msg.practice;
+      state.terrain = msg.terrain ?? null;
       state.prevSnap = null;
       state.lastSnap = null;
       state.fxBuffer = [];
@@ -180,6 +182,11 @@ function updateHUDFromSnapshot(snap) {
     { label: "DECOY", value: `${you.decoys}` },
     { label: "LASER", value: laser },
     { label: "ZONE", value: you.insideZone ? "inside" : "OUTSIDE", cls: you.insideZone ? "" : "warn" },
+    {
+      label: "COLL",
+      value: you.collisionWarning !== null && you.collisionWarning !== undefined ? `impact ${you.collisionWarning}s` : "—",
+      cls: you.collisionWarning === null || you.collisionWarning === undefined ? "" : you.collisionWarning <= 10 ? "alert" : "warn",
+    },
     { label: "LOCK", value: lock, cls: you.lock?.has ? "good" : "" },
     {
       label: "WARN",
