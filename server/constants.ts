@@ -69,22 +69,26 @@ export const LASER_BEAM_WIDTH_DEG = 6; // half-angle off boresight (4 -> 6 after
 export const LASER_COOLDOWN_S = 4;
 export const LASER_DAMAGE = 10; // vs ships; instantly destroys missiles/decoys
 
-// Missiles. MAGAZINE is everything aboard: TUBE_COUNT start loaded, the rest
-// are reserves (6 total shots per match).
+// Missiles: burn-and-coast torpedoes. MAGAZINE is everything aboard:
+// TUBE_COUNT start loaded, the rest are reserves (6 total shots per match).
+// Engine is ON whenever (below max speed) OR (turning to track); engine-on
+// drains propellant at 1/s. Dry = BALLISTIC: no accel, no turning, flies its
+// line until lifetime, impact, or PDC kill — still detonates on prox.
 export const MISSILE_MAGAZINE = 6;
-export const MISSILE_MAX_SPEED_MPS = 3000; // LINKED: == MAX_SPEED_MPS — a missile never out-SPEEDs a ship; it wins by geometry, acceleration, turn rate (v4 §5 changes this to 2×)
-export const MISSILE_ACCEL_MPS2 = 150;
-export const MISSILE_TURN_RATE_DPS = 45;
-// false = current model: guidance steers the velocity vector directly, speed
-// ramps from inherited launch speed to max. true = future experiment: missile
-// facing decouples from velocity and thrust burns along facing (Newtonian,
-// much floatier). NOT implemented — stub for a later milestone.
+export const MISSILE_MAX_SPEED_MPS = 6000; // LINKED: 2x MAX_SPEED_MPS
+export const MISSILE_ACCEL_MPS2 = 400; // ~40g
+export const MISSILE_PROPELLANT_S = 25; // engine-on seconds
+export const MISSILE_TURN_RATE_DPS = 45; // ONLY while the engine is on
+// false = guidance steers the velocity vector directly, speed ramps from
+// inherited launch speed to max. true = future experiment: missile facing
+// decouples from velocity and thrust burns along facing (Newtonian, much
+// floatier). NOT implemented — stub for a later milestone.
 export const NEWTONIAN_MISSILES = false;
-export const MISSILE_LIFETIME_S = 45; // self-destructs after
+export const MISSILE_LIFETIME_S = 120; // absolute self-destruct
 export const MISSILE_LAUNCH_DELAY_TICKS = 2; // flies straight, no seeking, during delay
 export const MISSILE_ACQ_CONE_DEG = 60; // half-angle of seeker cone
 export const MISSILE_REACQUIRE_S = 2; // grace period after losing lock
-export const MISSILE_PROX_FUSE_M = 150;
+export const MISSILE_PROX_FUSE_M = 200;
 export const MISSILE_DAMAGE = 35;
 
 // Decoys

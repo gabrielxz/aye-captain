@@ -732,21 +732,24 @@ function drawOrdnance() {
     if (!ent) continue;
     const [sx, sy] = worldToScreen(ent.x, ent.y);
     const color = m.own ? COLORS.own : COLORS.enemy;
-    const speed = Math.hypot(m.vx, m.vy) || 1;
-    const trailM = speed * 2.5; // ~2.5s of travel
-    const [tx, ty] = worldToScreen(
-      ent.x - (m.vx / speed) * trailM,
-      ent.y - (m.vy / speed) * trailM
-    );
-    const grad = ctx.createLinearGradient(tx, ty, sx, sy);
-    grad.addColorStop(0, "rgba(0,0,0,0)");
-    grad.addColorStop(1, color);
-    ctx.beginPath();
-    ctx.moveTo(tx, ty);
-    ctx.lineTo(sx, sy);
-    ctx.strokeStyle = grad;
-    ctx.lineWidth = 2;
-    ctx.stroke();
+    // engine trail only while burning — a coasting torpedo is a bare dot
+    if (m.burning !== false) {
+      const speed = Math.hypot(m.vx, m.vy) || 1;
+      const trailM = speed * 2.5; // ~2.5s of travel
+      const [tx, ty] = worldToScreen(
+        ent.x - (m.vx / speed) * trailM,
+        ent.y - (m.vy / speed) * trailM
+      );
+      const grad = ctx.createLinearGradient(tx, ty, sx, sy);
+      grad.addColorStop(0, "rgba(0,0,0,0)");
+      grad.addColorStop(1, color);
+      ctx.beginPath();
+      ctx.moveTo(tx, ty);
+      ctx.lineTo(sx, sy);
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
     // glow halo
     ctx.beginPath();
     ctx.arc(sx, sy, 6, 0, Math.PI * 2);

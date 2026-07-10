@@ -139,6 +139,8 @@ export interface Missile {
   course: number; // compass deg; guidance steers this, velocity follows it
   speed: number; // ramps from inherited launch speed to MISSILE_MAX_SPEED_MPS
   age: number; // seconds since launch
+  fuel: number; // engine-on seconds remaining; dry = no accel, no turning
+  burning: boolean; // engine state last substep (drives signature)
   // lock: what the seeker is steering at right now
   lock: { type: "ship"; id: ShipId } | { type: "decoy"; id: number } | null;
   seekTimer: number; // seconds spent unlocked while seeking (reacquire window)
@@ -236,6 +238,9 @@ export class Sim {
   private queues = new Map<ShipId, Command[]>();
   // per-viewer set of enemy missile ids already announced as inbound
   private announcedMissiles = new Map<ShipId, Set<number>>();
+  // per-viewer set of enemy missile ids visible last sensor pass (drives the
+  // "torpedo has gone ballistic — I've lost it" report)
+  private prevVisibleMissiles = new Map<ShipId, Set<number>>();
 
   // No seed = empty terrain (headless tests build exact fields by hand);
   // matches always pass one.
@@ -284,6 +289,7 @@ export class Sim {
     this.ships.set(id, ship);
     this.queues.set(id, []);
     this.announcedMissiles.set(id, new Set());
+    this.prevVisibleMissiles.set(id, new Set());
     return ship;
   }
 
@@ -296,9 +302,9 @@ export class Sim {
     return sig;
   }
 
-  // §5 gives missiles a real engine state; until then every missile burns.
-  missileSignature(_m: Missile): number {
-    return C.MISSILE_SIG_BURNING;
+  // Signature follows the engine: a coasting torpedo nearly vanishes.
+  missileSignature(m: Missile): number {
+    return m.burning ? C.MISSILE_SIG_BURNING : C.MISSILE_SIG_COASTING;
   }
 
   // How far away a target of this signature can be seen (LOS permitting).
@@ -522,6 +528,8 @@ export class Sim {
       vx: fx * inherited,
       vy: fy * inherited,
       age: 0,
+      fuel: C.MISSILE_PROPELLANT_S,
+      burning: true,
       lock: null,
       seekTimer: 0,
       ballistic: false,
@@ -941,20 +949,38 @@ export class Sim {
     if (!reason) ship.droneCooldown = C.DRONE_MISSILE_COOLDOWN_S;
   }
 
-  // Seeking missiles steer their course toward the lock (clamped to
-  // MISSILE_TURN_RATE); speed ramps toward max; velocity follows course.
+  // Burn-and-coast: while fuel remains, guidance steers the course toward
+  // the lock (clamped to MISSILE_TURN_RATE) and the engine pushes toward max
+  // speed. The engine is ON iff fuel > 0 AND (below max speed OR turning to
+  // track); engine-on drains fuel at 1/s. Dry = ballistic: no acceleration,
+  // no turning — it flies its line, still lethal on prox.
   private stepMissile(m: Missile, dt: number): void {
     m.prevX = m.x;
     m.prevY = m.y;
-    if (m.lock && !m.ballistic && m.age >= C.MISSILE_LAUNCH_DELAY_TICKS / C.TICK_RATE_HZ) {
-      const target = this.lockPos(m.lock);
+
+    let turning = false;
+    const canSteer =
+      m.fuel > 0 &&
+      m.lock &&
+      !m.ballistic &&
+      m.age >= C.MISSILE_LAUNCH_DELAY_TICKS / C.TICK_RATE_HZ;
+    if (canSteer) {
+      const target = this.lockPos(m.lock!);
       if (target) {
         const want = bearingTo(m.x, m.y, target.x, target.y);
-        const step = clamp(angDiff(m.course, want), -C.MISSILE_TURN_RATE_DPS * dt, C.MISSILE_TURN_RATE_DPS * dt);
+        const diff = angDiff(m.course, want);
+        if (Math.abs(diff) > 0.1) turning = true;
+        const step = clamp(diff, -C.MISSILE_TURN_RATE_DPS * dt, C.MISSILE_TURN_RATE_DPS * dt);
         m.course = norm360(m.course + step);
       }
     }
-    m.speed = Math.min(m.speed + C.MISSILE_ACCEL_MPS2 * dt, C.MISSILE_MAX_SPEED_MPS);
+
+    m.burning = m.fuel > 0 && (m.speed < C.MISSILE_MAX_SPEED_MPS || turning);
+    if (m.burning) {
+      m.speed = Math.min(m.speed + C.MISSILE_ACCEL_MPS2 * dt, C.MISSILE_MAX_SPEED_MPS);
+      m.fuel = Math.max(0, m.fuel - dt);
+    }
+
     const [nx, ny] = headingVec(m.course);
     m.vx = nx * m.speed;
     m.vy = ny * m.speed;
@@ -1168,12 +1194,15 @@ export class Sim {
     }
   }
 
-  // Alert the captain the first time each enemy missile shows up in
-  // ordnance-detect range.
+  // Alert the captain the first time each enemy missile shows up on
+  // sensors; report when a watched torpedo's engine cuts and it fades
+  // (coasting sig 8 usually means instant sensor loss — that's the terror).
   private announceInboundMissiles(ship: Ship, events: SimEvent[]): void {
     if (ship.isDrone) return;
     const seen = this.announcedMissiles.get(ship.id)!;
-    for (const m of this.visibleEnemyMissiles(ship)) {
+    const visible = this.visibleEnemyMissiles(ship);
+    const visibleIds = new Set(visible.map((m) => m.id));
+    for (const m of visible) {
       if (seen.has(m.id)) continue;
       seen.add(m.id);
       const brg = bearingTo(ship.x, ship.y, m.x, m.y);
@@ -1184,6 +1213,20 @@ export class Sim {
         alert: true,
       });
     }
+    const prev = this.prevVisibleMissiles.get(ship.id)!;
+    for (const id of prev) {
+      if (visibleIds.has(id)) continue;
+      const m = this.missiles.find((mm) => mm.id === id);
+      if (m && !m.burning) {
+        events.push({
+          kind: "notice",
+          ship: ship.id,
+          text: "Torpedo has gone ballistic — I've lost it.",
+          alert: true,
+        });
+      }
+    }
+    this.prevVisibleMissiles.set(ship.id, visibleIds);
   }
 
   // Project own velocity COLLISION_WARNING_S ahead; if the path crosses a
@@ -1771,9 +1814,9 @@ export class Sim {
       missiles: [
         ...this.missiles
           .filter((m) => m.owner === id)
-          .map((m) => ({ id: m.id, x: m.x, y: m.y, vx: m.vx, vy: m.vy, own: true })),
+          .map((m) => ({ id: m.id, x: m.x, y: m.y, vx: m.vx, vy: m.vy, burning: m.burning, own: true })),
         ...this.visibleEnemyMissiles(ship).map((m) => ({
-          id: m.id, x: m.x, y: m.y, vx: m.vx, vy: m.vy, own: false,
+          id: m.id, x: m.x, y: m.y, vx: m.vx, vy: m.vy, burning: m.burning, own: false,
         })),
       ],
       decoys: [
