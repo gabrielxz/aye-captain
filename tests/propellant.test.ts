@@ -64,7 +64,7 @@ const assert = (cond: boolean, msg: string) => {
   assert(a.propellant === 0, "tank empty");
   assert(a.thrust === 100, "throttle setting remembered");
   assert(effectiveThrust(a) === 0, "no thrust output when dry");
-  assert(sim.signatureOf(a) === C.SHIP_BASE_SIGNATURE, "dry ship signature drops to base (dim)");
+  assert(sim.signatureOf(a) === C.SIG_BASE, "dry ship signature drops to base (dim)");
   const [vx, vy] = [a.vx, a.vy];
   sim.enqueue("A", [{ verb: "set_heading", params: { mode: "absolute", degrees: 90 } }]);
   sim.tick();
@@ -100,7 +100,7 @@ const assert = (cond: boolean, msg: string) => {
   const drone = sim.addShip("B", 0, 8000, 180, true);
   for (let i = 0; i < 20; i++) sim.tick();
   assert(drone.propellant === C.PROPELLANT_MAX, "drone burns no propellant");
-  assert(sim.signatureOf(drone) === C.SHIP_BASE_SIGNATURE + C.DRONE_THRUST_PERCENT, "drone signature unchanged");
+  assert(sim.signatureOf(drone) === C.SIG_BASE + C.DRONE_THRUST_PERCENT, "drone signature unchanged");
 }
 
 // 6. standing-order metric propellant_percent

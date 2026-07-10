@@ -87,13 +87,13 @@ function injectMissile(sim: Sim, owner: "A" | "B", x: number, y: number, course:
 {
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 0);
-  const b = sim.addShip("B", 0, 5000, 180);
+  const b = sim.addShip("B", 0, 6000, 180); // track band for a quiet ship
   b.vx = 42;
   sim.enqueue("A", [{ verb: "deploy_decoy", params: {} }]);
   sim.tick();
   const snap = sim.snapshotFor("A") as any;
   assert(typeof snap.you.vx === "number" && typeof snap.you.vy === "number", "own velocity in snapshot");
-  assert(snap.enemy?.visible && typeof snap.enemy.vx === "number", "visible enemy velocity in snapshot");
+  assert(snap.contacts[0]?.tier >= 2 && typeof snap.contacts[0].vx === "number", "tracked contact velocity in snapshot");
   assert(snap.decoys.length > 0 && typeof snap.decoys[0].vx === "number", "decoy velocity in snapshot");
 }
 

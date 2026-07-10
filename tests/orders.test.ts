@@ -54,7 +54,7 @@ const so = (params: any) => ({ verb: "set_standing_order", params } as any);
 {
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 0);
-  sim.addShip("B", 0, 19000, 180, true); // inside zone, off sensors
+  sim.addShip("B", 0, 120000, 180, true); // inside zone, beyond detection (drone sig 60 => ~99 km)
   sim.enqueue("A", [so({
     label: "blind",
     condition: { metric: "enemy_range", op: "lt", value: 50000 },

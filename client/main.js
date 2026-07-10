@@ -77,8 +77,9 @@ function handleMessage(msg) {
       // terminal explosion on the losing ship
       const snap = state.lastSnap;
       if (snap) {
+        const contact = (snap.contacts ?? [])[0];
         if (!msg.youWin && snap.you) bigBoomAt(snap.you.x, snap.you.y);
-        else if (msg.youWin && snap.enemy?.visible) bigBoomAt(snap.enemy.x, snap.enemy.y);
+        else if (msg.youWin && contact) bigBoomAt(contact.x, contact.y);
       }
       const mins = Math.floor(msg.durationS / 60);
       const secs = Math.round(msg.durationS % 60);
@@ -168,11 +169,15 @@ function updateHUDFromSnapshot(snap) {
       : "no lock";
   const painted = you.painted ?? "none";
   const prop = Math.round(you.propellant ?? 0);
-  const en = snap.enemy;
-  const enemyHull = en?.visible && en.hull !== undefined ? `${en.hull}/${en.hullMax ?? 100}` : "—";
+  const contact = (snap.contacts ?? [])[0] ?? null;
+  const TIER_LABEL = { 1: "FAINT", 2: "TRACK", 3: "ID" };
+  const contactLabel = contact ? TIER_LABEL[contact.tier] ?? "?" : snap.ghost ? "ghost" : "—";
+  const enemyHull = contact?.tier === 3 && contact.hull !== undefined ? `${contact.hull}/${contact.hullMax ?? 100}` : "—";
   updateHUD([
     { label: "HULL", value: `${you.hull}`, cls: you.hull <= 35 ? "alert" : you.hull <= 65 ? "warn" : "" },
-    { label: "EN HULL", value: enemyHull, cls: en?.visible && en.hull <= (en.hullMax ?? 100) / 2 ? "good" : "" },
+    { label: "EN HULL", value: enemyHull, cls: contact?.tier === 3 && contact.hull <= (contact.hullMax ?? 100) / 2 ? "good" : "" },
+    { label: "CONTACT", value: contactLabel, cls: contact ? (contact.tier >= 2 ? "good" : "warn") : "" },
+    { label: "SIG", value: `${Math.round(you.signature ?? 0)}`, cls: (you.signature ?? 0) > 100 ? "alert" : (you.signature ?? 0) > 50 ? "warn" : "good" },
     { label: "THRUST", value: `${Math.round(you.thrust)}%${tanksDry && you.thrust > 0 ? " (DRY)" : ""}`, cls: tanksDry && you.thrust > 0 ? "alert" : "" },
     { label: "SPD", value: `${you.speed} m/s` },
     { label: "HDG", value: `${String(Math.round(you.facing) % 360).padStart(3, "0")}` },

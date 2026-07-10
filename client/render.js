@@ -563,16 +563,6 @@ function draw() {
   drawOrdnance();
 
   if (you) {
-    // own sensor bubble
-    ctx.save();
-    const [sx, sy] = worldToScreen(you.x, you.y);
-    ctx.beginPath();
-    ctx.arc(sx, sy, (state.lastSnap.you.sensorRange ?? 0) * camera.zoom, 0, Math.PI * 2);
-    ctx.strokeStyle = COLORS.own;
-    ctx.globalAlpha = 0.12;
-    ctx.stroke();
-    ctx.restore();
-
     drawShip(you, "own", {
       thrust: state.lastSnap.you.thrustOut ?? state.lastSnap.you.thrust,
       hull: state.lastSnap.you.hull,
@@ -580,31 +570,58 @@ function draw() {
     });
   }
 
-  drawEnemy();
+  drawContacts();
   drawInset(you);
 }
 
-function drawEnemy() {
-  const last = state.lastSnap?.enemy;
-  if (!last) return;
+// Contacts by tier: faint = a position smudge with no vector; track = full
+// sprite; id = sprite + hull-state smoke. Ghost = last-known, dashed.
+function drawContacts() {
+  const snap = state.lastSnap;
+  if (!snap) return;
 
-  if (last.visible) {
-    // Interpolate only across consecutive visible snapshots.
-    const ent = interpolate((s) => (s.enemy?.visible ? s.enemy : null));
-    if (ent) {
-      drawShip(ent, "enemy", {
-        hull: last.hull ?? null,
-        hullMax: last.hullMax ?? 100,
-      });
+  for (const c of snap.contacts ?? []) {
+    if (c.tier === 1) {
+      // a smudge: pulsing diffuse blob, deliberately imprecise
+      const [sx, sy] = worldToScreen(c.x, c.y);
+      const pulse = 10 + Math.sin(performance.now() / 300) * 3;
+      const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, pulse * 2);
+      grad.addColorStop(0, "rgba(252, 129, 129, 0.35)");
+      grad.addColorStop(1, "rgba(252, 129, 129, 0)");
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(sx, sy, pulse * 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = COLORS.enemy;
+      ctx.globalAlpha = 0.6;
+      ctx.setLineDash([3, 5]);
+      ctx.beginPath();
+      ctx.arc(sx, sy, pulse, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = COLORS.enemy;
+      ctx.font = "10px monospace";
+      ctx.fillText("faint contact", sx + pulse + 6, sy + 3);
+      continue;
     }
-    return;
+    // track/id: interpolate across consecutive snapshots holding a vector contact
+    const ent =
+      interpolate((s) => {
+        const p = (s.contacts ?? []).find((k) => k.tier >= 2);
+        return p ?? null;
+      }) ?? c;
+    drawShip(ent, "enemy", {
+      hull: c.tier === 3 ? (c.hull ?? null) : null,
+      hullMax: c.hullMax ?? 100,
+    });
   }
 
-  if (last.lastKnown) {
-    const ghost = last.lastKnown;
+  const ghost = snap.ghost;
+  if ((snap.contacts ?? []).length === 0 && ghost) {
     drawShip(ghost, "enemy", { ghost: true });
     const [sx, sy] = worldToScreen(ghost.x, ghost.y);
-    const age = Math.max(0, state.lastSnap.tick - ghost.t);
+    const age = Math.max(0, snap.tick - ghost.t);
     ctx.fillStyle = COLORS.ghost;
     ctx.font = "10px monospace";
     ctx.fillText(`last seen ${age}s ago`, sx + 14, sy + 4);
@@ -681,16 +698,19 @@ function drawInset(you) {
     ctx.fill();
   }
 
-  // known contacts: live enemy or last-known ghost
-  const en = state.lastSnap.enemy;
-  if (en?.visible) {
-    const [ex, ey] = toInset(en.x, en.y);
+  // known contacts: live (filled, faint = smaller) or last-known ghost (hollow)
+  for (const c of state.lastSnap.contacts ?? []) {
+    const [ex, ey] = toInset(c.x, c.y);
     ctx.fillStyle = COLORS.enemy;
+    ctx.globalAlpha = c.tier === 1 ? 0.6 : 1;
     ctx.beginPath();
-    ctx.arc(ex, ey, 3, 0, Math.PI * 2);
+    ctx.arc(ex, ey, c.tier === 1 ? 2 : 3, 0, Math.PI * 2);
     ctx.fill();
-  } else if (en?.lastKnown) {
-    const [ex, ey] = toInset(en.lastKnown.x, en.lastKnown.y);
+    ctx.globalAlpha = 1;
+  }
+  if ((state.lastSnap.contacts ?? []).length === 0 && state.lastSnap.ghost) {
+    const g = state.lastSnap.ghost;
+    const [ex, ey] = toInset(g.x, g.y);
     ctx.strokeStyle = COLORS.ghost;
     ctx.beginPath();
     ctx.arc(ex, ey, 3, 0, Math.PI * 2);

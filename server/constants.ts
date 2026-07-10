@@ -12,7 +12,6 @@ export const SNAPSHOT_RATE_HZ = 4;
 // Region / bounding ("the shroud" — visible ring on map)
 export const REGION_RADIUS_M = 250000; // 250 km; crossing time ~2.8 min at flank. LINKED: SPAWN_DIST_FROM_CENTER_M sits at 60% of it
 export const HARD_LIMIT_RADIUS_M = 375000; // TEMPORARY (deleted in v4 §4 for edge gravity); must stay > SPAWN_DIST_FROM_CENTER_M
-export const OUTSIDE_ZONE_SENSOR_MULT = 0.5; // own sensor range halved outside zone
 
 // Ship. Full tank = 100 s of hard burn = 6000 m/s of delta-v: propellant is
 // a delta-v budget — enough to reach flank speed and kill it once.
@@ -20,8 +19,26 @@ export const MAX_SPEED_MPS = 3000; // LINKED to MISSILE_MAX_SPEED_MPS & region s
 export const ACCEL_FULL_THRUST_MPS2 = 60; // ~6g hard burn; top speed in ~50 s
 export const TURN_RATE_DEG_PER_SEC = 20;
 export const HULL_POINTS = 100;
-export const SENSOR_RANGE_M = 12000; // deliberately NOT scaled with the bigger zone: longer hunt phase
-export const SHIP_BASE_SIGNATURE = 40; // signature = 40 + EFFECTIVE thrust% (0 when tanks dry) (range 40–140)
+
+// Signature & detection: DETECTION IS THE GAME. Drive plumes are visible
+// across enormous distances; going dark is the only stealth.
+// ship signature = SIG_BASE + EFFECTIVE thrust% (10..110), plus spikes.
+export const SIG_BASE = 10; // a drifting dark ship
+export const SIG_SPIKE_LAUNCH = 150; // missile launch flash (replaces the flat reveal)
+export const SIG_SPIKE_LAUNCH_S = 5;
+export const SIG_SPIKE_PDC = 50; // PDC firing (used by v4 §6)
+export const SIG_SPIKE_PDC_S = 3;
+export const MISSILE_SIG_BURNING = 80;
+export const MISSILE_SIG_COASTING = 8; // a ballistic torpedo is nearly invisible. Intended. Terrifying.
+// detection_range = SENSOR_BASE_M x (signature / 100), LOS permitting
+// -> full burn (110) seen at ~181 km; 50% cruise at ~99 km; dark drift (10) at ~16.5 km
+export const SENSOR_BASE_M = 165000;
+// Contact tiers, as fractions of the computed detection range:
+export const TIER_FAINT_FRAC = 1.0; // approximate position only, no vector
+export const TIER_TRACK_FRAC = 0.6; // true position + velocity, continuous
+export const TIER_ID_FRAC = 0.3; // + ship status detail
+export const FAINT_POS_NOISE_M = 2000;
+export const FAINT_UPDATE_INTERVAL_S = 5;
 
 // Propellant
 export const PROPELLANT_MAX = 100;
@@ -29,12 +46,12 @@ export const PROPELLANT_BURN_AT_FULL = 1.0; // units/sec at 100% thrust, linear 
 export const PROPELLANT_REGEN_PER_S = 0.33; // only inside zone AND throttle SETTING <= REGEN_MAX_THRUST_PCT
 export const REGEN_MAX_THRUST_PCT = 20;
 
-// Missile lock (required to fire)
+// Missile lock (required to fire). MISSILE LOCK REQUIRES TIER_TRACK OR
+// BETTER — close in, or provoke a burn, before you can shoot.
 export const LOCK_CONE_HALF_ANGLE_DEG = 30;
-export const LOCK_RANGE_M = 10000;
-export const LOCK_TIME_S = 5; // continuous seconds in cone+range+visible to acquire
+export const LOCK_RANGE_M = 80000;
+export const LOCK_TIME_S = 5; // continuous seconds in cone+range+tracked to acquire
 export const LOCK_GRACE_S = 2; // integer: honest at 1 Hz tick; favors lock stability
-export const LAUNCH_FLASH_REVEAL_S = 5; // firing reveals you to the enemy, sensors or not
 
 // Launch tubes
 export const TUBE_COUNT = 2;
@@ -68,15 +85,12 @@ export const MISSILE_DAMAGE = 35;
 // Decoys
 export const DECOY_SUPPLY = 4;
 export const DECOY_LIFETIME_S = 20;
-export const DECOY_SIGNATURE = 120;
+export const DECOY_SIGNATURE = 150;
 export const DECOY_DRIFT_MPS = 10; // small random drift added on ejection
 
 // Standing orders
 export const STANDING_ORDER_MAX = 6;
 export const STANDING_ORDER_RETRIGGER_COOLDOWN_S = 5; // for repeat:true orders
-
-// Fog of war
-export const ORDNANCE_DETECT_RANGE_M = 6000; // missiles & decoys visible at half sensor range
 
 // Terrain (generated per match from a seed; see terrain.ts)
 export const ROCK_COUNT = 30; // field rocks, plus ONE centerpiece body

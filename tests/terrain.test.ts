@@ -93,10 +93,10 @@ const grantLock = (ship: Ship) => {
   sim.addShip("B", 0, 8000, 180, false); // well inside 12 km sensor range
   sim.terrain.rocks.push({ x: 0, y: 4000, r: 1500 });
   sim.tick();
-  assert(!a.enemyVisible, "enemy hidden behind rock despite range");
+  assert(a.contactTier === 0, "enemy hidden behind rock despite range");
   sim.terrain.rocks.length = 0;
   sim.tick();
-  assert(a.enemyVisible, "clear LOS restores contact");
+  assert(a.contactTier >= 1, "clear LOS restores contact");
 }
 
 // 4. ship-vs-rock: gentle bump harmless, fast hit damages + bounces, tangential survives

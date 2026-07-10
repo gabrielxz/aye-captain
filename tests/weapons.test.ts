@@ -65,12 +65,13 @@ const grantLock = (ship: Ship) => {
   assert(sim.winner === "A", "sim.winner set");
 }
 
-// 4. decoy steals lock from a quiet ship; full-burn ship keeps lock
+// 4. decoy steals lock: v4 numbers make a decoy (sig 150) out-shine even a
+// full-burn ship (sig 110) — in the seeker cone, the decoy always wins.
 {
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 0);
   const b = sim.addShip("B", 0, 5000, 0, false);
-  b.thrust = 0; // quiet: sig 40 < decoy 120
+  b.thrust = 0; // quiet: sig 10 < decoy 150
   grantLock(a);
   fire(sim, "A", "fire_missile");
   sim.tick(); sim.tick(); sim.tick(); // past launch delay, locked on ship
@@ -79,19 +80,19 @@ const grantLock = (ship: Ship) => {
   // B drops a decoy right at its position
   sim.enqueue("B", [{verb: "deploy_decoy", params: {}} as any]);
   sim.tick();
-  assert(m.lock?.type === "decoy", "decoy (sig 120) steals lock from quiet ship (sig 40)");
+  assert(m.lock?.type === "decoy", "decoy (sig 150) steals lock from quiet ship (sig 10)");
 
   const sim2 = new Sim();
   const a2 = sim2.addShip("A", 0, 0, 0);
   const b2 = sim2.addShip("B", 0, 5000, 0, false);
-  b2.thrust = 100; // sig 140 > decoy 120
+  b2.thrust = 100; // sig 110 — still below the decoy's 150
   grantLock(a2);
   sim2.enqueue("A", [{verb: "fire_missile", params: {}} as any]);
   sim2.tick(); sim2.tick(); sim2.tick();
   sim2.enqueue("B", [{verb: "deploy_decoy", params: {}} as any]);
   sim2.tick();
   const m2 = (sim2 as any).missiles[0];
-  assert(m2.lock?.type === "ship", "full-burn ship (sig 140) keeps lock over decoy (120)");
+  assert(m2.lock?.type === "decoy", "even a full-burn ship (sig 110) loses the seeker to a decoy (150)");
 }
 
 // 5. prox fuse via segment check: fast head-on crossing detonates
@@ -149,18 +150,28 @@ assert(segmentMinDist(0,0, 1000,0, 500,-50, 500,50) === 0, "crossing paths -> 0"
   assert((sim as any).missiles.length === 0, "missile expires at lifetime");
 }
 
-// 9. fog: enemy missiles only in snapshot within detect range
+// 9. fog: ordnance detection uses signature math — a burning torpedo is
+// visible ~132 km out, far beyond the old flat radius
 {
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 0);
-  const b = sim.addShip("B", 0, 10000, 180, false);
+  const b = sim.addShip("B", 0, 100000, 180, false); // 100 km out
   grantLock(b);
   sim.enqueue("B", [{verb: "fire_missile", params: {}} as any]);
   sim.tick();
   let snap = sim.snapshotFor("A") as any;
-  assert(snap.missiles.length === 0, "enemy missile at ~9.9km not in snapshot (detect 6km)");
-  for (let i = 0; i < 8; i++) sim.tick();
-  snap = sim.snapshotFor("A") as any;
-  assert(snap.missiles.some((m: any) => !m.own), "enemy missile appears within 6km");
+  assert(
+    snap.missiles.some((m: any) => !m.own),
+    "burning enemy missile visible at ~100 km (sig 80 => detect 132 km)"
+  );
+  // beyond its detection range it is not
+  const sim2 = new Sim();
+  sim2.addShip("A", 0, 0, 0);
+  const b2 = sim2.addShip("B", 0, 140000, 180, false);
+  grantLock(b2);
+  sim2.enqueue("B", [{verb: "fire_missile", params: {}} as any]);
+  sim2.tick();
+  snap = sim2.snapshotFor("A") as any;
+  assert(!snap.missiles.some((m: any) => !m.own), "missile beyond 132 km detect range hidden");
 }
 console.log("done");
