@@ -217,19 +217,8 @@ function drawShip(view, ent, kind, { ghost = false, thrust = 0, hull = null, hul
   }
   ctx.restore();
 
-  // hull bar floats above, unrotated
-  if (!ghost && hull !== null) {
-    const w = sizePx * 1.15;
-    const frac = Math.max(0, hull / hullMax);
-    const y = sy - r - 7;
-    ctx.fillStyle = "rgba(255,255,255,0.12)";
-    ctx.fillRect(sx - w / 2, y, w, 3);
-    ctx.fillStyle = frac > 0.5 ? COLORS.own : frac > 0.3 ? "#f6ad55" : "#fc8181";
-    if (kind === "enemy") ctx.fillStyle = frac > 0.5 ? COLORS.enemy : "#f6ad55";
-    ctx.fillRect(sx - w / 2, y, w * frac, 3);
-  }
-
   // battle damage: smoke trail below 50% hull, heavier below 25%
+  // (hull numbers live in the HUD panel, not floating on the map)
   if (!ghost && hull !== null && hull / hullMax < 0.5) {
     const heavy = hull / hullMax < 0.25;
     if (Math.random() < (heavy ? 0.5 : 0.2)) {

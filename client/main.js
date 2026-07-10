@@ -166,8 +166,11 @@ function updateHUDFromSnapshot(snap) {
       : "no lock";
   const painted = you.painted ?? "none";
   const prop = Math.round(you.propellant ?? 0);
+  const en = snap.enemy;
+  const enemyHull = en?.visible && en.hull !== undefined ? `${en.hull}/${en.hullMax ?? 100}` : "—";
   updateHUD([
     { label: "HULL", value: `${you.hull}`, cls: you.hull <= 35 ? "alert" : you.hull <= 65 ? "warn" : "" },
+    { label: "EN HULL", value: enemyHull, cls: en?.visible && en.hull <= (en.hullMax ?? 100) / 2 ? "good" : "" },
     { label: "THRUST", value: `${Math.round(you.thrust)}%${tanksDry && you.thrust > 0 ? " (DRY)" : ""}`, cls: tanksDry && you.thrust > 0 ? "alert" : "" },
     { label: "SPD", value: `${you.speed} m/s` },
     { label: "HDG", value: `${String(Math.round(you.facing) % 360).padStart(3, "0")}` },
