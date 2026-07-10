@@ -237,21 +237,29 @@ function fetchSpeech(id) {
   return decoded.get(id);
 }
 
+// Battle-tempo throttle: the ear is a scarcer resource than the transcript.
+// - warnings (alert) always speak: they jump ahead of chatter, identical
+//   lines already waiting are deduped, and only the 2 freshest warnings
+//   stay queued (older ones are superseded news)
+// - everything else speaks ONLY when the voice channel is idle — during a
+//   furball the chatter goes text-only instead of piling up
 export function enqueueSpeech(id, alert = false) {
   if (!ctx) return;
+  if (!alert && (speaking || speechQueue.length > 0)) return;
   const entry = { id, alert, at: performance.now(), buf: fetchSpeech(id) };
   if (alert) {
+    if (speechQueue.some((e) => e.alert && e.id === id)) return; // dedupe
     const firstNonAlert = speechQueue.findIndex((e) => !e.alert);
     if (firstNonAlert === -1) speechQueue.push(entry);
     else speechQueue.splice(firstNonAlert, 0, entry);
+    // keep only the freshest 2 warnings
+    let alerts = speechQueue.filter((e) => e.alert);
+    while (alerts.length > 2) {
+      speechQueue.splice(speechQueue.indexOf(alerts[0]), 1);
+      alerts = speechQueue.filter((e) => e.alert);
+    }
   } else {
     speechQueue.push(entry);
-  }
-  // backlog control: drop the oldest non-alert lines beyond a short queue
-  while (speechQueue.length > 3) {
-    const idx = speechQueue.findIndex((e) => !e.alert);
-    if (idx === -1) break;
-    speechQueue.splice(idx, 1);
   }
   void playNext();
 }
@@ -260,8 +268,8 @@ async function playNext() {
   if (speaking || speechQueue.length === 0) return;
   speaking = true;
   const entry = speechQueue.shift();
-  // a non-alert ack that sat queued too long is stale — skip it
-  if (!entry.alert && performance.now() - entry.at > 8000) {
+  // anything that sat queued too long is stale news — skip it
+  if (performance.now() - entry.at > (entry.alert ? 6000 : 8000)) {
     speaking = false;
     void playNext();
     return;

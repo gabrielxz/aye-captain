@@ -39,7 +39,8 @@ explicitly requested by Gabriel.
 
 - Point defense is intentionally harder (snapshot headings + 600 m/s
   missiles). Reserved balance knobs, do NOT pre-tune: standing-order
-  retrigger 5→3s, laser cooldown 4→3s, beam width 4→6°.
+  retrigger 5→3s, laser cooldown 4→3s. (Beam width 4→6° APPLIED after
+  first playtest: visually-on-target shots read as clean misses.)
 - Propellant economy is punishing at top speed (one 600 m/s dash + brake ≈
   half tank). Watch whether matches stall.
 - Softlock possibility: tanks dry OUTSIDE the zone (no regen there, ever) =

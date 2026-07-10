@@ -35,7 +35,7 @@ export const AUTO_RELOAD = true; // reload_tubes verb is a no-op while true
 
 // Laser
 export const LASER_RANGE_M = 5000;
-export const LASER_BEAM_WIDTH_DEG = 4; // half-angle tolerance off boresight
+export const LASER_BEAM_WIDTH_DEG = 6; // half-angle off boresight (4 -> 6 after playtest: visual hits read as misses)
 export const LASER_COOLDOWN_S = 4;
 export const LASER_DAMAGE = 10; // vs ships; instantly destroys missiles/decoys
 

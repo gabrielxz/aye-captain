@@ -174,7 +174,7 @@ function updateHUDFromSnapshot(snap) {
     { label: "THRUST", value: `${Math.round(you.thrust)}%${tanksDry && you.thrust > 0 ? " (DRY)" : ""}`, cls: tanksDry && you.thrust > 0 ? "alert" : "" },
     { label: "SPD", value: `${you.speed} m/s` },
     { label: "HDG", value: `${String(Math.round(you.facing) % 360).padStart(3, "0")}` },
-    { label: "PROP", value: `${prop}`, cls: prop <= 10 ? "alert" : prop <= 25 ? "warn" : "" },
+    { label: "PROP", value: prop, bar: true, cls: prop <= 10 ? "alert" : prop <= 25 ? "warn" : "" },
     { label: "TUBES", value: tubes || "—" },
     { label: "MSL", value: `${you.missiles}` },
     { label: "DECOY", value: `${you.decoys}` },

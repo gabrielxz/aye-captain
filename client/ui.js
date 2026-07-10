@@ -162,18 +162,55 @@ export function addTranscript(who, text, alert = false) {
   transcriptEl.scrollTop = transcriptEl.scrollHeight;
 }
 
+// HUD elements persist across updates (keyed by label) so CSS transitions —
+// like the propellant bar's animated fill — survive the 1 Hz refresh.
+let hudLayoutKey = "";
+const hudSlots = new Map();
+
 export function updateHUD(fields) {
-  // fields: array of {label, value, full?, cls?} rendered as a grid
-  hudEl.innerHTML = "";
+  // fields: array of {label, value, full?, cls?, bar?} rendered as a grid;
+  // bar:true renders an animated 0-100 fill bar plus the number
+  const layoutKey = fields.map((f) => `${f.label}${f.bar ? "#" : ""}${f.full ? "!" : ""}`).join("|");
+  if (layoutKey !== hudLayoutKey) {
+    hudLayoutKey = layoutKey;
+    hudEl.innerHTML = "";
+    hudSlots.clear();
+    for (const f of fields) {
+      const div = document.createElement("div");
+      if (f.full) div.className = "full";
+      div.appendChild(document.createTextNode(`${f.label} `));
+      if (f.bar) {
+        const bar = document.createElement("span");
+        bar.className = "bar";
+        const fill = document.createElement("i");
+        bar.appendChild(fill);
+        const num = document.createElement("span");
+        num.className = "v";
+        div.appendChild(bar);
+        div.appendChild(document.createTextNode(" "));
+        div.appendChild(num);
+        hudSlots.set(f.label, { fill, num });
+      } else {
+        const v = document.createElement("span");
+        v.className = "v";
+        div.appendChild(v);
+        hudSlots.set(f.label, { v });
+      }
+      hudEl.appendChild(div);
+    }
+  }
   for (const f of fields) {
-    const div = document.createElement("div");
-    if (f.full) div.className = "full";
-    const v = document.createElement("span");
-    v.className = f.cls ? `v ${f.cls}` : "v";
-    v.textContent = f.value;
-    div.appendChild(document.createTextNode(`${f.label} `));
-    div.appendChild(v);
-    hudEl.appendChild(div);
+    const slot = hudSlots.get(f.label);
+    if (!slot) continue;
+    if (f.bar) {
+      slot.fill.style.width = `${Math.max(0, Math.min(100, Number(f.value)))}%`;
+      slot.fill.className = f.cls || "";
+      slot.num.textContent = `${Math.round(Number(f.value))}`;
+      slot.num.className = f.cls ? `v ${f.cls}` : "v";
+    } else {
+      slot.v.textContent = f.value;
+      slot.v.className = f.cls ? `v ${f.cls}` : "v";
+    }
   }
 }
 
