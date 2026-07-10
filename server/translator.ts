@@ -233,24 +233,63 @@ export interface TranslationResult {
   failed: boolean; // total failure -> "Say again, Captain?"
 }
 
-export function parseResponse(text: string): TranslationResult {
-  let cleaned = text.replace(/```(?:json)?/gi, "").trim();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(cleaned);
-  } catch {
-    const start = cleaned.indexOf("[");
-    const end = cleaned.lastIndexOf("]");
-    if (start >= 0 && end > start) {
-      try {
-        parsed = JSON.parse(cleaned.slice(start, end + 1));
-      } catch {
-        return { commands: [], replies: [], dropped: 0, failed: true };
+// Rebalance braces/brackets in almost-JSON: the LLM occasionally emits one
+// extra (or one missing) closer. String-aware scan: unmatched closers are
+// dropped, unclosed openers are closed at the end.
+export function repairJson(text: string): string {
+  const stack: string[] = [];
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (const ch of text) {
+    if (inString) {
+      out += ch;
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+    } else if (ch === "{" || ch === "[") {
+      stack.push(ch === "{" ? "}" : "]");
+      out += ch;
+    } else if (ch === "}" || ch === "]") {
+      if (stack[stack.length - 1] === ch) {
+        stack.pop();
+        out += ch;
       }
+      // unmatched closer: drop it
     } else {
-      return { commands: [], replies: [], dropped: 0, failed: true };
+      out += ch;
     }
   }
+  if (inString) out += '"';
+  while (stack.length > 0) out += stack.pop();
+  return out;
+}
+
+export function parseResponse(text: string): TranslationResult {
+  const cleaned = text.replace(/```(?:json)?/gi, "").trim();
+  const start = cleaned.indexOf("[");
+  const end = cleaned.lastIndexOf("]");
+  const candidates = [cleaned];
+  if (start >= 0 && end > start) candidates.push(cleaned.slice(start, end + 1));
+  if (start >= 0) candidates.push(repairJson(cleaned.slice(start)));
+
+  let parsed: unknown;
+  let ok = false;
+  for (const candidate of candidates) {
+    try {
+      parsed = JSON.parse(candidate);
+      ok = true;
+      break;
+    } catch {
+      /* try the next repair stage */
+    }
+  }
+  if (!ok) return { commands: [], replies: [], dropped: 0, failed: true };
 
   const arr = Array.isArray(parsed) ? parsed : [parsed];
   const commands: Command[] = [];
@@ -305,7 +344,14 @@ export async function translateUtterance(
       .filter((b) => b.type === "text")
       .map((b) => (b as { text: string }).text)
       .join("");
-    return parseResponse(text);
+    const result = parseResponse(text);
+    if (result.failed || result.dropped > 0) {
+      console.error(
+        `translator: ${result.failed ? "unusable" : `${result.dropped} dropped from`} response for "${utterance.slice(0, 80)}":`,
+        JSON.stringify(text.slice(0, 500))
+      );
+    }
+    return result;
   } catch (err) {
     console.error("translator error:", err instanceof Error ? err.message : err);
     return { commands: [], replies: [], dropped: 0, failed: true };

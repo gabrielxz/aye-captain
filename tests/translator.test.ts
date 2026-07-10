@@ -1,4 +1,4 @@
-import { parseResponse, validateCommand } from "../server/translator.js";
+import { parseResponse, repairJson, validateCommand } from "../server/translator.js";
 
 const assert = (cond: boolean, msg: string) => {
   if (!cond) { console.error("FAIL:", msg); process.exitCode = 1; }
@@ -75,7 +75,24 @@ const assert = (cond: boolean, msg: string) => {
   const single = {verb:"set_standing_order",params:{condition:{all:[{metric:"enemy_range",op:"lt",value:5000}]},actions:[{verb:"fire_laser",params:{}}]}};
   assert(validateCommand(single) === null, "all-group with 1 comparison rejected");
 }
-// 13. heading validation
+// 13. bracket repair: the exact malformed response from the 2026-07-10
+// playtest (extra closing brace before the ]) must parse
+{
+  const raw = '```json\n[{"verb":"set_standing_order","params":{"label":"throttle at 400","condition":{"metric":"own_speed","op":"gte","value":400},"actions":[{"verb":"set_thrust","params":{"percent":0}}],"repeat":false},"acknowledgement":"Engines cut at four hundred, Captain."}}]\n```';
+  const r = parseResponse(raw);
+  assert(!r.failed && r.commands[0]?.verb === "set_standing_order", "extra closing brace repaired (playtest specimen)");
+}
+// 14. bracket repair: truncated response (missing closers) recovers
+{
+  const r = parseResponse('[{"verb":"set_thrust","params":{"percent":25},"acknowledgement":"Quarter thrust."');
+  assert(!r.failed && r.commands[0]?.verb === "set_thrust", "missing closers appended");
+}
+// 15. repairJson never touches balanced JSON or braces inside strings
+{
+  const s = '[{"verb":"set_thrust","params":{"percent":1},"acknowledgement":"brace } in { string"}]';
+  assert(repairJson(s) === s, "balanced JSON untouched, string braces ignored");
+}
+// 16. heading validation
 {
   assert(validateCommand({verb:"set_heading",params:{mode:"relative",direction:"port",degrees:40}}) !== null, "relative heading valid");
   assert(validateCommand({verb:"set_heading",params:{mode:"relative",degrees:40}}) === null, "relative without direction rejected");
