@@ -201,7 +201,11 @@ function updateHUDFromSnapshot(snap) {
       value: `${(you.pdc?.posture ?? "free").toUpperCase()} ${you.pdc?.ammoS ?? 0}s`,
       cls: (you.pdc?.ammoS ?? 0) <= 6 ? "alert" : (you.pdc?.ammoS ?? 0) <= 15 ? "warn" : you.pdc?.posture === "free" ? "good" : "",
     },
-    { label: "ZONE", value: you.insideZone ? "inside" : "OUTSIDE", cls: you.insideZone ? "" : "warn" },
+    {
+      label: "ZONE",
+      value: you.inDust ? "IN DUST (blind)" : you.insideZone ? "inside" : "OUTSIDE",
+      cls: you.inDust ? "warn" : you.insideZone ? "" : "warn",
+    },
     {
       label: "COLL",
       value: you.collisionWarning !== null && you.collisionWarning !== undefined ? `impact ${you.collisionWarning}s` : "—",

@@ -127,9 +127,14 @@ export const SPAWN_DIST_FROM_CENTER_M = 150000; // LINKED to REGION_RADIUS_M (60
 // Match lifecycle
 export const DISCONNECT_GRACE_S = 60; // pause sim awaiting reconnect, then forfeit
 
-// Practice drone (exempt from propellant; thrust exists only as signature)
-export const DRONE_SPEED_MPS = 100; // slow circle
-export const DRONE_TURN_RATE_DPS = 3; // gentle constant turn
+// Practice drone (exempt from propellant; thrust exists only as signature).
+// With terrain it patrols waypoints among the rocks and dust (so solo
+// players experience LOS play); with no terrain it flies the old circle.
+export const DRONE_SPEED_MPS = 800; // cruise
+export const DRONE_TURN_RATE_DPS = 3; // used only for the no-terrain circle
+export const DRONE_PATROL_TURN_DPS = 12; // waypoint steering agility
+export const DRONE_WAYPOINT_RADIUS_M = 12000; // close enough; next waypoint
+export const DRONE_AVOID_LOOKAHEAD_S = 25; // rock-dodge projection
 export const DRONE_HULL_POINTS = 60;
 export const DRONE_THRUST_PERCENT = 50; // signature as a ship at 50% thrust
 export const DRONE_FIRES_BACK = true; // reduced aggression: locks + one missile at a time

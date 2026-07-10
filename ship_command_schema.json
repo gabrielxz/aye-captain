@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Ship Command Protocol v3",
+  "title": "Ship Command Protocol v4 — The Big Dark",
   "description": "The contract between the LLM translator and the authoritative game server. The LLM receives natural language from the captain and emits one or more Command objects. The server validates and executes them on its tick. Unknown fields are rejected. This schema is also the source of truth for the LLM's tool/function definitions.",
 
   "definitions": {
@@ -33,7 +33,7 @@
     },
 
     "set_thrust": {
-      "description": "Set main drive output. Thrust accelerates the ship along its current facing. Persists until changed. NOTE (future): thrust level will drive sensor signature; 0 = dark and drifting.",
+      "description": "Set main drive output. Thrust accelerates the ship along its current facing. Persists until changed. THRUST IS SIGNATURE: the drive plume is what enemy sensors see — full burn is visible ~181 km out, 0 = dark and drifting (~16 km). Going dark is the only stealth.",
       "type": "object",
       "required": ["percent"],
       "properties": {
@@ -67,7 +67,7 @@
         },
         "target": {
           "enum": ["enemy_ship", "nearest_missile", "nearest_decoy", "nearest_contact"],
-          "description": "REQUIRED for mode=target. SNAPSHOT semantics: the server resolves the target's bearing ONCE, at execution, and it becomes a fixed goal heading — the ship does NOT track continuously. Inside standing-order actions, each trigger re-snapshots at trigger time. 'enemy_ship' resolves to last-known position if the enemy is not currently on sensors."
+          "description": "REQUIRED for mode=target. SNAPSHOT semantics: the server resolves the target's bearing ONCE, at execution, and it becomes a fixed goal heading — the ship does NOT track continuously. Inside standing-order actions, each trigger re-snapshots at trigger time. 'enemy_ship' resolves to the tracked position at tier >= 2, the approximate faint fix at tier 1, or last-known otherwise."
         }
       },
       "examples": [
@@ -203,23 +203,26 @@
       "properties": {
         "metric": {
           "enum": [
+            "enemy_contact_tier",
             "enemy_range",
-            "enemy_on_sensors",
+            "enemy_bearing_off_nose",
             "missile_inbound",
             "nearest_missile_range",
             "own_hull_percent",
             "own_speed",
             "own_missiles_remaining",
             "own_decoys_remaining",
-            "enemy_bearing_off_nose",
             "distance_from_zone_center",
             "time_elapsed_seconds",
             "have_lock",
             "being_painted",
             "propellant_percent",
-            "tubes_ready"
+            "pdc_ammo_seconds",
+            "tubes_ready",
+            "in_dust",
+            "collision_warning"
           ],
-          "description": "enemy_bearing_off_nose = absolute degrees between our facing and the bearing to the enemy (0 = dead ahead); useful for 'when he's in our sights'. Booleans (use op=eq, value=true/false): missile_inbound, enemy_on_sensors, have_lock (our missile lock on the enemy is held), being_painted (the enemy is acquiring or holds a lock on US). tubes_ready = count of loaded launch tubes (0-2)."
+          "description": "enemy_contact_tier: 0 = no contact, 1 = faint, 2 = track, 3 = id ('if you get a track on him' => gte 2). enemy_range and enemy_bearing_off_nose are KNOWABLE ONLY AT TIER >= 2 — at faint or below the comparison is simply false (unknowable-metric rule). enemy_bearing_off_nose = absolute degrees between our facing and the bearing to the enemy (0 = dead ahead). Booleans (op=eq, value=true/false): missile_inbound (a missile is CURRENTLY detected inbound), have_lock (our missile lock is held), being_painted (the enemy is acquiring or holds a lock on US), in_dust (we are inside a dust cloud), collision_warning (a rock lies on our projected vector). tubes_ready = loaded launch tubes (0-2). pdc_ammo_seconds = seconds of point-defense fire remaining."
         },
         "op": { "enum": ["lt", "lte", "gt", "gte", "eq"] },
         "value": {
@@ -241,9 +244,11 @@
         "topic": {
           "enum": [
             "enemy",
+            "contacts",
             "own_ship",
             "weapons",
             "pdc",
+            "terrain",
             "propellant",
             "tubes",
             "damage_report",
@@ -263,56 +268,72 @@
   },
 
   "server_constants_suggested": {
-    "description": "Starting tunables. These live server-side (constants.ts is the source of truth), documented here so the LLM prompt and sim agree on the world's shape. All units abstract: distance in meters, speed in m/s, angles in degrees.",
+    "description": "v4 'The Big Dark' tunables. These live server-side (constants.ts is the source of truth), documented here so the LLM prompt and sim agree on the world's shape. All units abstract: distance in meters, speed in m/s, angles in degrees.",
     "tick_rate_hz": 1,
+    "physics": { "substeps": 10, "snapshot_rate_hz": 4 },
     "map": {
-      "zone_radius_m": 30000,
-      "hard_limit_radius_m": 45000,
-      "outside_zone_effect": "ship fully visible to enemy; own sensor range halved; NO propellant regen (soft tether, hard wall at the limit)"
+      "region_radius_m": 250000,
+      "outside_region_effect": "treated as signature-max (tier ID at any range); NO propellant regen; a restoring current (5 m/s^2 per 50 km beyond, cap 50) pulls back toward center — gravity, not walls"
     },
     "ship": {
-      "max_speed_mps": 600,
-      "accel_at_full_thrust_mps2": 25,
+      "max_speed_mps": 3000,
+      "accel_at_full_thrust_mps2": 60,
       "turn_rate_deg_per_sec": 20,
-      "hull_points": 100,
-      "sensor_range_m": 12000
+      "hull_points": 100
+    },
+    "detection": {
+      "sensor_base_m": 165000,
+      "formula": "detection_range = sensor_base x target_signature / 100, line of sight permitting",
+      "ship_signature": "10 base + effective thrust percent, +150 for 5s after a missile launch, +50 for 3s while PDCs fire",
+      "tiers": "id <= 30% of detection range, track <= 60%, faint <= 100%; faint = approximate position only (2 km noise, 5 s refresh), no vector, no lock",
+      "terrain": "rocks block LOS (sensors, locks, seekers, PDC); dust blocks sensors both ways — inside a cloud you are blind and unseen"
     },
     "propellant": {
       "max": 100,
       "burn_at_full_thrust_per_s": 1.0,
       "regen_per_s": 0.33,
-      "regen_conditions": "inside zone AND throttle setting <= 20%",
-      "empty_effect": "thrust output 0 (setting remembered); turning and weapons unaffected"
+      "regen_conditions": "inside region AND throttle setting <= 20%",
+      "empty_effect": "thrust output 0 (setting remembered); turning and weapons unaffected",
+      "note": "full tank = 100 s of hard burn = 6000 m/s of delta-v: enough to reach flank speed and kill it once"
     },
-    "laser": {
-      "range_m": 5000,
-      "beam_width_degrees": 4,
-      "cooldown_seconds": 4,
-      "damage": 10,
-      "damage_vs_missile": "instant kill"
+    "pdc": {
+      "missile_range_m": 8000,
+      "kill_prob_per_s": 0.25,
+      "ship_range_m": 3000,
+      "ship_dps": 5,
+      "ammo_seconds_of_fire": 60,
+      "notes": "automated by posture (free/hold); never targets decoys or terrain; firing spikes signature"
     },
     "missile": {
       "magazine_total_aboard": 6,
       "launch_tubes": 2,
       "tube_reload_seconds": 20,
-      "max_speed_mps": 600,
-      "acceleration_mps2": 150,
+      "max_speed_mps": 6000,
+      "acceleration_mps2": 400,
+      "engine_seconds": 25,
+      "flight_model": "burn-and-coast: engine on while below max speed or turning; dry = ballistic (no turns), still detonates on proximity",
+      "signature": "80 burning / 8 coasting",
       "launch_delay_ticks": 2,
       "acquisition_cone_degrees": 60,
-      "proximity_fuse_m": 150,
+      "proximity_fuse_m": 200,
+      "lifetime_s": 120,
       "damage": 35
     },
     "missile_lock": {
       "cone_half_angle_degrees": 30,
-      "range_m": 10000,
+      "range_m": 80000,
       "time_to_acquire_s": 5,
       "grace_s": 2,
-      "launch_flash_reveal_s": 5,
-      "notes": "lock requires the enemy on OUR sensors; the target always feels being painted (RWR)"
+      "notes": "LOCK REQUIRES TIER_TRACK OR BETTER — a faint contact cannot be locked; the target always feels being painted (RWR)"
     },
     "decoy": {
       "supply": 4,
-      "lifetime_seconds": 20
+      "lifetime_seconds": 20,
+      "signature": 150
+    },
+    "terrain": {
+      "rocks": "30 x 1-8 km radius + one ~15 km centerpiece; solid (collision damage above 50 m/s, lethal ~1500 m/s)",
+      "dust": "3 elliptical clouds 30-60 km across; no physical presence"
     }
   },
 
@@ -354,6 +375,48 @@
         "captain": "Go dark and drift",
         "commands": [
           { "verb": "set_thrust", "params": { "percent": 0 }, "acknowledgement": "Engines cold. Running silent." }
+        ]
+      },
+      {
+        "captain": "If you get a track on him, sing out and point us at him",
+        "commands": [
+          { "verb": "set_standing_order", "params": {
+              "label": "call the track",
+              "condition": { "metric": "enemy_contact_tier", "op": "gte", "value": 2 },
+              "actions": [
+                { "verb": "set_heading", "params": { "mode": "target", "target": "enemy_ship" } }
+              ],
+              "repeat": false
+          }, "acknowledgement": "I'll sing out the moment he firms up." }
+        ]
+      },
+      {
+        "captain": "All stop",
+        "commands": [
+          { "verb": "maneuver", "params": { "type": "full_stop" }, "acknowledgement": "All stop, aye. Flipping to burn." }
+        ]
+      },
+      {
+        "captain": "Which way are we drifting?",
+        "commands": [
+          { "verb": "show_vector", "params": {}, "acknowledgement": "Vector's on your map, Captain." }
+        ]
+      },
+      {
+        "captain": "Any rocks or dust nearby we could hide in?",
+        "commands": [
+          { "verb": "query", "params": { "topic": "terrain" }, "acknowledgement": "" }
+        ]
+      },
+      {
+        "captain": "Warn me if we're about to hit something",
+        "commands": [
+          { "verb": "set_standing_order", "params": {
+              "label": "collision watch",
+              "condition": { "metric": "collision_warning", "op": "eq", "value": true },
+              "actions": [ { "verb": "show_vector", "params": {} } ],
+              "repeat": true
+          }, "acknowledgement": "Collision watch set — I'll flag anything on our vector." }
         ]
       },
       {

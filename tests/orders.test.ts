@@ -35,7 +35,7 @@ const so = (params: any) => ({ verb: "set_standing_order", params } as any);
   sim.addShip("B", 0, 3000, 180, true);
   sim.enqueue("A", [so({
     label: "pd",
-    condition: { metric: "enemy_on_sensors", op: "eq", value: true },
+    condition: { metric: "enemy_contact_tier", op: "gte", value: 1 },
     actions: [{ verb: "set_pdc", params: { posture: "free" } }],
     repeat: true,
   })]);

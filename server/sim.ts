@@ -111,6 +111,7 @@ export interface Ship {
   prevPainted: PaintedState; // enemy's lock on me last tick (edge-triggered notices)
   sigSpikeLaunch: number; // seconds of +SIG_SPIKE_LAUNCH remaining after firing
   droneCooldown: number; // drone-only: seconds until it may fire again
+  droneWaypoint: number; // drone-only: index into the patrol route
   isDrone: boolean;
   standingOrders: StandingOrder[];
   orderCounter: number; // for generated labels
@@ -297,6 +298,7 @@ export class Sim {
       prevPainted: "none",
       sigSpikeLaunch: 0,
       droneCooldown: 0,
+      droneWaypoint: 0,
       isDrone,
       standingOrders: [],
       orderCounter: 0,
@@ -617,8 +619,6 @@ export class Sim {
       }
       case "enemy_contact_tier":
         return ship.contactTier;
-      case "enemy_on_sensors": // legacy alias; schema swaps to tiers in §8
-        return ship.contactTier >= 1;
       case "in_dust":
         return this.inDust(ship);
       case "collision_warning":
@@ -990,6 +990,41 @@ export class Sim {
     for (const ship of this.ships.values()) {
       this.announcePainted(ship, events);
     }
+  }
+
+  // Drone patrol steering: degrees-per-second to apply this substep.
+  // Waypoints cycle through the terrain features (rocks, dust centers,
+  // region center); a projected rock impact overrides with a hard dodge.
+  private droneSteer(ship: Ship): number {
+    if (this.terrain.rocks.length === 0) return C.DRONE_TURN_RATE_DPS; // legacy circle
+
+    // rock-aware: dodge first
+    const ahead = firstRockHit(
+      ship.x,
+      ship.y,
+      ship.x + ship.vx * C.DRONE_AVOID_LOOKAHEAD_S,
+      ship.y + ship.vy * C.DRONE_AVOID_LOOKAHEAD_S,
+      this.terrain
+    );
+    if (ahead) {
+      // steer away from the rock's center
+      const away = angDiff(ship.facing, bearingTo(ship.x, ship.y, ahead.rock.x, ahead.rock.y));
+      return away >= 0 ? -C.DRONE_PATROL_TURN_DPS : C.DRONE_PATROL_TURN_DPS;
+    }
+
+    // waypoint route: every rock and dust center, then the region center
+    const route: { x: number; y: number }[] = [
+      ...this.terrain.rocks,
+      ...this.terrain.dust,
+      { x: 0, y: 0 },
+    ];
+    const wp = route[ship.droneWaypoint % route.length];
+    if (dist(ship.x, ship.y, wp.x, wp.y) < C.DRONE_WAYPOINT_RADIUS_M) {
+      // seeded-enough hop: stride by a prime so the tour mixes
+      ship.droneWaypoint = (ship.droneWaypoint + 7) % route.length;
+    }
+    const want = bearingTo(ship.x, ship.y, wp.x, wp.y);
+    return clamp(angDiff(ship.facing, want), -C.DRONE_PATROL_TURN_DPS, C.DRONE_PATROL_TURN_DPS);
   }
 
   // Practice drone offense: with a held lock, a loaded tube, and its
@@ -1423,10 +1458,12 @@ export class Sim {
       }
     }
 
-    // Practice drone: fixed-speed gentle circle, ignores thrust physics and
+    // Practice drone: fixed-speed cruiser, ignores thrust physics and
     // propellant (thrust is set only so its signature reads as a ship).
+    // With terrain it patrols waypoints among the rocks/dust and dodges
+    // collisions; with no terrain it flies the old gentle circle.
     if (ship.isDrone) {
-      ship.facing = norm360(ship.facing + C.DRONE_TURN_RATE_DPS * dt);
+      ship.facing = norm360(ship.facing + this.droneSteer(ship) * dt);
       const [fx, fy] = headingVec(ship.facing);
       const ox = ship.x;
       const oy = ship.y;
@@ -1680,8 +1717,13 @@ export class Sim {
       `Own ship: heading ${fmtBearing(ship.facing)}, speed ${Math.round(this.speedOf(ship))} m/s, thrust ${Math.round(ship.thrust)}%${effectiveThrust(ship) < ship.thrust ? " (NO output — tanks dry)" : ""}, hull ${ship.hull}/${C.HULL_POINTS}, propellant ${Math.round(ship.propellant)}/${C.PROPELLANT_MAX}.`
     );
     lines.push(
-      `Position: ${(zoneDist / 1000).toFixed(1)} km from zone center (${this.insideZone(ship) ? "inside" : "OUTSIDE"} the zone).`
+      `Position: ${(zoneDist / 1000).toFixed(1)} km from zone center (${this.insideZone(ship) ? "inside" : "OUTSIDE"} the zone)${this.inDust(ship) ? " — INSIDE A DUST CLOUD: sensors blind both ways, no locks" : ""}. Own signature ${Math.round(this.signatureOf(ship))} (detection range others get on us scales with it).`
     );
+    if (ship.collisionWarnS !== null) {
+      lines.push(
+        `COLLISION WARNING: rock on our vector, impact in ~${Math.round(ship.collisionWarnS)}s at current velocity.`
+      );
+    }
     lines.push(
       `Weapons: PDC posture ${ship.pdcPosture.toUpperCase()} (ammo ${Math.round(ship.pdcAmmoS)}s of fire left), ${this.tubeSummary(ship)}, missiles aboard ${missilesAboard(ship)}/${C.MISSILE_MAGAZINE}, decoys ${ship.decoys}/${C.DECOY_SUPPLY}.`
     );
@@ -1837,6 +1879,42 @@ export class Sim {
         };
       case "pdc":
         return pdc;
+      case "contacts": {
+        // tier list with bearings and ranges (one enemy today; array-shaped
+        // for v5)
+        const intel = this.enemyIntel(ship);
+        const inboundList = this.visibleEnemyMissiles(ship).map((m) => ({
+          type: "missile",
+          bearing: Math.round(bearingTo(ship.x, ship.y, m.x, m.y)),
+          range_m: Math.round(dist(ship.x, ship.y, m.x, m.y)),
+          engine: m.burning ? "burning" : "coasting",
+        }));
+        return { ship_contact: intel, ordnance_contacts: inboundList };
+      }
+      case "terrain": {
+        const near = this.terrain.rocks
+          .map((r) => ({
+            range_m: Math.round(dist(ship.x, ship.y, r.x, r.y) - r.r),
+            bearing: Math.round(bearingTo(ship.x, ship.y, r.x, r.y)),
+            radius_m: Math.round(r.r),
+            centerpiece: !!r.centerpiece,
+          }))
+          .sort((a, b) => a.range_m - b.range_m)
+          .slice(0, 3);
+        const nearDust = this.terrain.dust
+          .map((d) => ({
+            range_m: Math.round(dist(ship.x, ship.y, d.x, d.y)),
+            bearing: Math.round(bearingTo(ship.x, ship.y, d.x, d.y)),
+            size_km: Math.round((d.rx + d.ry) / 1000),
+          }))
+          .sort((a, b) => a.range_m - b.range_m);
+        return {
+          in_dust: this.inDust(ship),
+          nearest_rocks: near,
+          dust_clouds: nearDust,
+          note: "rocks are solid and block sensors/locks/seekers; dust blocks sensors both ways (inside one you are blind and unseen)",
+        };
+      }
       case "missiles_inbound":
         return missilesInbound;
       case "standing_orders":

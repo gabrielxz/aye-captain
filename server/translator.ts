@@ -78,28 +78,33 @@ const SYSTEM_PROMPT = buildSystemPrompt();
 
 const TARGETS = ["enemy_ship", "nearest_missile", "nearest_decoy", "nearest_contact"];
 const METRICS = [
+  "enemy_contact_tier",
   "enemy_range",
-  "enemy_on_sensors",
+  "enemy_bearing_off_nose",
   "missile_inbound",
   "nearest_missile_range",
   "own_hull_percent",
   "own_speed",
   "own_missiles_remaining",
   "own_decoys_remaining",
-  "enemy_bearing_off_nose",
   "distance_from_zone_center",
   "time_elapsed_seconds",
   "have_lock",
   "being_painted",
   "propellant_percent",
+  "pdc_ammo_seconds",
   "tubes_ready",
+  "in_dust",
+  "collision_warning",
 ];
 const OPS = ["lt", "lte", "gt", "gte", "eq"];
 const TOPICS = [
   "enemy",
+  "contacts",
   "own_ship",
   "weapons",
   "pdc",
+  "terrain",
   "propellant",
   "tubes",
   "damage_report",
