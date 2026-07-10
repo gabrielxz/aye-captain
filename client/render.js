@@ -9,7 +9,6 @@ const COLORS = {
   bg: "#06090d",
   grid: "#0d1520",
   zone: "#2a4a5a",
-  hardLimit: "#16222e",
   own: "#2dd4bf",
   enemy: "#fc8181",
   ghost: "#4a5a6a",
@@ -553,7 +552,6 @@ function draw() {
   drawGrid();
   if (state.config) {
     drawRing(0, 0, state.config.zoneRadius, COLORS.zone, 1.25);
-    drawRing(0, 0, state.config.hardLimitRadius, COLORS.hardLimit, 1, [4, 6]);
   }
   drawTerrain();
   if (you) drawRangeRings(you);

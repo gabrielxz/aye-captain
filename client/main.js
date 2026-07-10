@@ -4,7 +4,7 @@ import { initUI, addTranscript, updateHUD, showLobbyStatus, enterGame, showBanne
 import * as audio from "./audio.js";
 
 export const state = {
-  config: null, // {zoneRadius, hardLimitRadius} from server hello
+  config: null, // {zoneRadius, stt} from server hello
   terrain: null, // {seed, rocks[], dust[]} — arrives with each match start
   role: null, // "A" | "B"
   practice: false,

@@ -100,7 +100,6 @@ export interface Ship {
   orderCounter: number; // for generated labels
   // zone transition tracking (edge-triggered transcript events)
   wasInsideZone: boolean;
-  atHardLimit: boolean;
   // collision warning: projected seconds to rock impact (null = clear) and
   // the last announced countdown tier (re-armed when the vector clears)
   collisionWarnS: number | null;
@@ -275,7 +274,6 @@ export class Sim {
       standingOrders: [],
       orderCounter: 0,
       wasInsideZone: true, // spawn is well inside the zone
-      atHardLimit: false,
       collisionWarnS: null,
       collisionTier: null,
       contactTier: 0,
@@ -899,7 +897,7 @@ export class Sim {
     // 3. step physics (also: propellant, tube reloads, flash countdown)
     for (const ship of this.ships.values()) {
       this.stepShip(ship, events, dt);
-      this.applyBounds(ship, events);
+      this.applyBounds(ship, events, dt);
     }
     for (const m of this.missiles) {
       this.stepMissile(m, dt);
@@ -1432,53 +1430,36 @@ export class Sim {
     ship.propellantTier = tier;
   }
 
-  // Hard limit clamp + server-generated transcript events on zone
-  // transitions (no LLM involved).
-  private applyBounds(ship: Ship, events: SimEvent[]): void {
+  // Region edge: gravity, not walls. Beyond the ring a restoring current
+  // accelerates the ship back toward center — it grows with distance and no
+  // derelict can be stranded. Crossing announcements are edge-triggered.
+  private applyBounds(ship: Ship, events: SimEvent[], dt: number): void {
     const r = dist(ship.x, ship.y, 0, 0);
 
-    // hard limit: clamp to the ring, zero the outward radial velocity
-    // component (tangential survives) — fiction: drive failure
-    if (r > C.HARD_LIMIT_RADIUS_M) {
-      const k = C.HARD_LIMIT_RADIUS_M / r;
-      ship.x *= k;
-      ship.y *= k;
-      const rn = C.HARD_LIMIT_RADIUS_M;
-      const rx = ship.x / rn;
-      const ry = ship.y / rn;
-      const vRad = ship.vx * rx + ship.vy * ry;
-      if (vRad > 0) {
-        ship.vx -= rx * vRad;
-        ship.vy -= ry * vRad;
-      }
-      if (!ship.atHardLimit && !ship.isDrone) {
-        events.push({
-          kind: "notice",
-          ship: ship.id,
-          text: "Drive failure at the shroud's absolute edge — we can't push any further out, Captain.",
-          alert: true,
-        });
-      }
-      ship.atHardLimit = true;
-    } else {
-      ship.atHardLimit = false;
+    if (r > C.REGION_RADIUS_M) {
+      const beyond = r - C.REGION_RADIUS_M;
+      const pull = Math.min(
+        C.EDGE_PULL_CAP_MPS2,
+        C.EDGE_PULL_MPS2_PER_50KM * (beyond / 50000)
+      );
+      ship.vx += (-ship.x / r) * pull * dt;
+      ship.vy += (-ship.y / r) * pull * dt;
     }
 
-    // zone crossing announcements
     const inside = this.insideZone(ship);
     if (!ship.isDrone) {
       if (ship.wasInsideZone && !inside) {
         events.push({
           kind: "notice",
           ship: ship.id,
-          text: "Captain, we've left the shroud — we're visible to the enemy and our sensors are degraded.",
+          text: "We've left the shroud — we're lit up and the current's against us, Captain.",
           alert: true,
         });
       } else if (!ship.wasInsideZone && inside) {
         events.push({
           kind: "notice",
           ship: ship.id,
-          text: "Back inside the shroud, Captain. Sensor cover restored.",
+          text: "Back inside the shroud, Captain. We're under cover again.",
         });
       }
     }

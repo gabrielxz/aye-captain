@@ -9,9 +9,14 @@ export const PHYSICS_SUBSTEPS = 10;
 // stays smooth at high speeds. Commands still process at TICK_RATE_HZ.
 export const SNAPSHOT_RATE_HZ = 4;
 
-// Region / bounding ("the shroud" — visible ring on map)
+// Region ("the shroud" — visible ring on map). No hard wall: outside the
+// region there is no propellant regen, ships read signature-max (tier ID at
+// any range), and a restoring current pulls back toward center. Fiction:
+// the shroud's mass. No ship can be stranded — the pull always eventually
+// returns a derelict.
 export const REGION_RADIUS_M = 250000; // 250 km; crossing time ~2.8 min at flank. LINKED: SPAWN_DIST_FROM_CENTER_M sits at 60% of it
-export const HARD_LIMIT_RADIUS_M = 375000; // TEMPORARY (deleted in v4 §4 for edge gravity); must stay > SPAWN_DIST_FROM_CENTER_M
+export const EDGE_PULL_MPS2_PER_50KM = 5; // grows linearly with distance beyond the edge
+export const EDGE_PULL_CAP_MPS2 = 50;
 
 // Ship. Full tank = 100 s of hard burn = 6000 m/s of delta-v: propellant is
 // a delta-v budget — enough to reach flank speed and kill it once.
