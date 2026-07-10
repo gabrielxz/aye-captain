@@ -106,6 +106,13 @@ is fine; verified via `--network host` and in-container curl).
   but noisy — see TODO).
 - Dev harness: command-box input starting with `{`/`[` bypasses the LLM and
   is parsed as raw schema commands. Kept in v1 deliberately.
+- STT has NO vocabulary-bias prompt — deliberately REMOVED (2026-07-10):
+  Whisper prompt biasing fabricates commands on marginal audio. Do not
+  re-add without the hallucination defenses in stt.ts proving safe. Voice
+  capture uses a continuous 0.8s pre-roll ring (voice.js), not
+  per-press MediaRecorder — fixes clipped speech onsets.
+- Translator responses go through bracket-repair (`repairJson`) before
+  rejection; raw output is logged whenever parsing fails or drops elements.
 
 ## Testing conventions
 

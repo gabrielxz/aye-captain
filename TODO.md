@@ -1,8 +1,32 @@
-# TODO — next steps after v1
+# TODO — next steps
 
-Agreed at the end of the v1 build session (2026-07-09), roughly in priority
-order. Items marked (suggested) were proposed by Claude and not yet
-explicitly requested by Gabriel.
+## NEXT MILESTONE: v4 "The Big Dark"
+
+`HANDOFF-v4.md` (authored by Gabriel + Claude online, 2026-07-10) is the
+spec: 250 km region, 3 km/s ships, sub-tick physics (10 Hz substeps +
+swept-segment collision EVERYWHERE), sensor/signature/LOS contact tiers,
+terrain, burn-and-coast torpedoes, PDCs replacing the laser, 4 Hz
+snapshots. Read it + CLAUDE.md invariants before starting. Not begun.
+
+## v3 post-release hardening (done, 2026-07-10)
+
+- [x] Voice pipeline: Whisper hallucination defenses (silence gate,
+  padded-window segment filter, phrase blacklist, bias prompt removed),
+  0.8s pre-roll ring capture (fixes clipped onsets), audio ducking on PTT.
+- [x] Translator: bracket-repair for almost-JSON (live specimen became a
+  regression test); raw LLM output now logged on any parse failure/drop.
+- [x] UX: animated PROP bar, hull readouts moved off-map into HUD,
+  XO speech throttle (warnings preempt; chatter text-only under load),
+  laser beam 4→6° (reserved knob, applied on playtest evidence).
+- Diagnostic playbook that worked all night: `data/utterances.jsonl` (or
+  /data on Fly) shows what STT heard; `fly logs` shows translator raw
+  failures; the two together localize any "XO misbehaved" report fast.
+
+---
+
+Below: agreed at the end of the v1 build session (2026-07-09), roughly in
+priority order. Items marked (suggested) were proposed by Claude and not
+yet explicitly requested by Gabriel.
 
 ## Done since v1 (2026-07-09 evening session)
 
