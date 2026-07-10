@@ -3,36 +3,60 @@
 Networked 1v1 space combat where you command your ship in plain English —
 typed or spoken. Hold Space and say "flank speed, come left forty"; the
 ship's AI translates your words into structured commands; an authoritative
-server executes them on a 1 Hz tick. The fun is turning intent into
-well-communicated orders — and living with the occasional misinterpretation.
+server executes them. The fun is turning intent into well-communicated
+orders — and living with the occasional misinterpretation.
+
+v4 "The Big Dark": **detection is the game**. A 250 km region, 3 km/s
+ships, and sensors that see drive plumes — who sees whom first, at what
+quality, decides engagements. Going dark is the only stealth.
 
 - **Multiplayer**: 1v1 via 4-letter room codes. No accounts, no persistence.
-- **Practice**: solo mode against a drone that circles — and shoots back.
+- **Practice**: solo mode against a drone that patrols the rocks — and
+  shoots back.
 - **Input**: voice push-to-talk (hold Space) or typed text.
 - **Output**: the ship AI talks back (ElevenLabs voice) and the ship itself
   sounds alive (procedurally synthesized SFX, no audio assets).
 
 ## How to play
 
-- **Thrust & helm**: "flank speed", "all stop", "come left forty",
-  "steer 090", "point us at him", "go dark and drift".
-- **Weapons**: laser (5 km, fires along your nose, 4 s cooldown); 6 missiles
-  in 2 launch tubes (auto-reload, 20 s) — but you need a **lock**: hold the
-  enemy within 30° of your nose, inside 10 km, on sensors, for 5 s. The
-  target FEELS your lock ("we're being painted!") and firing lights you up
-  with a launch flash. 4 decoys (hotter than a quiet ship; cold ship + decoy
-  is a real escape).
-- **Propellant**: thrust burns it (1/s at full); it regenerates only inside
-  the zone with throttle ≤ 20%. Dry tanks = you drift. Turning is free.
-- **Standing orders**: conditional doctrine — "if a missile comes at us, turn
-  into it and shoot it down", "fire when he's in range and on our nose, keep
-  firing". Max 6; cancel by name ("belay missile defense") or "belay all".
-- **Questions**: "how far out is he?", "weapons status?", "full report".
-- **The shroud**: outside the 30 km zone ring you're visible to the enemy at
-  any range, your own sensors are halved, and your propellant never
-  regenerates. The faint 45 km ring is a hard wall — your drive fails there.
-- Ships drift (Newtonian): turning doesn't change your velocity. To brake,
-  flip 180 and burn.
+- **Thrust & helm**: "flank speed", "come left forty", "steer 090", "point
+  us at him", "go dark and drift", "all stop" (an autopilot flip-and-burn).
+  Ships drift (Newtonian): turning doesn't change your velocity. "Show me
+  our vector" (or V) draws where you're going and where you could stop.
+- **Detection**: your drive plume is your signature. A hard-burning ship is
+  visible ~181 km out; a dark drifter ~16 km. Contacts have **tiers**:
+  FAINT (a smudge — approximate position, no vector), TRACK (true position
+  + velocity, **lockable**), ID (full readout). Rocks and dust block
+  line of sight — inside a dust cloud you're blind and unseen.
+- **Weapons**: 6 torpedoes in 2 auto-reloading tubes. You need a **lock**:
+  a TRACK-or-better contact within 30° of your nose, inside 80 km, held
+  5 s. The target FEELS your lock ("we're being painted!") and launching
+  spikes your signature hugely. Torpedoes burn hard (~40g to 6 km/s, 25 s
+  of fuel) then coast ballistic — nearly invisible, blind to maneuver,
+  still lethal on their line.
+- **Point defense**: automated PDCs engage inbound missiles (8 km) and
+  enemy ships at knife range (3 km) while "guns free"; "hold fire" keeps
+  you dark. 60 s of ammo, no resupply. Mutual PDC range is a mutual mauling.
+- **Countermeasures**: 4 decoys (hotter than anything a ship can burn);
+  terrain (break line of sight behind a rock, vanish into dust); outrun
+  the torpedo's burn; dodge late to waste its fuel.
+- **Propellant is delta-v**: a full tank is 100 s of hard burn — enough to
+  reach flank speed and kill it once. It regenerates only inside the region
+  with throttle ≤ 20%. Dry tanks = you drift. Turning is free.
+- **Terrain**: 30 asteroids plus a centerpiece moonlet (solid — collision
+  warnings sound 20 s out, hitting one above ~50 m/s hurts, ~1.5 km/s is
+  lethal) and 3 dust clouds (sensor shadows). Same field on rematch, or ask
+  for a new one.
+- **The shroud edge**: outside the 250 km ring you're lit up (tier ID at
+  any range), your tanks never refill, and a current drags you back toward
+  center. No walls; no stranding.
+- **Standing orders**: conditional doctrine — "if you get a track on him,
+  sing out", "if a missile comes at us, turn into it, guns free". Max 6;
+  cancel by name ("belay missile defense") or "belay all".
+- **Questions**: "how far out is he?", "any rocks nearby we could hide
+  behind?", "pdc status?", "full report".
+- **Map**: wheel zoom, drag/WASD pan, F follows your ship, M toggles the
+  region overview, V toggles your velocity vector.
 - Win by reducing the enemy hull to zero. Rematch from the banner.
 
 Debug/dev harness: any input starting with `{` or `[` is parsed as raw
@@ -59,14 +83,15 @@ Two-player on a LAN: both browsers hit `http://<your-ip>:8080`, one creates a
 match, the other joins with the room code.
 
 ```sh
-npm test            # headless sim/translator test suites (~147 assertions)
+npm test            # headless sim/translator test suites (~250 assertions)
 npm run typecheck   # tsc --noEmit
 npm run build       # compile server to dist/
 npm start           # run the compiled server
 ```
 
 For contributors/AI agents: `CLAUDE.md` has architecture invariants and
-conventions; `TODO.md` tracks next steps; `HANDOFF.md` is the original spec.
+conventions; `TODO.md` tracks next steps; `HANDOFF.md` is the original spec
+and `HANDOFF-v4.md` the v4 overhaul spec.
 
 ## Deploy to Fly.io
 
@@ -86,13 +111,20 @@ Matches are ephemeral and live in memory: if the process dies, the match dies.
 One Node process (TypeScript). Static vanilla-JS client + WebSocket endpoint
 (`/ws`) + server-side Anthropic API calls (key never reaches the client).
 
+Timing: commands, standing orders, and LLM interaction run on a 1 Hz tick;
+physics runs 10 substeps per tick (10 Hz) with swept-segment collision so
+6 km/s torpedoes can't tunnel through proximity fuses or rocks; snapshots
+broadcast at 4 Hz and the client interpolates.
+
 ```
 server/
   index.ts        express + ws + static hosting, room registry, /stt, /speech
-  match.ts        match/room lifecycle, lobby codes, disconnect grace
-  sim.ts          1 Hz tick: standing orders -> commands -> physics ->
-                  weapons (tubes/locks/propellant) -> sensors; fog of war
-                  enforced in snapshots
+  match.ts        match/room lifecycle, lobby codes, disconnect grace,
+                  terrain seed per match (rematch: same or new field)
+  sim.ts          the game: substep physics, terrain collisions, signature/
+                  tier sensors, locks, torpedoes, PDCs, maneuvers, standing
+                  orders; fog of war enforced in snapshots
+  terrain.ts      seeded rocks + dust generation, LOS raycasts
   translator.ts   LLM prompt assembly (from ship_command_schema.json),
                   defensive JSON parsing, schema validation
   persona.ts      the ship AI's character (voice + acknowledgement style)
@@ -103,9 +135,11 @@ server/
 client/
   index.html      lobby + ops-console layout
   main.js         ws handling, state store, snapshot-diff sound triggers
-  render.js       canvas draw loop w/ interpolation, SVG sprites, particles
-  ui.js           command box, transcript, HUD, banner
-  voice.js        push-to-talk capture (MediaRecorder -> /stt, Web Speech fallback)
+  render.js       canvas draw loop: camera (zoom/pan/follow/inset),
+                  interpolation, terrain, contacts by tier, starfield,
+                  vector overlay, SVG sprites, particles
+  ui.js           command box, transcript, HUD, banner, focus management
+  voice.js        push-to-talk capture (pre-roll ring -> /stt, Web Speech fallback)
   audio.js        procedural SFX synthesis + ship-AI speech queue
   assets/         authored SVG ship designs (interceptor / gunship / saucer)
 ship_command_schema.json   the LLM<->server command contract (source of truth)
@@ -116,9 +150,9 @@ Key invariants:
 - The server is authoritative; clients only render snapshots and send
   utterance strings.
 - Fog of war is enforced server-side: a snapshot never contains information
-  that player's sensors don't have.
+  above the contact tier that player's sensors have earned.
 - Standing-order conditions are evaluated against the owner's sensor picture;
-  comparisons on unknowable metrics (e.g. `enemy_range` with the enemy off
-  sensors) are false.
-- All tunables live in `server/constants.ts`; `HANDOFF.md` wins over the
+  comparisons on unknowable metrics (e.g. `enemy_range` below TRACK tier)
+  are false.
+- All tunables live in `server/constants.ts`; the handoff specs win over the
   schema's suggested constants where they disagree.

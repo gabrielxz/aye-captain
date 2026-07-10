@@ -115,8 +115,9 @@ export interface Ship {
   isDrone: boolean;
   standingOrders: StandingOrder[];
   orderCounter: number; // for generated labels
-  // zone transition tracking (edge-triggered transcript events)
+  // zone/dust transition tracking (edge-triggered transcript events)
   wasInsideZone: boolean;
+  wasInDust: boolean;
   // collision warning: projected seconds to rock impact (null = clear) and
   // the last announced countdown tier (re-armed when the vector clears)
   collisionWarnS: number | null;
@@ -303,6 +304,7 @@ export class Sim {
       standingOrders: [],
       orderCounter: 0,
       wasInsideZone: true, // spawn is well inside the zone
+      wasInDust: false,
       collisionWarnS: null,
       collisionTier: null,
       contactTier: 0,
@@ -983,6 +985,7 @@ export class Sim {
       this.updateSensors(ship, events);
       this.announceInboundMissiles(ship, events);
       this.updateCollisionWarning(ship, events);
+      this.announceDust(ship, events);
     }
     for (const ship of this.ships.values()) {
       this.updateLock(ship, events, tickDt);
@@ -1359,6 +1362,21 @@ export class Sim {
   // Inside a dust cloud you are blind and unseen (both directions).
   inDust(ship: Ship): boolean {
     return insideDust(ship.x, ship.y, this.terrain);
+  }
+
+  // Edge-triggered dust entry/exit lines.
+  private announceDust(ship: Ship, events: SimEvent[]): void {
+    const now = this.inDust(ship);
+    if (!ship.isDrone && now !== ship.wasInDust) {
+      events.push({
+        kind: "notice",
+        ship: ship.id,
+        text: now
+          ? "We're in the cloud — sensors are blind, but so are theirs."
+          : "Clear of the cloud — sensors are back.",
+      });
+    }
+    ship.wasInDust = now;
   }
 
 
