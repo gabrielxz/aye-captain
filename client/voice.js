@@ -24,7 +24,11 @@ export function createVoice({ useServerStt, onInterim, onFinal, onStateChange, o
   async function startRecorder() {
     try {
       if (!stream || !stream.active) {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // echo cancellation matters: the game itself makes noise (thrust
+        // rumble, the XO talking) and mic bleed feeds Whisper hallucinations
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        });
       }
     } catch {
       setMode("idle");
@@ -46,6 +50,32 @@ export function createVoice({ useServerStt, onInterim, onFinal, onStateChange, o
     recorder.start();
   }
 
+  // Silence gate: if the clip has no real speech energy, don't send it —
+  // Whisper FABRICATES text for silent/noise-only audio rather than
+  // returning nothing. Decode locally and check peak + RMS levels.
+  async function hasSpeechEnergy(blob) {
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      const actx = new AC();
+      const buf = await actx.decodeAudioData(await blob.arrayBuffer());
+      void actx.close();
+      const d = buf.getChannelData(0);
+      let sumSq = 0;
+      let peak = 0;
+      let n = 0;
+      for (let i = 0; i < d.length; i += 8) {
+        const v = Math.abs(d[i]);
+        sumSq += v * v;
+        if (v > peak) peak = v;
+        n++;
+      }
+      const rms = Math.sqrt(sumSq / Math.max(1, n));
+      return peak > 0.05 && rms > 0.006;
+    } catch {
+      return true; // can't decode locally — let the server judge
+    }
+  }
+
   async function finishRecording() {
     const heldMs = performance.now() - heldSince;
     const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
@@ -55,6 +85,11 @@ export function createVoice({ useServerStt, onInterim, onFinal, onStateChange, o
       return;
     }
     setMode("transcribing");
+    if (!(await hasSpeechEnergy(blob))) {
+      setMode("idle");
+      onError("nothing heard — check your mic level");
+      return;
+    }
     try {
       const resp = await fetch("/stt", {
         method: "POST",

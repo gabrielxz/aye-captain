@@ -1,7 +1,7 @@
 // command box, transcript pane, HUD panels, lobby
 import { send, state } from "./main.js";
 import { createVoice } from "./voice.js";
-import { initAudio, setVolume, getVolume, sfxClick } from "./audio.js";
+import { initAudio, setVolume, getVolume, sfxClick, duck } from "./audio.js";
 
 const lobbyEl = document.getElementById("lobby");
 const gameEl = document.getElementById("game");
@@ -97,6 +97,7 @@ function initVoice() {
       micEl.classList.toggle("listening", mode === "listening");
       micEl.classList.toggle("transcribing", mode === "transcribing");
       micEl.textContent = mode === "transcribing" ? "···" : "● REC";
+      duck(mode === "listening"); // quiet the ship while the captain talks
       if (mode === "idle") cmdEl.value = "";
     },
     onFinal: (text) => {

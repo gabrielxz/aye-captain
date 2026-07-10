@@ -39,15 +39,43 @@ export function sttAvailable(): boolean {
   return !!apiKey();
 }
 
-// Whisper-style vocabulary bias: a prompt of in-domain phrases nudges the
-// model toward this jargon. Refine from data/utterances.jsonl once real
-// players have talked to it.
-const STT_BIAS_PROMPT =
-  "Naval space-combat voice commands: ahead full, all stop, hard to port, " +
-  "hard to starboard, come to heading zero four five, two seven zero, " +
-  "fire the laser, launch missile, deploy decoy, standing order, belay that, " +
-  "evasive maneuvers, drone, contact, bearing, thrust one hundred percent, " +
-  "come about, point at him, weapons free.";
+// NOTE: no vocabulary-bias prompt. Whisper prompt biasing measurably
+// increases hallucination on marginal audio (quiet mics, game-audio bleed),
+// which fabricates commands — worse than mishearing. The translator prompt
+// already interprets phonetic mistakes; reintroduce boosting data-driven
+// (from data/utterances.jsonl) only with the confidence filter below proven.
+
+interface WhisperSegment {
+  text: string;
+  start?: number;
+  end?: number;
+  no_speech_prob?: number;
+  avg_logprob?: number;
+}
+
+// Whole-transcript hallucination phrases: what Whisper invents for
+// silence/noise. Only dropped when they are the ENTIRE transcript — none is
+// ever a meaningful ship command on its own.
+const HALLUCINATION_PHRASES = new Set([
+  "thank you", "thank you.", "thanks for watching", "thanks for watching.",
+  "thank you for watching", "thank you for watching.", "please subscribe",
+  "so", "so,", "you", "bye", "bye.", ".", "the end", "the end.",
+]);
+
+// Groq's turbo Whisper reports no_speech_prob=0 even for pure-silence
+// hallucinations, so confidence stats are useless. The reliable tell:
+// hallucinated segments span the model's whole 30s window instead of the
+// clip's real duration (verified: 2.5s of silence -> segment end 29.98).
+function filterSegments(segments: WhisperSegment[], durationS: number): string {
+  const text = segments
+    .filter((s) => durationS <= 0 || (s.end ?? 0) <= durationS + 2)
+    .map((s) => s.text)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (HALLUCINATION_PHRASES.has(text.toLowerCase())) return "";
+  return text;
+}
 
 export async function transcribe(audio: Buffer, mime: string): Promise<string> {
   const ext = mime.includes("mp4") ? "m4a" : mime.includes("ogg") ? "ogg" : "webm";
@@ -56,8 +84,7 @@ export async function transcribe(audio: Buffer, mime: string): Promise<string> {
   form.append("model", model());
   form.append("language", "en");
   form.append("temperature", "0");
-  form.append("prompt", STT_BIAS_PROMPT);
-  form.append("response_format", "json");
+  form.append("response_format", "verbose_json");
 
   const resp = await fetch(`${baseUrl()}/audio/transcriptions`, {
     method: "POST",
@@ -69,6 +96,13 @@ export async function transcribe(audio: Buffer, mime: string): Promise<string> {
     const detail = (await resp.text().catch(() => "")).slice(0, 200);
     throw new Error(`STT ${resp.status}: ${detail}`);
   }
-  const data = (await resp.json()) as { text?: string };
+  const data = (await resp.json()) as {
+    text?: string;
+    duration?: number;
+    segments?: WhisperSegment[];
+  };
+  if (Array.isArray(data.segments)) {
+    return filterSegments(data.segments, Number(data.duration ?? 0));
+  }
   return (data.text ?? "").trim();
 }

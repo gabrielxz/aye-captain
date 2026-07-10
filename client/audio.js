@@ -28,10 +28,19 @@ export function initAudio() {
   speechBus.connect(master);
 }
 
+let ducked = false;
 export function setVolume(v) {
   volume = v;
   localStorage.setItem("vol", String(v));
-  if (master) master.gain.value = v;
+  if (master && !ducked) master.gain.value = v;
+}
+
+// Duck game audio while the captain is talking (push-to-talk held): they
+// hear themselves think, and the mic picks up far less game noise.
+export function duck(on) {
+  ducked = on;
+  if (!ctx) return;
+  master.gain.linearRampToValueAtTime(on ? volume * 0.15 : volume, ctx.currentTime + 0.15);
 }
 
 export function getVolume() {
