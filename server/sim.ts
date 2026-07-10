@@ -769,29 +769,49 @@ export class Sim {
     }
   }
 
+  // One full command tick (1 second of game time). Tests and any turn-based
+  // caller use this; the live match drives step() directly at substep rate.
   tick(): SimEvent[] {
     const events: SimEvent[] = [];
-    const dt = 1 / C.TICK_RATE_HZ;
-    this.tickCount++;
+    for (let i = 0; i < C.PHYSICS_SUBSTEPS; i++) this.step(events);
+    return events;
+  }
 
-    // 1. drone behavior (fires on last tick's lock state), then standing
-    // orders against each player's sensor picture
-    for (const ship of this.ships.values()) {
-      this.droneAct(ship, events, dt);
-      this.evaluateStandingOrders(ship, events, dt);
-    }
+  // Substep phase within the current command tick: 0 runs the command phase
+  // first; wrapping back to 0 runs the sensor phase last.
+  private phase = 0;
 
-    // 2. execute queued commands (lasers resolve here; missiles/decoys spawn)
-    for (const [id, queue] of this.queues) {
-      const ship = this.ships.get(id);
-      if (!ship) continue;
-      for (const cmd of queue.splice(0)) {
-        const reason = this.applyCommand(ship, cmd, events);
-        if (reason) {
-          events.push({ kind: "reject", ship: id, verb: cmd.verb, reason });
-        } else if (cmd.acknowledgement) {
-          // acknowledgements go out only for commands that actually executed
-          events.push({ kind: "ack", ship: id, text: cmd.acknowledgement });
+  // One physics substep (1 / (TICK_RATE_HZ * PHYSICS_SUBSTEPS) seconds).
+  // Commands, standing orders, and drone decisions run at TICK_RATE_HZ on
+  // the first substep of each tick; physics and weapon resolution run every
+  // substep (swept-segment fuses need fine-grained motion at v4 speeds);
+  // sensors/locks/painted re-evaluate at TICK_RATE_HZ on the last.
+  step(events: SimEvent[]): void {
+    const tickDt = 1 / C.TICK_RATE_HZ;
+    const dt = tickDt / C.PHYSICS_SUBSTEPS;
+
+    if (this.phase === 0) {
+      this.tickCount++;
+
+      // 1. drone behavior (fires on last tick's lock state), then standing
+      // orders against each player's sensor picture
+      for (const ship of this.ships.values()) {
+        this.droneAct(ship, events, tickDt);
+        this.evaluateStandingOrders(ship, events, tickDt);
+      }
+
+      // 2. execute queued commands (lasers resolve here; missiles/decoys spawn)
+      for (const [id, queue] of this.queues) {
+        const ship = this.ships.get(id);
+        if (!ship) continue;
+        for (const cmd of queue.splice(0)) {
+          const reason = this.applyCommand(ship, cmd, events);
+          if (reason) {
+            events.push({ kind: "reject", ship: id, verb: cmd.verb, reason });
+          } else if (cmd.acknowledgement) {
+            // acknowledgements go out only for commands that actually executed
+            events.push({ kind: "ack", ship: id, text: cmd.acknowledgement });
+          }
         }
       }
     }
@@ -813,6 +833,9 @@ export class Sim {
     // 4. resolve weapons: proximity fuses, expiry, seeker locks
     this.resolveWeapons(events, dt);
 
+    this.phase = (this.phase + 1) % C.PHYSICS_SUBSTEPS;
+    if (this.phase !== 0) return;
+
     // 5. sensors: per-viewer enemy visibility, last-known tracking, contact
     // notices; then ship-to-ship missile locks (needs fresh visibility) and
     // painted warnings (needs both locks updated)
@@ -821,13 +844,11 @@ export class Sim {
       this.announceInboundMissiles(ship, events);
     }
     for (const ship of this.ships.values()) {
-      this.updateLock(ship, events, dt);
+      this.updateLock(ship, events, tickDt);
     }
     for (const ship of this.ships.values()) {
       this.announcePainted(ship, events);
     }
-
-    return events;
   }
 
   // Practice drone offense: with a held lock, a loaded tube, and its
@@ -1475,6 +1496,8 @@ export class Sim {
         visible: true,
         x: enemy.x,
         y: enemy.y,
+        vx: enemy.vx,
+        vy: enemy.vy,
         facing: enemy.facing,
         // hull readout on a visible contact (drives the enemy hull bar)
         hull: enemy.hull,
@@ -1533,9 +1556,9 @@ export class Sim {
       decoys: [
         ...this.decoys
           .filter((d) => d.owner === id)
-          .map((d) => ({ id: d.id, x: d.x, y: d.y, own: true })),
+          .map((d) => ({ id: d.id, x: d.x, y: d.y, vx: d.vx, vy: d.vy, own: true })),
         ...this.visibleEnemyDecoys(ship).map((d) => ({
-          id: d.id, x: d.x, y: d.y, own: false,
+          id: d.id, x: d.x, y: d.y, vx: d.vx, vy: d.vy, own: false,
         })),
       ],
       fx: this.fx.filter((f) => {

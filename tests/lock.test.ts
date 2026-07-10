@@ -84,7 +84,7 @@ const assert = (cond: boolean, msg: string) => {
 
   sim.enqueue("A", [{ verb: "fire_missile", params: {} } as any]);
   let ev = sim.tick();
-  assert(!a.tubes[0].loaded && a.tubes[0].reload === C.TUBE_RELOAD_S - 1, "tube one fired, reloading");
+  assert(!a.tubes[0].loaded && Math.abs(a.tubes[0].reload - (C.TUBE_RELOAD_S - 1)) < 1e-9, "tube one fired, reloading");
   assert(ev.some(e => e.kind === "notice" && /Tube one reloading/.test((e as any).text)), "reload-start notice");
   assert(a.reserve === C.MISSILE_MAGAZINE - C.TUBE_COUNT - 1, "reserve decremented by auto-reload");
 

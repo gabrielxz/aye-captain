@@ -10,7 +10,7 @@ export const state = {
   prevSnap: null, // previous snapshot (for interpolation)
   lastSnap: null, // latest snapshot
   lastSnapAt: 0, // performance.now() when lastSnap arrived
-  snapIntervalMs: 1000, // measured gap between snapshots
+  snapIntervalMs: 250, // measured gap between snapshots (server sends at 4 Hz)
   fxBuffer: [], // transient effects: {fx, at: performance.now()}
   gameOver: false,
   ws: null,
@@ -56,7 +56,7 @@ function handleMessage(msg) {
     case "snapshot": {
       const now = performance.now();
       if (state.lastSnap) {
-        state.snapIntervalMs = Math.min(2000, Math.max(250, now - state.lastSnapAt));
+        state.snapIntervalMs = Math.min(2000, Math.max(100, now - state.lastSnapAt));
       }
       state.prevSnap = state.lastSnap;
       state.lastSnap = msg;

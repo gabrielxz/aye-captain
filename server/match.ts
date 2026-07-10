@@ -11,7 +11,8 @@ export class Match {
   readonly code: string | null;
   readonly practice: boolean;
   private sockets = new Map<ShipId, WebSocket | null>();
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private timer: ReturnType<typeof setInterval> | null = null; // physics substeps
+  private snapTimer: ReturnType<typeof setInterval> | null = null; // snapshot broadcast
   private forfeitTimer: ReturnType<typeof setTimeout> | null = null;
   private started = false; // both players have been present at least once
 
@@ -146,30 +147,46 @@ export class Match {
     }
   }
 
+  // Physics advances at substep rate; snapshots broadcast at SNAPSHOT_RATE_HZ
+  // on their own timer (they sample the latest state — no need to align with
+  // substep boundaries). Commands still process at TICK_RATE_HZ inside the sim.
   start(): void {
     if (this.timer) return;
-    this.timer = setInterval(() => this.tick(), 1000 / C.TICK_RATE_HZ);
+    this.timer = setInterval(
+      () => this.physicsStep(),
+      1000 / (C.TICK_RATE_HZ * C.PHYSICS_SUBSTEPS)
+    );
+    this.snapTimer = setInterval(() => this.broadcast(), 1000 / C.SNAPSHOT_RATE_HZ);
   }
 
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    if (this.snapTimer) clearInterval(this.snapTimer);
+    this.snapTimer = null;
   }
 
   get running(): boolean {
     return this.timer !== null;
   }
 
-  private tick(): void {
-    const events = this.sim.tick();
+  private physicsStep(): void {
+    const events: SimEvent[] = [];
+    this.sim.step(events);
     for (const ev of events) this.routeEvent(ev);
+    if (this.sim.winner) {
+      this.broadcast(); // final positions + terminal fx go out immediately
+      this.stop();
+    }
+  }
+
+  private broadcast(): void {
     for (const [id, ws] of this.sockets) {
       if (ws && ws.readyState === ws.OPEN) {
         ws.send(JSON.stringify({ type: "snapshot", ...this.sim.snapshotFor(id) }));
       }
     }
     this.sim.clearFx();
-    if (this.sim.winner) this.stop();
   }
 
   canRematch(): boolean {

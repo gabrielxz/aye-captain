@@ -1,6 +1,13 @@
 // EVERY tunable number lives here. No magic numbers in sim code.
 
-export const TICK_RATE_HZ = 1;
+export const TICK_RATE_HZ = 1; // command tick: queued commands, standing orders, LLM interaction
+// Physics runs PHYSICS_SUBSTEPS times per command tick (10 Hz at 1 Hz ticks).
+// At v4 speeds objects move km per command tick; substeps + swept-segment
+// collision keep fast movers from tunneling through fuses and terrain.
+export const PHYSICS_SUBSTEPS = 10;
+// Snapshots broadcast faster than the command tick so client interpolation
+// stays smooth at high speeds. Commands still process at TICK_RATE_HZ.
+export const SNAPSHOT_RATE_HZ = 4;
 
 // Zone / bounding
 export const ZONE_RADIUS_M = 30000; // "the shroud" — visible ring on map
