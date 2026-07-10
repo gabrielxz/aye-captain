@@ -191,6 +191,12 @@ export function validateCommand(raw: unknown, nested = false): Command | null {
       if (p.posture !== "free" && p.posture !== "hold") return null;
       return out({ posture: p.posture });
     }
+    case "maneuver": {
+      if (p.type !== "full_stop") return null;
+      return out({ type: p.type });
+    }
+    case "show_vector":
+      return out({});
     case "fire_missile": {
       if (p.tubes === undefined) return out({});
       const tubes = validTubesParam(p.tubes);

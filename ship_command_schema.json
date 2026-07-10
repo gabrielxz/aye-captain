@@ -18,6 +18,8 @@
             "fire_missile",
             "reload_tubes",
             "deploy_decoy",
+            "maneuver",
+            "show_vector",
             "set_standing_order",
             "query"
           ]
@@ -113,6 +115,23 @@
 
     "deploy_decoy": {
       "description": "Eject a decoy that inherits the ship's current velocity plus a small random drift. Emits a hot signature for decoy_lifetime_seconds, attracting missile seekers and (future) appearing as a sensor contact. Rejected if decoy supply is empty.",
+      "type": "object",
+      "properties": {},
+      "examples": [ {} ]
+    },
+
+    "maneuver": {
+      "description": "Run an autopilot macro with a defined end state (this does NOT violate the captain-flies-the-ship doctrine; continuous tracking remains removed). full_stop: the helm flips to retrograde, burns at an appropriate throttle, and cuts thrust when speed < 5 m/s; the XO announces start and completion. Cancelled automatically by ANY subsequent set_thrust or set_heading ('belay that' should emit set_thrust with the current setting to take the conn back). Rejected if already stopped.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["full_stop"] }
+      },
+      "examples": [ { "type": "full_stop" } ]
+    },
+
+    "show_vector": {
+      "description": "Draw the ship's velocity vector on the captain's map for a few seconds (a line showing 10 seconds of travel, with a speed label, plus the projected stop point if propellant remains). Purely informational — no effect on the ship. Use when the captain asks 'which way are we drifting', 'show me our vector', etc.",
       "type": "object",
       "properties": {},
       "examples": [ {} ]

@@ -30,6 +30,8 @@ export interface Command {
     | "fire_missile"
     | "reload_tubes"
     | "deploy_decoy"
+    | "maneuver"
+    | "show_vector"
     | "set_standing_order"
     | "query";
   params: Record<string, unknown>;
@@ -37,6 +39,11 @@ export interface Command {
 }
 
 export type PdcPosture = "free" | "hold";
+
+// Autopilot macros. Unlike continuous tracking (which stays removed), a
+// maneuver has a DEFINED END STATE — it runs, finishes, announces. The
+// executor switches on type so future macros (v5+) are additive.
+export type Maneuver = { type: "full_stop" };
 
 // Goal heading as stored: ALL orders resolve to an absolute bearing at apply
 // time — target orders snapshot the target's bearing once (no continuous
@@ -86,6 +93,7 @@ export interface Ship {
   facing: number; // degrees, 0 = north/up, clockwise positive
   thrust: number; // throttle SETTING percent 0-100 (output is 0 when tanks dry)
   goal: HeadingGoal | null;
+  maneuver: Maneuver | null; // active autopilot macro (cancelled by any thrust/heading order)
   hull: number;
   reserve: number; // missiles in the magazine beyond what's loaded in tubes
   tubes: Tube[];
@@ -174,6 +182,7 @@ export type SimEvent =
   | { kind: "reject"; ship: ShipId; verb: string; reason: string }
   | { kind: "ack"; ship: ShipId; text: string }
   | { kind: "notice"; ship: ShipId | "all"; text: string; alert?: boolean }
+  | { kind: "ui"; ship: ShipId; what: "show_vector" } // client-side overlay triggers
   | { kind: "gameover"; winner: ShipId };
 
 // ---------- angle helpers ----------
@@ -271,6 +280,7 @@ export class Sim {
       facing: norm360(facing),
       thrust: 0,
       goal: null,
+      maneuver: null,
       hull: isDrone ? C.DRONE_HULL_POINTS : C.HULL_POINTS,
       // tubes start loaded from the magazine: 6 aboard = 2 loaded + 4 reserve
       reserve: Math.max(0, C.MISSILE_MAGAZINE - C.TUBE_COUNT),
@@ -356,10 +366,12 @@ export class Sim {
       case "set_thrust": {
         const pct = Number(cmd.params.percent);
         if (!Number.isFinite(pct)) return "Helm didn't copy that thrust setting.";
+        this.cancelManeuver(ship, events);
         ship.thrust = clamp(pct, 0, 100);
         return null;
       }
       case "set_heading": {
+        this.cancelManeuver(ship, events);
         const p = cmd.params as unknown as HeadingParams;
         if (p.mode === "relative") {
           const sign = p.direction === "port" ? -1 : 1; // port = CCW
@@ -389,6 +401,19 @@ export class Sim {
           return "PDC posture is 'free' or 'hold', Captain.";
         }
         ship.pdcPosture = posture;
+        return null;
+      }
+      case "maneuver": {
+        if (cmd.params.type !== "full_stop") return "Helm doesn't know that maneuver.";
+        if (this.speedOf(ship) < 5) return "We're already stopped, Captain.";
+        ship.maneuver = { type: "full_stop" };
+        if (!ship.isDrone) {
+          events.push({ kind: "notice", ship: ship.id, text: "Flipping to kill our velocity." });
+        }
+        return null;
+      }
+      case "show_vector": {
+        events.push({ kind: "ui", ship: ship.id, what: "show_vector" });
         return null;
       }
       case "fire_missile": {
@@ -1412,6 +1437,8 @@ export class Sim {
       this.resolveRockCollision(ship, ox, oy, events);
       return;
     }
+    this.stepManeuver(ship, events, dt);
+
     // rotate toward goal at fixed turn rate, clamped (no overshoot).
     // Turning is free (reaction wheels) — no propellant cost.
     const goalDeg = this.resolveGoal(ship);
@@ -1444,6 +1471,55 @@ export class Sim {
     this.resolveRockCollision(ship, ox, oy, events);
 
     this.stepPropellant(ship, effective, events, dt);
+  }
+
+  // Any explicit thrust/heading order takes the conn back from an active
+  // autopilot macro ("belay that" arrives as one of those).
+  private cancelManeuver(ship: Ship, events: SimEvent[]): void {
+    if (!ship.maneuver) return;
+    ship.maneuver = null;
+    if (!ship.isDrone) {
+      events.push({ kind: "notice", ship: ship.id, text: "Full stop belayed — you have the conn." });
+    }
+  }
+
+  // Autopilot executor, one substep. full_stop: turn to retrograde, burn at
+  // an appropriate throttle, cut thrust when speed < 5 m/s. Future macros
+  // switch on maneuver.type here.
+  private stepManeuver(ship: Ship, events: SimEvent[], dt: number): void {
+    if (!ship.maneuver) return;
+    if (ship.maneuver.type === "full_stop") {
+      const speed = this.speedOf(ship);
+      if (speed < 5) {
+        ship.maneuver = null;
+        ship.thrust = 0;
+        ship.goal = null;
+        ship.vx = 0; // kill the last crawl — "all stop" means stopped
+        ship.vy = 0;
+        events.push({ kind: "notice", ship: ship.id, text: "Answering all stop." });
+        return;
+      }
+      if (ship.propellant <= 0) {
+        ship.maneuver = null;
+        ship.thrust = 0;
+        events.push({
+          kind: "notice",
+          ship: ship.id,
+          text: "Tanks dry — I can't finish the stop, Captain.",
+          alert: true,
+        });
+        return;
+      }
+      const retro = norm360(bearingTo(0, 0, -ship.vx, -ship.vy));
+      ship.goal = { mode: "absolute", degrees: retro };
+      const off = Math.abs(angDiff(ship.facing, retro));
+      if (off <= 15) {
+        // full burn until one second from stopped, then feather the throttle
+        ship.thrust = clamp(Math.round((speed / C.ACCEL_FULL_THRUST_MPS2) * 100), 5, 100);
+      } else {
+        ship.thrust = 0; // still flipping; don't burn off-axis
+      }
+    }
   }
 
   // Rocks are solid. Swept check over the substep movement; on impact the

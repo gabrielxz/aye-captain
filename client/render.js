@@ -153,6 +153,8 @@ document.addEventListener("keydown", (e) => {
     camera.follow = !camera.follow; // snap-to-ship happens on the next frame
   } else if (k === "m") {
     camera.showInset = !camera.showInset;
+  } else if (k === "v") {
+    vectorLatched = !vectorLatched; // local toggle, no XO round-trip
   }
 });
 document.addEventListener("keyup", (e) => heldKeys.delete(e.key.toLowerCase()));
@@ -203,6 +205,76 @@ function interpolate(pick) {
     y: lerp(prev.y, last.y, t),
     facing: lerpAngle(prev.facing ?? 0, last.facing ?? 0, t),
   };
+}
+
+// ---------- velocity vector overlay (show_vector verb + V toggle) ----------
+
+let vectorLatched = false; // V key: persistent toggle
+let vectorUntil = 0; // XO-triggered: shown until this timestamp
+
+export function showVector(ms) {
+  vectorUntil = performance.now() + ms;
+}
+
+function drawVectorOverlay(you) {
+  if (!you) return;
+  if (!vectorLatched && performance.now() > vectorUntil) return;
+  const vx = state.lastSnap?.you?.vx ?? 0;
+  const vy = state.lastSnap?.you?.vy ?? 0;
+  const speed = Math.hypot(vx, vy);
+  if (speed < 1) return;
+
+  const [sx, sy] = worldToScreen(you.x, you.y);
+  const [ex, ey] = worldToScreen(you.x + vx * 10, you.y + vy * 10); // 10 s of travel
+  ctx.beginPath();
+  ctx.moveTo(sx, sy);
+  ctx.lineTo(ex, ey);
+  ctx.strokeStyle = COLORS.own;
+  ctx.globalAlpha = 0.7;
+  ctx.lineWidth = 1.4;
+  ctx.setLineDash([6, 5]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  // arrowhead
+  const ang = Math.atan2(ey - sy, ex - sx);
+  ctx.beginPath();
+  ctx.moveTo(ex, ey);
+  ctx.lineTo(ex - 8 * Math.cos(ang - 0.4), ey - 8 * Math.sin(ang - 0.4));
+  ctx.lineTo(ex - 8 * Math.cos(ang + 0.4), ey - 8 * Math.sin(ang + 0.4));
+  ctx.closePath();
+  ctx.fillStyle = COLORS.own;
+  ctx.fill();
+  ctx.font = "10px monospace";
+  ctx.fillText(`${Math.round(speed)} m/s`, ex + 8, ey);
+  ctx.globalAlpha = 1;
+
+  // projected stop point for an immediate full-stop maneuver: coast through
+  // the retrograde flip, then decelerate at full burn (cheap, educational)
+  const prop = state.lastSnap?.you?.propellant ?? 0;
+  const accel = state.config?.accel ?? 60;
+  const turnRate = state.config?.turnRate ?? 20;
+  if (prop > 0) {
+    const facing = state.lastSnap?.you?.facing ?? 0;
+    const retro = (Math.atan2(-vx, -vy) * 180) / Math.PI;
+    const flipDeg = Math.abs((((retro - facing) % 360) + 540) % 360 - 180);
+    const flipS = flipDeg / turnRate;
+    const stopDist = speed * flipS + (speed * speed) / (2 * accel);
+    const [px, py] = worldToScreen(
+      you.x + (vx / speed) * stopDist,
+      you.y + (vy / speed) * stopDist
+    );
+    ctx.beginPath();
+    ctx.arc(px, py, 5, 0, Math.PI * 2);
+    ctx.strokeStyle = COLORS.own;
+    ctx.globalAlpha = 0.8;
+    ctx.setLineDash([2, 3]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font = "10px monospace";
+    ctx.fillStyle = COLORS.own;
+    ctx.fillText("stop", px + 8, py + 3);
+    ctx.globalAlpha = 1;
+  }
 }
 
 // ---------- starfield (multi-layer parallax; subtle, navigational) ----------
@@ -569,6 +641,7 @@ function draw() {
   }
 
   drawContacts();
+  drawVectorOverlay(you);
   drawInset(you);
 }
 

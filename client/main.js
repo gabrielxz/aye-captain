@@ -1,5 +1,5 @@
 // ws handling + client state store
-import { startRenderLoop, bigBoomAt } from "./render.js";
+import { startRenderLoop, bigBoomAt, showVector } from "./render.js";
 import { initUI, addTranscript, updateHUD, showLobbyStatus, enterGame, showBanner, hideBanner } from "./ui.js";
 import * as audio from "./audio.js";
 
@@ -99,6 +99,9 @@ function handleMessage(msg) {
     case "error":
       showLobbyStatus(msg.message);
       addTranscript("sys", msg.message, true);
+      break;
+    case "ui":
+      if (msg.what === "show_vector") showVector(5000);
       break;
     case "transcript":
       addTranscript(msg.who, msg.text, msg.alert);

@@ -3,7 +3,12 @@ import express from "express";
 import http from "node:http";
 import path from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
-import { REGION_RADIUS_M, STT_MAX_AUDIO_BYTES } from "./constants.js";
+import {
+  REGION_RADIUS_M,
+  ACCEL_FULL_THRUST_MPS2,
+  TURN_RATE_DEG_PER_SEC,
+  STT_MAX_AUDIO_BYTES,
+} from "./constants.js";
 import { Match } from "./match.js";
 import { sttAvailable, transcribe } from "./stt.js";
 import { getSpeech, pregenStockLines, ttsAvailable } from "./tts.js";
@@ -74,6 +79,8 @@ wss.on("connection", (ws: WebSocket) => {
       type: "hello",
       config: {
         zoneRadius: REGION_RADIUS_M,
+        accel: ACCEL_FULL_THRUST_MPS2, // for the client-side stop-point projection
+        turnRate: TURN_RATE_DEG_PER_SEC,
         stt: sttAvailable(),
       },
     })
