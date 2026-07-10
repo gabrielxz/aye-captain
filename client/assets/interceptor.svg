@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- sleek interceptor: dart hull, swept wings, twin nacelles. Nose = up. -->
+  <g stroke="ACCENT" stroke-width="1.5" stroke-linejoin="round">
+    <!-- wings, swept back -->
+    <path d="M32 22 L10 46 L16 50 L28 40 Z" fill="HULL"/>
+    <path d="M32 22 L54 46 L48 50 L36 40 Z" fill="HULL"/>
+    <!-- engine nacelles -->
+    <rect x="20" y="42" width="7" height="12" rx="2.5" fill="HULL"/>
+    <rect x="37" y="42" width="7" height="12" rx="2.5" fill="HULL"/>
+    <!-- main hull: long dart -->
+    <path d="M32 4 L39 30 L37 52 L27 52 L25 30 Z" fill="HULL"/>
+    <!-- canopy -->
+    <path d="M32 14 L35.5 28 L28.5 28 Z" fill="ACCENT" stroke="none"/>
+  </g>
+</svg>

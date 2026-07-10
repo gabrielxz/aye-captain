@@ -1,6 +1,7 @@
 // ws handling + client state store
-import { startRenderLoop } from "./render.js";
+import { startRenderLoop, bigBoomAt } from "./render.js";
 import { initUI, addTranscript, updateHUD, showLobbyStatus, enterGame, showBanner, hideBanner } from "./ui.js";
+import * as audio from "./audio.js";
 
 export const state = {
   config: null, // {zoneRadius, hardLimitRadius} from server hello
@@ -63,11 +64,20 @@ function handleMessage(msg) {
       for (const fx of msg.fx ?? []) {
         state.fxBuffer.push({ fx, at: now });
       }
+      soundFromSnapshot(msg);
       updateHUDFromSnapshot(msg);
       break;
     }
     case "gameover": {
       state.gameOver = true;
+      audio.stopContinuous();
+      audio.sfxBoom(true, !msg.youWin);
+      // terminal explosion on the losing ship
+      const snap = state.lastSnap;
+      if (snap) {
+        if (!msg.youWin && snap.you) bigBoomAt(snap.you.x, snap.you.y);
+        else if (msg.youWin && snap.enemy?.visible) bigBoomAt(snap.enemy.x, snap.enemy.y);
+      }
       const mins = Math.floor(msg.durationS / 60);
       const secs = Math.round(msg.durationS % 60);
       showBanner(
@@ -88,25 +98,91 @@ function handleMessage(msg) {
       break;
     case "transcript":
       addTranscript(msg.who, msg.text, msg.alert);
+      if (msg.speech) audio.enqueueSpeech(msg.speech, !!msg.alert);
       break;
     default:
       console.log("unhandled message", msg);
   }
 }
 
+// State-diff sound triggers: compare consecutive snapshots so the server
+// protocol stays unchanged (fx events cover the rest).
+let prevAudio = null;
+function soundFromSnapshot(snap) {
+  const you = snap.you;
+  if (!you || state.gameOver) return;
+
+  audio.setThrust(you.thrustOut ?? you.thrust);
+  audio.setWarning(you.painted ?? "none");
+
+  // nearest visible inbound missile drives the proximity ticker
+  let nearest = null;
+  for (const m of snap.missiles ?? []) {
+    if (m.own) continue;
+    const d = Math.hypot(m.x - you.x, m.y - you.y);
+    if (nearest === null || d < nearest) nearest = d;
+  }
+  audio.setMissileProximity(nearest);
+
+  if (prevAudio) {
+    // tube transitions: ready -> reloading/empty = our launch; -> ready = reload done
+    const pt = prevAudio.tubes ?? [];
+    (you.tubes ?? []).forEach((t, i) => {
+      const was = pt[i]?.state;
+      if (was === "ready" && t.state !== "ready") audio.sfxLaunch(true);
+      if (was === "reloading" && t.state === "ready") audio.sfxReload();
+    });
+    // a new enemy missile on scope
+    const prevIds = prevAudio.enemyMissiles;
+    for (const m of snap.missiles ?? []) {
+      if (!m.own && !prevIds.has(m.id)) audio.sfxLaunch(false);
+    }
+    // decoy deployed (ours)
+    if ((you.decoys ?? 0) < prevAudio.decoys) audio.sfxDecoy();
+    // any hull drop we can see: crunch (ours = received)
+    if (you.hull < prevAudio.hull) audio.sfxBoom(false, true);
+  }
+  prevAudio = {
+    tubes: (you.tubes ?? []).map((t) => ({ state: t.state })),
+    enemyMissiles: new Set((snap.missiles ?? []).filter((m) => !m.own).map((m) => m.id)),
+    decoys: you.decoys ?? 0,
+    hull: you.hull,
+  };
+}
+
+const TUBE_LABEL = { ready: "RDY", reloading: null, empty: "—" };
 function updateHUDFromSnapshot(snap) {
   const you = snap.you;
   if (!you) return;
   const laser = you.laserCooldown > 0 ? `${you.laserCooldown.toFixed(0)}s` : "READY";
+  const tanksDry = (you.propellant ?? 0) <= 0;
+  const tubes = (you.tubes ?? [])
+    .map((t, i) => `${i + 1}:${TUBE_LABEL[t.state] ?? `${t.t}s`}`)
+    .join(" ");
+  const lock = you.lock?.has
+    ? "LOCKED"
+    : you.lock?.progress > 0
+      ? `ACQ ${Math.round(you.lock.progress * 100)}%`
+      : "no lock";
+  const painted = you.painted ?? "none";
+  const prop = Math.round(you.propellant ?? 0);
   updateHUD([
-    { label: "HULL", value: `${you.hull}` },
-    { label: "THRUST", value: `${Math.round(you.thrust)}%` },
+    { label: "HULL", value: `${you.hull}`, cls: you.hull <= 35 ? "alert" : you.hull <= 65 ? "warn" : "" },
+    { label: "THRUST", value: `${Math.round(you.thrust)}%${tanksDry && you.thrust > 0 ? " (DRY)" : ""}`, cls: tanksDry && you.thrust > 0 ? "alert" : "" },
     { label: "SPD", value: `${you.speed} m/s` },
     { label: "HDG", value: `${String(Math.round(you.facing) % 360).padStart(3, "0")}` },
+    { label: "PROP", value: `${prop}`, cls: prop <= 10 ? "alert" : prop <= 25 ? "warn" : "" },
+    { label: "TUBES", value: tubes || "—" },
     { label: "MSL", value: `${you.missiles}` },
     { label: "DECOY", value: `${you.decoys}` },
     { label: "LASER", value: laser },
-    { label: "ZONE", value: you.insideZone ? "inside" : "OUTSIDE" },
+    { label: "ZONE", value: you.insideZone ? "inside" : "OUTSIDE", cls: you.insideZone ? "" : "warn" },
+    { label: "LOCK", value: lock, cls: you.lock?.has ? "good" : "" },
+    {
+      label: "WARN",
+      value: painted === "locked" ? "◤ ENEMY LOCK ◥" : painted === "acquiring" ? "being painted" : "—",
+      cls: painted === "locked" ? "alert" : painted === "acquiring" ? "warn" : "",
+    },
     {
       label: "ORDERS",
       value:

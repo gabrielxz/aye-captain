@@ -4,6 +4,7 @@ import * as C from "./constants.js";
 import { Sim, type Command, type ShipId, type SimEvent } from "./sim.js";
 import { llmAvailable, translateUtterance, phraseQueryAnswer } from "./translator.js";
 import { logUtterance } from "./datalog.js";
+import { ensureSpeech } from "./tts.js";
 
 export class Match {
   sim = new Sim();
@@ -221,7 +222,14 @@ export class Match {
   sendTranscript(id: ShipId, who: string, text: string, alert = false): void {
     const ws = this.sockets.get(id);
     if (ws && ws.readyState === ws.OPEN) {
-      ws.send(JSON.stringify({ type: "transcript", who, text, alert }));
+      // Ship-AI lines get a voice; skip bookkeeping noise (standing-order
+      // trigger logs, dev-harness echoes).
+      const speak =
+        (who === "xo" || who === "sys") &&
+        !text.startsWith("Standing order '") &&
+        !text.startsWith("direct");
+      const speech = speak ? ensureSpeech(text) : null;
+      ws.send(JSON.stringify({ type: "transcript", who, text, alert, ...(speech ? { speech } : {}) }));
     }
   }
 

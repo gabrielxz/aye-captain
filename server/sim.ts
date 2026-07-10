@@ -1476,6 +1476,9 @@ export class Sim {
         x: enemy.x,
         y: enemy.y,
         facing: enemy.facing,
+        // hull readout on a visible contact (drives the enemy hull bar)
+        hull: enemy.hull,
+        hullMax: enemy.isDrone ? C.DRONE_HULL_POINTS : C.HULL_POINTS,
       };
     } else if (ship.lastKnownEnemy) {
       enemyBlock = {

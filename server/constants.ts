@@ -93,3 +93,8 @@ export const UTTERANCE_MAX_COMMANDS = 4;
 // Speech-to-text (server-side, see stt.ts; provider/key come from env)
 export const STT_TIMEOUT_MS = 15000;
 export const STT_MAX_AUDIO_BYTES = 15 * 1024 * 1024; // /stt upload cap
+
+// Ship AI voice (ElevenLabs, see tts.ts; key from ELEVENLABS_API_KEY)
+export const TTS_MODEL = "eleven_flash_v2_5"; // low latency
+export const VOICE_ID = "JBFqnCBsd6RMkjVDRZzb"; // "George" — calm, dry. Browse elevenlabs.io/voice-library and swap.
+export const TTS_TIMEOUT_MS = 10000;

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- saucer-era destroyer: primary disc, nose spar, twin stern booms. Nose = up. -->
+  <g stroke="ACCENT" stroke-width="1.5" stroke-linejoin="round">
+    <!-- nose spar (directionality) -->
+    <path d="M32 2 L36 18 L28 18 Z" fill="HULL"/>
+    <!-- stern booms -->
+    <path d="M20 38 L14 58 L20 56 L24 42 Z" fill="HULL"/>
+    <path d="M44 38 L50 58 L44 56 L40 42 Z" fill="HULL"/>
+    <!-- primary disc -->
+    <ellipse cx="32" cy="30" rx="17" ry="14" fill="HULL"/>
+    <!-- bridge dome + running lights -->
+    <circle cx="32" cy="27" r="4.5" fill="ACCENT" stroke="none"/>
+    <circle cx="21" cy="33" r="1.6" fill="ACCENT" stroke="none" opacity="0.8"/>
+    <circle cx="43" cy="33" r="1.6" fill="ACCENT" stroke="none" opacity="0.8"/>
+  </g>
+</svg>

@@ -1,4 +1,4 @@
-// canvas draw loop w/ interpolation
+// canvas draw loop w/ interpolation, SVG ship sprites, particles
 import { state } from "./main.js";
 
 const canvas = document.getElementById("map");
@@ -9,11 +9,37 @@ const COLORS = {
   grid: "#0d1520",
   zone: "#2a4a5a",
   hardLimit: "#16222e",
-  own: "#4fd1c5",
-  ownFlare: "#f6ad55",
+  own: "#2dd4bf",
   enemy: "#fc8181",
   ghost: "#4a5a6a",
 };
+
+// Which authored design to fly (candidates in client/assets/):
+// "interceptor" | "gunship" | "saucer"
+const SHIP_DESIGN = "interceptor";
+const SHIP_LEN_M = 60; // true hull length; far below one pixel at map scale
+const MIN_SHIP_PX = 22; // legibility clamp: never render smaller than this
+
+// ---------- sprite loading (SVG text -> tinted blob -> Image) ----------
+
+const TINTS = {
+  own: { HULL: "#0e3f3a", ACCENT: "#2dd4bf" },
+  enemy: { HULL: "#3f1518", ACCENT: "#fc8181" },
+  ghost: { HULL: "#141c26", ACCENT: "#4a5a6a" },
+};
+const sprites = {}; // tint -> Image
+
+fetch(`assets/${SHIP_DESIGN}.svg`)
+  .then((r) => r.text())
+  .then((svg) => {
+    for (const [name, tint] of Object.entries(TINTS)) {
+      const tinted = svg.replaceAll("HULL", tint.HULL).replaceAll("ACCENT", tint.ACCENT);
+      const img = new Image();
+      img.src = URL.createObjectURL(new Blob([tinted], { type: "image/svg+xml" }));
+      img.onload = () => (sprites[name] = img);
+    }
+  })
+  .catch(() => {}); // sprite-less fallback triangles still draw
 
 function resize() {
   const rect = canvas.parentElement.getBoundingClientRect();
@@ -70,12 +96,39 @@ function worldToScreen(x, y, view) {
 function makeView() {
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
-  const worldRadius = (state.config?.hardLimitRadius ?? 30000) * 1.08;
+  const worldRadius = (state.config?.hardLimitRadius ?? 45000) * 1.05;
   return {
     cx: w / 2,
     cy: h / 2,
     scale: Math.min(w, h) / 2 / worldRadius,
   };
+}
+
+// ---------- particles (smoke, explosion debris) ----------
+
+const particles = []; // {x, y, vx, vy, born, life, r0, color}
+function spawnParticle(p) {
+  if (particles.length > 400) particles.shift();
+  particles.push({ born: performance.now(), ...p });
+}
+
+function drawParticles(view) {
+  const now = performance.now();
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    const t = (now - p.born) / p.life;
+    if (t >= 1) {
+      particles.splice(i, 1);
+      continue;
+    }
+    const [sx, sy] = worldToScreen(p.x + (p.vx * (now - p.born)) / 1000, p.y + (p.vy * (now - p.born)) / 1000, view);
+    ctx.beginPath();
+    ctx.arc(sx, sy, p.r0 * (1 - t * 0.5), 0, Math.PI * 2);
+    ctx.fillStyle = p.color;
+    ctx.globalAlpha = (1 - t) * 0.5;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
 }
 
 // ---------- draw primitives ----------
@@ -93,7 +146,7 @@ function drawRing(view, radiusM, color, width = 1, dash = []) {
 
 function drawGrid(view) {
   const stepM = 5000;
-  const maxM = state.config?.hardLimitRadius ?? 30000;
+  const maxM = state.config?.hardLimitRadius ?? 45000;
   ctx.strokeStyle = COLORS.grid;
   ctx.lineWidth = 1;
   ctx.beginPath();
@@ -110,41 +163,87 @@ function drawGrid(view) {
   ctx.stroke();
 }
 
-// Triangle rotated to facing = the ship's orientation indicator.
-function drawShip(view, ent, color, { ghost = false, thrust = 0 } = {}) {
+// Thrust flare color runs cold amber -> hot blue-white with throttle.
+function flareColor(pct) {
+  if (pct > 80) return "#cfe8ff";
+  if (pct > 45) return "#f6ad55";
+  return "#b7791f";
+}
+
+function drawShip(view, ent, kind, { ghost = false, thrust = 0, hull = null, hullMax = 100 } = {}) {
   const [sx, sy] = worldToScreen(ent.x, ent.y, view);
-  const r = 8;
+  const sizePx = Math.max(MIN_SHIP_PX, SHIP_LEN_M * view.scale);
+  const r = sizePx / 2;
   const rad = ((ent.facing ?? 0) * Math.PI) / 180;
 
   ctx.save();
   ctx.translate(sx, sy);
   ctx.rotate(rad); // canvas rotate is clockwise, matching compass headings
 
-  // thrust flare scaled to thrust %, behind the ship
+  // thrust flare scaled to output %, behind the ship
   if (!ghost && thrust > 0) {
-    const flare = 6 + (thrust / 100) * 14;
+    const flare = r * (0.5 + (thrust / 100) * 1.6);
+    const grad = ctx.createLinearGradient(0, r * 0.8, 0, r * 0.8 + flare);
+    grad.addColorStop(0, flareColor(thrust));
+    grad.addColorStop(1, "rgba(0,0,0,0)");
     ctx.beginPath();
-    ctx.moveTo(-3, r * 0.9);
-    ctx.lineTo(0, r * 0.9 + flare);
-    ctx.lineTo(3, r * 0.9);
-    ctx.strokeStyle = COLORS.ownFlare;
-    ctx.globalAlpha = 0.7;
-    ctx.lineWidth = 1;
-    ctx.stroke();
+    ctx.moveTo(-r * 0.28, r * 0.8);
+    ctx.lineTo(0, r * 0.8 + flare);
+    ctx.lineTo(r * 0.28, r * 0.8);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.globalAlpha = 0.85;
+    ctx.fill();
     ctx.globalAlpha = 1;
   }
 
-  ctx.beginPath();
-  ctx.moveTo(0, -r); // nose (pointing at facing)
-  ctx.lineTo(r * 0.7, r);
-  ctx.lineTo(-r * 0.7, r);
-  ctx.closePath();
-  ctx.strokeStyle = color;
-  ctx.lineWidth = ghost ? 1 : 1.5;
-  if (ghost) ctx.setLineDash([3, 3]);
-  ctx.stroke();
-  ctx.setLineDash([]);
+  const img = sprites[ghost ? "ghost" : kind];
+  if (img) {
+    if (ghost) ctx.globalAlpha = 0.55;
+    ctx.drawImage(img, -r, -r, sizePx, sizePx);
+    ctx.globalAlpha = 1;
+  } else {
+    // fallback triangle while the sprite loads
+    ctx.beginPath();
+    ctx.moveTo(0, -r);
+    ctx.lineTo(r * 0.7, r);
+    ctx.lineTo(-r * 0.7, r);
+    ctx.closePath();
+    ctx.strokeStyle = ghost ? COLORS.ghost : COLORS[kind];
+    ctx.lineWidth = ghost ? 1 : 1.5;
+    if (ghost) ctx.setLineDash([3, 3]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
   ctx.restore();
+
+  // hull bar floats above, unrotated
+  if (!ghost && hull !== null) {
+    const w = sizePx * 1.15;
+    const frac = Math.max(0, hull / hullMax);
+    const y = sy - r - 7;
+    ctx.fillStyle = "rgba(255,255,255,0.12)";
+    ctx.fillRect(sx - w / 2, y, w, 3);
+    ctx.fillStyle = frac > 0.5 ? COLORS.own : frac > 0.3 ? "#f6ad55" : "#fc8181";
+    if (kind === "enemy") ctx.fillStyle = frac > 0.5 ? COLORS.enemy : "#f6ad55";
+    ctx.fillRect(sx - w / 2, y, w * frac, 3);
+  }
+
+  // battle damage: smoke trail below 50% hull, heavier below 25%
+  if (!ghost && hull !== null && hull / hullMax < 0.5) {
+    const heavy = hull / hullMax < 0.25;
+    if (Math.random() < (heavy ? 0.5 : 0.2)) {
+      spawnParticle({
+        x: ent.x + (Math.random() - 0.5) * 300,
+        y: ent.y + (Math.random() - 0.5) * 300,
+        vx: (Math.random() - 0.5) * 120,
+        vy: (Math.random() - 0.5) * 120,
+        life: 1600,
+        r0: heavy ? 4 : 2.5,
+        color: heavy ? "#6b5747" : "#556270",
+      });
+    }
+  }
 }
 
 // ---------- main draw ----------
@@ -162,8 +261,8 @@ function draw() {
     drawRing(view, state.config.hardLimitRadius, COLORS.hardLimit, 1, [4, 6]);
   }
 
+  drawParticles(view);
   drawFx(view);
-
   drawOrdnance(view);
 
   const you = interpolate((s) => s.you);
@@ -178,7 +277,11 @@ function draw() {
     ctx.stroke();
     ctx.restore();
 
-    drawShip(view, you, COLORS.own, { thrust: state.lastSnap.you.thrust });
+    drawShip(view, you, "own", {
+      thrust: state.lastSnap.you.thrustOut ?? state.lastSnap.you.thrust,
+      hull: state.lastSnap.you.hull,
+      hullMax: 100,
+    });
   }
 
   drawEnemy(view);
@@ -191,18 +294,23 @@ function drawEnemy(view) {
   if (last.visible) {
     // Interpolate only across consecutive visible snapshots.
     const ent = interpolate((s) => (s.enemy?.visible ? s.enemy : null));
-    if (ent) drawShip(view, ent, COLORS.enemy);
+    if (ent) {
+      drawShip(view, ent, "enemy", {
+        hull: last.hull ?? null,
+        hullMax: last.hullMax ?? 100,
+      });
+    }
     return;
   }
 
   if (last.lastKnown) {
     const ghost = last.lastKnown;
-    drawShip(view, ghost, COLORS.ghost, { ghost: true });
+    drawShip(view, ghost, "enemy", { ghost: true });
     const [sx, sy] = worldToScreen(ghost.x, ghost.y, view);
     const age = Math.max(0, state.lastSnap.tick - ghost.t);
     ctx.fillStyle = COLORS.ghost;
     ctx.font = "10px monospace";
-    ctx.fillText(`last seen ${age}s ago`, sx + 12, sy + 4);
+    ctx.fillText(`last seen ${age}s ago`, sx + 14, sy + 4);
   }
 }
 
@@ -214,7 +322,7 @@ function interpolateById(listKey, id) {
 function drawOrdnance(view) {
   if (!state.lastSnap) return;
 
-  // missiles: small dots with short velocity trails
+  // missiles: small but loud — glow, hot dot, engine trail
   for (const m of state.lastSnap.missiles ?? []) {
     const ent = interpolateById("missiles", m.id);
     if (!ent) continue;
@@ -227,26 +335,40 @@ function drawOrdnance(view) {
       ent.y - (m.vy / speed) * trailM,
       view
     );
+    const grad = ctx.createLinearGradient(tx, ty, sx, sy);
+    grad.addColorStop(0, "rgba(0,0,0,0)");
+    grad.addColorStop(1, color);
     ctx.beginPath();
     ctx.moveTo(tx, ty);
     ctx.lineTo(sx, sy);
-    ctx.strokeStyle = color;
-    ctx.globalAlpha = 0.35;
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = 2;
     ctx.stroke();
-    ctx.globalAlpha = 1;
+    // glow halo
     ctx.beginPath();
-    ctx.arc(sx, sy, 2.5, 0, Math.PI * 2);
+    ctx.arc(sx, sy, 6, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.18;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    // hot core
+    ctx.beginPath();
+    ctx.arc(sx, sy, 2.6, 0, Math.PI * 2);
+    ctx.fillStyle = "#ffffff";
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(sx, sy, 1.4, 0, Math.PI * 2);
     ctx.fillStyle = color;
     ctx.fill();
   }
 
-  // decoys: distinct hollow diamond markers
+  // decoys: pulsing hollow diamonds
+  const pulse = 4.2 + Math.sin(performance.now() / 180) * 1.6;
   for (const d of state.lastSnap.decoys ?? []) {
     const ent = interpolateById("decoys", d.id);
     if (!ent) continue;
     const [sx, sy] = worldToScreen(ent.x, ent.y, view);
-    const r = 5;
+    const r = pulse;
     ctx.beginPath();
     ctx.moveTo(sx, sy - r);
     ctx.lineTo(sx + r, sy);
@@ -254,21 +376,25 @@ function drawOrdnance(view) {
     ctx.lineTo(sx - r, sy);
     ctx.closePath();
     ctx.strokeStyle = d.own ? COLORS.own : COLORS.enemy;
-    ctx.lineWidth = 1;
+    ctx.lineWidth = 1.4;
+    ctx.globalAlpha = 0.55 + 0.45 * Math.abs(Math.sin(performance.now() / 180));
     ctx.stroke();
+    ctx.globalAlpha = 1;
   }
 }
 
 const LASER_FX_MS = 300;
-const BOOM_FX_MS = 600;
+const BOOM_FX_MS = 700;
+const BIG_BOOM_FX_MS = 1600;
 
 function drawFx(view) {
   const now = performance.now();
   state.fxBuffer = state.fxBuffer.filter(({ fx, at }) => {
-    const age = now - at;
-    return age < (fx.type === "laser" ? LASER_FX_MS : BOOM_FX_MS);
+    const ttl = fx.type === "laser" ? LASER_FX_MS : fx.big ? BIG_BOOM_FX_MS : BOOM_FX_MS;
+    return now - at < ttl;
   });
-  for (const { fx, at } of state.fxBuffer) {
+  for (const entry of state.fxBuffer) {
+    const { fx, at } = entry;
     const age = now - at;
     if (fx.type === "laser") {
       const alpha = 1 - age / LASER_FX_MS;
@@ -283,16 +409,59 @@ function drawFx(view) {
       ctx.stroke();
       ctx.globalAlpha = 1;
     } else if (fx.type === "boom") {
-      const t = age / BOOM_FX_MS;
+      const ttl = fx.big ? BIG_BOOM_FX_MS : BOOM_FX_MS;
+      const t = age / ttl;
       const [sx, sy] = worldToScreen(fx.x, fx.y, view);
+      const maxR = fx.big ? 46 : 18;
+      // flash core
+      if (t < 0.25) {
+        ctx.beginPath();
+        ctx.arc(sx, sy, (fx.big ? 14 : 6) * (1 - t * 3), 0, Math.PI * 2);
+        ctx.fillStyle = "#fff7e0";
+        ctx.globalAlpha = 1 - t * 3.5;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      // expanding rings
       ctx.beginPath();
-      ctx.arc(sx, sy, 3 + t * 14, 0, Math.PI * 2);
+      ctx.arc(sx, sy, 3 + t * maxR, 0, Math.PI * 2);
       ctx.strokeStyle = "#f6ad55";
       ctx.globalAlpha = 1 - t;
+      ctx.lineWidth = fx.big ? 2.5 : 1.5;
       ctx.stroke();
+      if (fx.big) {
+        ctx.beginPath();
+        ctx.arc(sx, sy, 2 + t * maxR * 0.6, 0, Math.PI * 2);
+        ctx.strokeStyle = "#fc8181";
+        ctx.globalAlpha = (1 - t) * 0.8;
+        ctx.stroke();
+      }
       ctx.globalAlpha = 1;
+      // debris sparks, once at birth
+      if (!entry.sparked) {
+        entry.sparked = true;
+        const n = fx.big ? 14 : 5;
+        for (let i = 0; i < n; i++) {
+          const a = Math.random() * Math.PI * 2;
+          const v = 150 + Math.random() * (fx.big ? 700 : 350);
+          spawnParticle({
+            x: fx.x,
+            y: fx.y,
+            vx: Math.cos(a) * v,
+            vy: Math.sin(a) * v,
+            life: 500 + Math.random() * (fx.big ? 900 : 400),
+            r0: fx.big ? 2.4 : 1.6,
+            color: Math.random() < 0.5 ? "#f6ad55" : "#fc8181",
+          });
+        }
+      }
     }
   }
+}
+
+// Big terminal explosion at a world position (used on game over).
+export function bigBoomAt(x, y) {
+  state.fxBuffer.push({ fx: { type: "boom", big: true, x, y }, at: performance.now() });
 }
 
 export function startRenderLoop() {

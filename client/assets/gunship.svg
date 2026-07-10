@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- angular gunship: broad wedge, notched flanks, weapon pods. Nose = up. -->
+  <g stroke="ACCENT" stroke-width="1.5" stroke-linejoin="round">
+    <!-- weapon pods -->
+    <rect x="8" y="30" width="9" height="18" rx="1.5" fill="HULL"/>
+    <rect x="47" y="30" width="9" height="18" rx="1.5" fill="HULL"/>
+    <!-- pod barrels -->
+    <rect x="11" y="24" width="3" height="8" fill="ACCENT" stroke="none"/>
+    <rect x="50" y="24" width="3" height="8" fill="ACCENT" stroke="none"/>
+    <!-- hull: heavy wedge with notched stern -->
+    <path d="M32 6 L46 34 L44 54 L36 50 L28 50 L20 54 L18 34 Z" fill="HULL"/>
+    <!-- armored prow line -->
+    <path d="M32 6 L38 22 L26 22 Z" fill="ACCENT" stroke="none"/>
+    <!-- spine vent -->
+    <rect x="30" y="30" width="4" height="14" fill="ACCENT" stroke="none" opacity="0.7"/>
+  </g>
+</svg>

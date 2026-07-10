@@ -1,6 +1,7 @@
 // command box, transcript pane, HUD panels, lobby
 import { send, state } from "./main.js";
 import { createVoice } from "./voice.js";
+import { initAudio, setVolume, getVolume, sfxClick } from "./audio.js";
 
 const lobbyEl = document.getElementById("lobby");
 const gameEl = document.getElementById("game");
@@ -17,6 +18,7 @@ let voice = null;
 function submitUtterance(text, source = "typed") {
   send({ type: "utterance", text, source });
   addTranscript("capt", text);
+  sfxClick();
   history.push(text);
   historyIdx = history.length;
 }
@@ -73,6 +75,13 @@ export function initUI() {
   });
 
   initVoice();
+
+  // Web Audio needs a user gesture before it may play; arm on the first one.
+  document.addEventListener("pointerdown", initAudio);
+  document.addEventListener("keydown", initAudio);
+  const vol = document.getElementById("vol");
+  vol.value = String(getVolume());
+  vol.addEventListener("input", () => setVolume(Number(vol.value)));
 }
 
 // Push-to-talk: hold Space while the command box is empty. With text in the
@@ -154,13 +163,13 @@ export function addTranscript(who, text, alert = false) {
 }
 
 export function updateHUD(fields) {
-  // fields: array of {label, value, full?} rendered as a grid
+  // fields: array of {label, value, full?, cls?} rendered as a grid
   hudEl.innerHTML = "";
   for (const f of fields) {
     const div = document.createElement("div");
     if (f.full) div.className = "full";
     const v = document.createElement("span");
-    v.className = "v";
+    v.className = f.cls ? `v ${f.cls}` : "v";
     v.textContent = f.value;
     div.appendChild(document.createTextNode(`${f.label} `));
     div.appendChild(v);

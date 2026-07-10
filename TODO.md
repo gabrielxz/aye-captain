@@ -19,13 +19,45 @@ explicitly requested by Gabriel.
   volume `data` mounted at `/data` for the utterance log.
 - [x] **`git init` + initial commit / GitHub.**
 
+## Done in the v3 "Combat & Soul" session (2026-07-09, late)
+
+- [x] Missile rework: 2 tubes + auto-reload, lock-before-launch (5s/30°/10km,
+  2s grace), painted/RWR warnings, launch flash, accel-ramp flight model
+  (velocity-steering; `NEWTONIAN_MISSILES=false` stub for the floaty version).
+- [x] Speed/map: 600 m/s, accel 25, zone 30km, hard limit 45km, spawn 20km.
+- [x] Propellant: burn 1/s@100%, regen 0.33/s inside zone at ≤20% throttle
+  SETTING, dry = adrift + dim signature; warnings 50/25/10/0.
+- [x] Target headings are snapshots (no continuous tracking).
+- [x] Procedural SFX + ElevenLabs ship voice (persona in `server/persona.ts`,
+  stock-line cache, speech queue with warning priority).
+- [x] SVG ship sprites (3 designs in client/assets, interceptor default),
+  hull bars, particles, explosion tiers, new HUD (PROP/TUBES/LOCK/WARN).
+- [x] Drone fires back (one missile per 90s while locked).
+- [x] Tests 91 → 147 assertions (new lock + propellant suites).
+
+## v3 playtest watch-list (from the build session)
+
+- Point defense is intentionally harder (snapshot headings + 600 m/s
+  missiles). Reserved balance knobs, do NOT pre-tune: standing-order
+  retrigger 5→3s, laser cooldown 4→3s, beam width 4→6°.
+- Propellant economy is punishing at top speed (one 600 m/s dash + brake ≈
+  half tank). Watch whether matches stall.
+- Softlock possibility: tanks dry OUTSIDE the zone (no regen there, ever) =
+  adrift until the enemy comes hunting; in practice mode only rematch saves
+  you. Acceptable? Watch.
+- Practice-mode opening is a long cruise now (drone spawns 40 km out).
+
 ## v2 next
 
+- [ ] **ElevenLabs**: Gabriel creates the account/key, sets
+  `ELEVENLABS_API_KEY` locally + `fly secrets set`; browse the voice library
+  and swap `VOICE_ID` in constants.ts if George doesn't fit.
+- [ ] **Ship design pick**: interceptor is default; gunship + saucer ship in
+  client/assets — swap `SHIP_DESIGN` in render.js.
 - [ ] **Refine STT keyword boosting** from accumulated
   `data/utterances.jsonl` (pull from Fly:
   `fly ssh console -C "cat /data/utterances.jsonl"`). Feed real phrasings
   into `STT_BIAS_PROMPT`.
-- [ ] **Voice output for XO lines** — separate, later decision.
 
 ## Housekeeping
 

@@ -6,6 +6,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { ZONE_RADIUS_M, HARD_LIMIT_RADIUS_M, STT_MAX_AUDIO_BYTES } from "./constants.js";
 import { Match } from "./match.js";
 import { sttAvailable, transcribe } from "./stt.js";
+import { getSpeech, pregenStockLines, ttsAvailable } from "./tts.js";
 
 const PORT = Number(process.env.PORT ?? 8080);
 const HOST = "0.0.0.0";
@@ -38,6 +39,17 @@ app.post(
     }
   }
 );
+
+// Ship-AI voice lines, cached server-side; ids are handed out in transcript
+// messages. 404 = line unavailable (no key / synth failed) — client stays text-only.
+app.get("/speech/:id", async (req, res) => {
+  const buf = await getSpeech(req.params.id);
+  if (!buf) {
+    res.status(404).end();
+    return;
+  }
+  res.type("audio/mpeg").setHeader("Cache-Control", "public, max-age=31536000, immutable").send(buf);
+});
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: "/ws" });
@@ -144,4 +156,6 @@ wss.on("connection", (ws: WebSocket) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`aye-captain listening on http://${HOST}:${PORT}`);
+  if (ttsAvailable()) void pregenStockLines();
+  else console.log("tts offline: ELEVENLABS_API_KEY not set — ship AI is text-only");
 });

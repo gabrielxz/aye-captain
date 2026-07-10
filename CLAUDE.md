@@ -9,11 +9,12 @@ into schema-JSON commands; an authoritative Node server executes them on a
 as the LLM<->server contract. **Where they disagree on constants, HANDOFF.md
 wins.**
 
-**Status: v1 COMPLETE + voice.** All 9 build-order stages from HANDOFF.md §6
-are implemented and verified (browser-tested at every stage, 91 headless
-assertions in `tests/`). Voice push-to-talk (hold Space) with server-side
-STT was added post-v1. Deployed on Fly.io as `aye-captain`
-(https://aye-captain.fly.dev). See `TODO.md` for next steps.
+**Status: v3 built ("Combat & Soul" update).** v1 (HANDOFF.md §6) + voice
+push-to-talk + the v3 overhaul: launch tubes, lock-before-launch with
+painted/RWR warnings, propellant, 600 m/s speeds on a 30/45 km map,
+snapshot-only target headings, procedural SFX, ElevenLabs ship voice, SVG
+ship sprites. 147 headless assertions in `tests/`. Deployed on Fly.io as
+`aye-captain` (https://aye-captain.fly.dev). See `TODO.md` for next steps.
 
 ## Commands
 
@@ -24,11 +25,12 @@ npm run typecheck  # tsc --noEmit
 npm run build      # -> dist/ ; npm start runs it
 ```
 
-`.env` needs `ANTHROPIC_API_KEY` (translator) and `GROQ_API_KEY` (voice STT);
-both present locally, gitignored. Without the former the game runs but the
-translator is offline; without the latter voice falls back to the browser's
-Web Speech API. `STT_API_KEY`/`STT_BASE_URL`/`STT_MODEL` switch STT provider
-(OpenAI-compatible endpoints).
+`.env` needs `ANTHROPIC_API_KEY` (translator), `GROQ_API_KEY` (voice STT),
+and `ELEVENLABS_API_KEY` (ship voice); gitignored. Each degrades gracefully
+when absent (translator offline / Web Speech fallback / text-only ship).
+`STT_API_KEY`/`STT_BASE_URL`/`STT_MODEL` switch STT provider
+(OpenAI-compatible endpoints). `SPEECH_CACHE_DIR` holds generated voice
+lines (on Fly: the /data volume).
 
 Deploy: live on Fly.io as `aye-captain` (region iad, single machine — always
 `fly deploy --ha=false`, matches/rooms live in server memory). 1 GB volume
@@ -40,10 +42,17 @@ is fine; verified via `--network host` and in-container curl).
 ## Architecture (files)
 
 - `server/constants.ts` — EVERY tunable. Never hardcode numbers in sim code.
-- `server/sim.ts` — tick pipeline: standing orders → queued commands (lasers
-  resolve here, missiles/decoys spawn) → physics → weapons resolve (prox
-  fuses, expiry, seeker locks) → sensors/notices. Also `snapshotFor()`,
-  `stateSummaryFor()` (LLM prompt state), `queryData()`.
+  Several are LINKED (missile max speed == ship max speed; spawn dist tied
+  to zone radius) — comments mark them.
+- `server/sim.ts` — tick pipeline: drone AI + standing orders → queued
+  commands (lasers resolve here, missiles/decoys spawn) → physics (incl.
+  propellant, tube reloads, launch-flash countdown) → weapons resolve (prox
+  fuses, expiry, seeker locks) → sensors/notices → ship-to-ship lock state →
+  painted warnings. Also `snapshotFor()`, `stateSummaryFor()` (LLM prompt
+  state), `queryData()`.
+- `server/persona.ts` — ship AI character block for the translator prompt.
+- `server/tts.ts` — ElevenLabs voice; stock lines pre-generated at boot into
+  a disk cache, dynamic acks synthesized on demand; `GET /speech/:id`.
 - `server/match.ts` — Match owns a Sim + sockets + 1 Hz interval; practice
   vs room modes, disconnect pause/forfeit, rematch, transcript routing.
 - `server/translator.ts` — system prompt assembled from the schema file;
@@ -56,9 +65,13 @@ is fine; verified via `--network host` and in-container curl).
   Whisper default) + `STT_BIAS_PROMPT` vocabulary hint.
 - `server/datalog.ts` — appends every utterance (voice+typed) to
   `data/utterances.jsonl` for future STT keyword tuning.
-- `client/` — vanilla JS + Canvas. `main.js` (ws/state), `render.js`
-  (interpolated draw loop), `ui.js` (lobby/transcript/HUD/banner),
-  `voice.js` (push-to-talk: MediaRecorder→/stt, Web Speech fallback).
+- `client/` — vanilla JS + Canvas. `main.js` (ws/state + snapshot-diff sound
+  triggers), `render.js` (interpolated draw loop, tinted SVG sprites with a
+  min-px legibility clamp, particles), `ui.js` (lobby/transcript/HUD/banner),
+  `voice.js` (push-to-talk: MediaRecorder→/stt, Web Speech fallback),
+  `audio.js` (procedural SFX — no audio assets — and the speech queue:
+  warnings preempt, stale acks dropped), `assets/*.svg` (authored ship
+  designs; HULL/ACCENT tokens are tint targets).
 
 ## Invariants (do not break)
 
@@ -74,6 +87,10 @@ is fine; verified via `--network host` and in-container curl).
 6. At 1 Hz, fast movers tunnel: proximity fuses use `segmentMinDist()`
    (closest approach of the two movement segments within a tick), not
    point-in-time distance.
+7. fire_missile REQUIRES a held lock (v3); target headings are one-shot
+   snapshots — no continuous tracking code path exists.
+8. Propellant regen gates on the throttle SETTING (not output); signature
+   uses EFFECTIVE thrust; drones are exempt from propellant.
 
 ## Judgment calls already made (user-visible, flagged in check-ins)
 
