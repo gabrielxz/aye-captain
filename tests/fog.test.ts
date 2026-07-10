@@ -75,12 +75,12 @@ const assert = (cond: boolean, msg: string) => {
 // 6. sensor range halved outside zone
 {
   const sim = new Sim();
-  const a = sim.addShip("A", 0, C.ZONE_RADIUS_M + 5000, 0); // outside the zone
+  const a = sim.addShip("A", 0, C.REGION_RADIUS_M + 5000, 0); // outside the zone
   assert(sim.sensorRangeOf(a) === C.SENSOR_RANGE_M * C.OUTSIDE_ZONE_SENSOR_MULT, "sensor range halved outside zone");
   // and an outside-zone ship is visible regardless of range
   const sim2 = new Sim();
   const a2 = sim2.addShip("A", 0, -14000, 0);
-  const b2 = sim2.addShip("B", 0, C.ZONE_RADIUS_M + 5000, 180, true); // outside zone, ~49km away
+  const b2 = sim2.addShip("B", 0, C.REGION_RADIUS_M + 5000, 180, true); // outside zone, ~49km away
   sim2.tick();
   assert((sim2.snapshotFor("A") as any).enemy?.visible === true, "outside-zone enemy visible at any range");
 }

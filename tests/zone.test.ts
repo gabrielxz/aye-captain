@@ -9,7 +9,7 @@ const assert = (cond: boolean, msg: string) => {
 // 1. leaving/re-entering zone announcements, edge-triggered
 {
   const sim = new Sim();
-  const a = sim.addShip("A", 0, C.ZONE_RADIUS_M - 200, 0); // just inside, heading out north
+  const a = sim.addShip("A", 0, C.REGION_RADIUS_M - 200, 0); // just inside, heading out north
   sim.addShip("B", 0, -14000, 0, true);
   a.vx = 0; a.vy = 300;
   let ev = sim.tick();
@@ -46,13 +46,13 @@ const assert = (cond: boolean, msg: string) => {
 // 3. distance_from_zone_center metric works for standing orders (e.g. auto-return)
 {
   const sim = new Sim();
-  const a = sim.addShip("A", 0, C.ZONE_RADIUS_M + 500, 0); // outside
+  const a = sim.addShip("A", 0, C.REGION_RADIUS_M + 500, 0); // outside
   sim.addShip("B", 0, -14000, 0, true);
   sim.enqueue("A", [{
     verb: "set_standing_order",
     params: {
       label: "come home",
-      condition: { metric: "distance_from_zone_center", op: "gt", value: C.ZONE_RADIUS_M },
+      condition: { metric: "distance_from_zone_center", op: "gt", value: C.REGION_RADIUS_M },
       actions: [{ verb: "set_heading", params: { mode: "absolute", degrees: 180 } }],
     },
   } as any]);

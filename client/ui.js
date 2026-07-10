@@ -44,6 +44,8 @@ export function initUI() {
       if (!text) return;
       submitUtterance(text);
       cmdEl.value = "";
+    } else if (e.key === "Escape") {
+      cmdEl.blur(); // hand the keys back to the map
     } else if (e.key === "ArrowUp") {
       if (historyIdx > 0) {
         historyIdx--;
@@ -62,14 +64,16 @@ export function initUI() {
     }
   });
 
-  // Keep focus in the command box by default.
+  // Focus management: the map owns keys by default (WASD pan, F/M/V
+  // toggles live in render.js); Enter or backtick hands them to the command
+  // box, Esc hands them back (handled on cmdEl above). Push-to-talk (Space)
+  // is global either way — see initVoice.
   document.addEventListener("keydown", (e) => {
-    if (
-      gameEl.classList.contains("active") &&
-      document.activeElement !== cmdEl &&
-      !e.ctrlKey && !e.metaKey && !e.altKey &&
-      e.key.length === 1
-    ) {
+    if (!gameEl.classList.contains("active")) return;
+    if (document.activeElement === cmdEl) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === "Enter" || e.key === "`") {
+      e.preventDefault(); // don't type the backtick / submit on arrival
       cmdEl.focus();
     }
   });
@@ -128,7 +132,7 @@ export function enterGame() {
   lobbyEl.style.display = "none";
   gameEl.classList.add("active");
   window.dispatchEvent(new Event("resize")); // let the canvas size itself
-  cmdEl.focus();
+  cmdEl.blur(); // map owns the keys until the captain hits Enter/backtick
 }
 
 export function showLobbyStatus(text) {

@@ -3,7 +3,7 @@ import express from "express";
 import http from "node:http";
 import path from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
-import { ZONE_RADIUS_M, HARD_LIMIT_RADIUS_M, STT_MAX_AUDIO_BYTES } from "./constants.js";
+import { REGION_RADIUS_M, HARD_LIMIT_RADIUS_M, STT_MAX_AUDIO_BYTES } from "./constants.js";
 import { Match } from "./match.js";
 import { sttAvailable, transcribe } from "./stt.js";
 import { getSpeech, pregenStockLines, ttsAvailable } from "./tts.js";
@@ -73,7 +73,7 @@ wss.on("connection", (ws: WebSocket) => {
     JSON.stringify({
       type: "hello",
       config: {
-        zoneRadius: ZONE_RADIUS_M,
+        zoneRadius: REGION_RADIUS_M,
         hardLimitRadius: HARD_LIMIT_RADIUS_M,
         stt: sttAvailable(),
       },

@@ -42,7 +42,7 @@ const assert = (cond: boolean, msg: string) => {
   assert(a.propellant < before, "no regen just above the throttle ceiling");
 
   const sim2 = new Sim();
-  const a2 = sim2.addShip("A", 0, C.ZONE_RADIUS_M + 3000, 0); // OUTSIDE zone
+  const a2 = sim2.addShip("A", 0, C.REGION_RADIUS_M + 3000, 0); // OUTSIDE zone
   sim2.addShip("B", 0, -40000, 180, true);
   a2.propellant = 50;
   a2.thrust = 0;

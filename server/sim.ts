@@ -1281,7 +1281,7 @@ export class Sim {
   }
 
   insideZone(ship: Ship): boolean {
-    return dist(ship.x, ship.y, 0, 0) <= C.ZONE_RADIUS_M;
+    return dist(ship.x, ship.y, 0, 0) <= C.REGION_RADIUS_M;
   }
 
   // Fog-scoped enemy info as this ship's sensors know it (for prompts,
@@ -1419,7 +1419,7 @@ export class Sim {
     };
     const zone = {
       distance_from_center_m: Math.round(dist(ship.x, ship.y, 0, 0)),
-      zone_radius_m: C.ZONE_RADIUS_M,
+      zone_radius_m: C.REGION_RADIUS_M,
       inside_zone: this.insideZone(ship),
       current_sensor_range_m: this.sensorRangeOf(ship),
     };

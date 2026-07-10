@@ -16,7 +16,7 @@ const assert = (cond: boolean, msg: string) => {
     Math.abs(s.vy - C.ACCEL_FULL_THRUST_MPS2) < 1e-9 && s.vx === 0,
     `1 tick full thrust north => vy=${C.ACCEL_FULL_THRUST_MPS2}`
   );
-  for (let i = 0; i < 40; i++) sim.tick();
+  for (let i = 0; i < Math.ceil(C.MAX_SPEED_MPS / C.ACCEL_FULL_THRUST_MPS2) + 2; i++) sim.tick();
   assert(Math.hypot(s.vx, s.vy) <= C.MAX_SPEED_MPS + 1e-9, "speed clamped to MAX_SPEED");
   assert(Math.abs(Math.hypot(s.vx, s.vy) - C.MAX_SPEED_MPS) < 1e-9, "reaches exactly MAX_SPEED");
 }

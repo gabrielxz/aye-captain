@@ -137,14 +137,16 @@ const assert = (cond: boolean, msg: string) => {
 {
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 0);
-  sim.addShip("B", 0, 9000, 180, false);
+  // target far enough out that the missile reaches max speed before impact
+  sim.addShip("B", 0, 80000, 180, false);
   a.vx = 0; a.vy = 400; // moving north at 400
   (a as any).lock = { progress: C.LOCK_TIME_S, has: true, grace: C.LOCK_GRACE_S };
   sim.enqueue("A", [{ verb: "fire_missile", params: {} } as any]);
   sim.tick();
   const m = (sim as any).missiles[0];
   assert(Math.round(m.speed) === Math.min(400 + C.MISSILE_ACCEL_MPS2, C.MISSILE_MAX_SPEED_MPS), `launch inherits ship's forward speed then accelerates (${Math.round(m.speed)})`);
-  for (let i = 0; i < 3; i++) sim.tick();
+  const rampTicks = Math.ceil((C.MISSILE_MAX_SPEED_MPS - 400) / C.MISSILE_ACCEL_MPS2) + 1;
+  for (let i = 0; i < rampTicks; i++) sim.tick();
   assert(m.speed === C.MISSILE_MAX_SPEED_MPS, "missile speed capped at MISSILE_MAX_SPEED_MPS");
 }
 

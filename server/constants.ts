@@ -9,14 +9,15 @@ export const PHYSICS_SUBSTEPS = 10;
 // stays smooth at high speeds. Commands still process at TICK_RATE_HZ.
 export const SNAPSHOT_RATE_HZ = 4;
 
-// Zone / bounding
-export const ZONE_RADIUS_M = 30000; // "the shroud" — visible ring on map
-export const HARD_LIMIT_RADIUS_M = 45000; // absolute outer boundary, faint ring
+// Region / bounding ("the shroud" — visible ring on map)
+export const REGION_RADIUS_M = 250000; // 250 km; crossing time ~2.8 min at flank. LINKED: SPAWN_DIST_FROM_CENTER_M sits at 60% of it
+export const HARD_LIMIT_RADIUS_M = 375000; // TEMPORARY (deleted in v4 §4 for edge gravity); must stay > SPAWN_DIST_FROM_CENTER_M
 export const OUTSIDE_ZONE_SENSOR_MULT = 0.5; // own sensor range halved outside zone
 
-// Ship
-export const MAX_SPEED_MPS = 600; // LINKED: == MISSILE_MAX_SPEED_MPS by design
-export const ACCEL_FULL_THRUST_MPS2 = 25;
+// Ship. Full tank = 100 s of hard burn = 6000 m/s of delta-v: propellant is
+// a delta-v budget — enough to reach flank speed and kill it once.
+export const MAX_SPEED_MPS = 3000; // LINKED to MISSILE_MAX_SPEED_MPS & region size
+export const ACCEL_FULL_THRUST_MPS2 = 60; // ~6g hard burn; top speed in ~50 s
 export const TURN_RATE_DEG_PER_SEC = 20;
 export const HULL_POINTS = 100;
 export const SENSOR_RANGE_M = 12000; // deliberately NOT scaled with the bigger zone: longer hunt phase
@@ -49,7 +50,7 @@ export const LASER_DAMAGE = 10; // vs ships; instantly destroys missiles/decoys
 // Missiles. MAGAZINE is everything aboard: TUBE_COUNT start loaded, the rest
 // are reserves (6 total shots per match).
 export const MISSILE_MAGAZINE = 6;
-export const MISSILE_MAX_SPEED_MPS = 600; // LINKED: == MAX_SPEED_MPS — a missile never out-SPEEDs a ship; it wins by geometry, acceleration, turn rate
+export const MISSILE_MAX_SPEED_MPS = 3000; // LINKED: == MAX_SPEED_MPS — a missile never out-SPEEDs a ship; it wins by geometry, acceleration, turn rate (v4 §5 changes this to 2×)
 export const MISSILE_ACCEL_MPS2 = 150;
 export const MISSILE_TURN_RATE_DPS = 45;
 // false = current model: guidance steers the velocity vector directly, speed
@@ -78,7 +79,7 @@ export const STANDING_ORDER_RETRIGGER_COOLDOWN_S = 5; // for repeat:true orders
 export const ORDNANCE_DETECT_RANGE_M = 6000; // missiles & decoys visible at half sensor range
 
 // Spawn
-export const SPAWN_DIST_FROM_CENTER_M = 20000; // LINKED to ZONE_RADIUS_M: opposite sides (2/3 of zone radius), facing each other, v=0
+export const SPAWN_DIST_FROM_CENTER_M = 150000; // LINKED to REGION_RADIUS_M (60%): opposite sides, 300 km apart, facing each other, v=0
 
 // Match lifecycle
 export const DISCONNECT_GRACE_S = 60; // pause sim awaiting reconnect, then forfeit
