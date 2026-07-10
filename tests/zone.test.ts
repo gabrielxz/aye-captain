@@ -9,7 +9,7 @@ const assert = (cond: boolean, msg: string) => {
 // 1. leaving/re-entering zone announcements, edge-triggered
 {
   const sim = new Sim();
-  const a = sim.addShip("A", 0, 19800, 0); // just inside, heading out north
+  const a = sim.addShip("A", 0, C.ZONE_RADIUS_M - 200, 0); // just inside, heading out north
   sim.addShip("B", 0, -14000, 0, true);
   a.vx = 0; a.vy = 300;
   let ev = sim.tick();
@@ -25,7 +25,7 @@ const assert = (cond: boolean, msg: string) => {
 // 2. hard limit: position clamped, outward radial velocity zeroed, tangential survives
 {
   const sim = new Sim();
-  const a = sim.addShip("A", 29900, 0, 90); // near the ring, flying east (outward) + some north
+  const a = sim.addShip("A", C.HARD_LIMIT_RADIUS_M - 100, 0, 90); // near the ring, flying east (outward) + some north
   sim.addShip("B", 0, -14000, 0, true);
   a.vx = 250; a.vy = 100; // radial=vx (outward), tangential=vy
   const ev = sim.tick();
@@ -46,7 +46,7 @@ const assert = (cond: boolean, msg: string) => {
 // 3. distance_from_zone_center metric works for standing orders (e.g. auto-return)
 {
   const sim = new Sim();
-  const a = sim.addShip("A", 0, 20500, 0); // outside
+  const a = sim.addShip("A", 0, C.ZONE_RADIUS_M + 500, 0); // outside
   sim.addShip("B", 0, -14000, 0, true);
   sim.enqueue("A", [{
     verb: "set_standing_order",

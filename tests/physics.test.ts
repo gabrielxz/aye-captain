@@ -12,7 +12,10 @@ const assert = (cond: boolean, msg: string) => {
   const s = sim.addShip("A", 0, 0, 0);
   sim.enqueue("A", [{ verb: "set_thrust", params: { percent: 100 } }]);
   sim.tick();
-  assert(Math.abs(s.vy - 15) < 1e-9 && s.vx === 0, "1 tick full thrust north => vy=15");
+  assert(
+    Math.abs(s.vy - C.ACCEL_FULL_THRUST_MPS2) < 1e-9 && s.vx === 0,
+    `1 tick full thrust north => vy=${C.ACCEL_FULL_THRUST_MPS2}`
+  );
   for (let i = 0; i < 40; i++) sim.tick();
   assert(Math.hypot(s.vx, s.vy) <= C.MAX_SPEED_MPS + 1e-9, "speed clamped to MAX_SPEED");
   assert(Math.abs(Math.hypot(s.vx, s.vy) - C.MAX_SPEED_MPS) < 1e-9, "reaches exactly MAX_SPEED");
@@ -54,14 +57,23 @@ const assert = (cond: boolean, msg: string) => {
   assert(s.vx === vx0 && s.vy === vy0, "velocity unchanged while rotating at 0 thrust (drift)");
 }
 
-// 5. target tracking re-resolves each tick
+// 5. target headings are SNAPSHOTS: resolved once at execution, no tracking
 {
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 0);
-  sim.addShip("B", 10000, 0, 0); // due east of A
+  const b = sim.addShip("B", 10000, 0, 0); // due east of A
+  sim.tick(); // let sensors see B
+  sim.enqueue("A", [{ verb: "set_heading", params: { mode: "target", target: "enemy_ship" } }]);
+  for (let i = 0; i < 6; i++) sim.tick();
+  assert(Math.abs(angDiff(a.facing, 90)) < 1e-9, `snapshot heading points at B's bearing at order time (facing ${a.facing.toFixed(1)})`);
+  // B relocates; A's goal must NOT follow
+  b.x = 0; b.y = -10000; // now due south
+  for (let i = 0; i < 10; i++) sim.tick();
+  assert(Math.abs(angDiff(a.facing, 90)) < 1e-9, `heading holds after target moves — no continuous tracking (facing ${a.facing.toFixed(1)})`);
+  // a fresh order re-snapshots
   sim.enqueue("A", [{ verb: "set_heading", params: { mode: "target", target: "enemy_ship" } }]);
   for (let i = 0; i < 10; i++) sim.tick();
-  assert(Math.abs(angDiff(a.facing, 90)) < 6, `A tracks toward B due east (facing ${a.facing.toFixed(1)})`);
+  assert(Math.abs(angDiff(a.facing, 180)) < 1e-9, `re-issued order snapshots the new bearing (facing ${a.facing.toFixed(1)})`);
 }
 
 // 6. angle helpers

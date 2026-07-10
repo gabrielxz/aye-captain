@@ -83,6 +83,7 @@ const so = (params: any) => ({ verb: "set_standing_order", params } as any);
     ],
     repeat: true,
   })]);
+  (b as any).lock = { progress: 5, has: true, grace: 2 }; // B may fire
   sim.enqueue("B", [{ verb: "fire_missile", params: {} } as any]);
   let triggered = false;
   for (let i = 0; i < 10 && !triggered; i++) {

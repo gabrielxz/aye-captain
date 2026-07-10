@@ -20,6 +20,7 @@ export interface Command {
     | "set_heading"
     | "fire_laser"
     | "fire_missile"
+    | "reload_tubes"
     | "deploy_decoy"
     | "set_standing_order"
     | "query";
@@ -27,11 +28,25 @@ export interface Command {
   acknowledgement?: string;
 }
 
-// Goal heading as stored: relative orders are resolved to absolute at apply
-// time; target orders re-resolve to a bearing every tick (the ship tracks).
-export type HeadingGoal =
-  | { mode: "absolute"; degrees: number }
-  | { mode: "target"; target: TargetKind };
+// Goal heading as stored: ALL orders resolve to an absolute bearing at apply
+// time — target orders snapshot the target's bearing once (no continuous
+// tracking; the captain flies the ship).
+export type HeadingGoal = { mode: "absolute"; degrees: number };
+
+export interface Tube {
+  loaded: boolean;
+  reload: number; // seconds until loaded (0 while loaded or empty-with-no-reserve)
+}
+
+// This ship's missile lock ON THE ENEMY. progress accumulates while the
+// enemy is in cone+range+sensor-visible; grace keeps it alive through blips.
+export interface LockState {
+  progress: number; // seconds accumulated toward LOCK_TIME_S
+  has: boolean;
+  grace: number; // seconds of grace remaining once conditions break
+}
+
+export type PaintedState = "none" | "acquiring" | "locked";
 
 export interface Comparison {
   metric: string;
@@ -59,12 +74,20 @@ export interface Ship {
   vx: number;
   vy: number;
   facing: number; // degrees, 0 = north/up, clockwise positive
-  thrust: number; // percent 0-100
+  thrust: number; // throttle SETTING percent 0-100 (output is 0 when tanks dry)
   goal: HeadingGoal | null;
   hull: number;
-  missiles: number;
+  reserve: number; // missiles in the magazine beyond what's loaded in tubes
+  tubes: Tube[];
   decoys: number;
   laserCooldown: number; // seconds until ready (0 = ready)
+  propellant: number; // 0..PROPELLANT_MAX (drones exempt: stays full)
+  propellantTier: number; // lowest warning tier announced (100/50/25/10/0)
+  lock: LockState; // my lock on the enemy
+  prevPainted: PaintedState; // enemy's lock on me last tick (edge-triggered notices)
+  launchFlash: number; // seconds this ship stays revealed to the enemy after firing
+  contactWasFlashOnly: boolean; // current enemy visibility exists only via their launch flash
+  droneCooldown: number; // drone-only: seconds until it may fire again
   isDrone: boolean;
   standingOrders: StandingOrder[];
   orderCounter: number; // for generated labels
@@ -77,6 +100,19 @@ export interface Ship {
   lastKnownEnemy: { x: number; y: number; facing: number; t: number } | null;
 }
 
+// Total missiles aboard: reserve + loaded tubes + missiles mid-reload (a
+// reloading tube already contains its missile).
+export function missilesAboard(ship: Ship): number {
+  return ship.reserve + ship.tubes.filter((t) => t.loaded || t.reload > 0).length;
+}
+
+// Thrust the drive actually produces: the setting, or 0 with dry tanks.
+// Drones are exempt from propellant (their thrust is signature-only).
+export function effectiveThrust(ship: Ship): number {
+  if (ship.isDrone) return ship.thrust;
+  return ship.propellant > 0 ? ship.thrust : 0;
+}
+
 export interface Missile {
   id: number;
   owner: ShipId;
@@ -86,6 +122,8 @@ export interface Missile {
   vy: number;
   prevX: number;
   prevY: number;
+  course: number; // compass deg; guidance steers this, velocity follows it
+  speed: number; // ramps from inherited launch speed to MISSILE_MAX_SPEED_MPS
   age: number; // seconds since launch
   // lock: what the seeker is steering at right now
   lock: { type: "ship"; id: ShipId } | { type: "decoy"; id: number } | null;
@@ -168,6 +206,8 @@ export function fmtBearing(deg: number): string {
   return String(Math.round(norm360(deg)) % 360).padStart(3, "0");
 }
 
+const TUBE_NAMES = ["one", "two", "three", "four"];
+
 // ---------- sim ----------
 
 export class Sim {
@@ -193,9 +233,18 @@ export class Sim {
       thrust: 0,
       goal: null,
       hull: isDrone ? C.DRONE_HULL_POINTS : C.HULL_POINTS,
-      missiles: C.MISSILE_MAGAZINE,
+      // tubes start loaded from the magazine: 6 aboard = 2 loaded + 4 reserve
+      reserve: Math.max(0, C.MISSILE_MAGAZINE - C.TUBE_COUNT),
+      tubes: Array.from({ length: C.TUBE_COUNT }, () => ({ loaded: true, reload: 0 })),
       decoys: C.DECOY_SUPPLY,
       laserCooldown: 0,
+      propellant: C.PROPELLANT_MAX,
+      propellantTier: 100,
+      lock: { progress: 0, has: false, grace: 0 },
+      prevPainted: "none",
+      launchFlash: 0,
+      contactWasFlashOnly: false,
+      droneCooldown: 0,
       isDrone,
       standingOrders: [],
       orderCounter: 0,
@@ -211,8 +260,9 @@ export class Sim {
     return ship;
   }
 
+  // Signature follows EFFECTIVE thrust: a tanks-dry ship goes dim.
   signatureOf(obj: Ship | Decoy): number {
-    if ("thrust" in obj) return C.SHIP_BASE_SIGNATURE + obj.thrust;
+    if ("thrust" in obj) return C.SHIP_BASE_SIGNATURE + effectiveThrust(obj);
     return C.DECOY_SIGNATURE;
   }
 
@@ -245,7 +295,14 @@ export class Sim {
         } else if (p.mode === "absolute") {
           ship.goal = { mode: "absolute", degrees: norm360(p.degrees) };
         } else if (p.mode === "target") {
-          ship.goal = { mode: "target", target: p.target };
+          // Snapshot: resolve the target's bearing ONCE, now. No continuous
+          // tracking — standing orders re-snapshot at each trigger.
+          const pos = this.resolveTargetPos(ship, p.target);
+          if (!pos) return "No contact to point at, Captain.";
+          ship.goal = {
+            mode: "absolute",
+            degrees: bearingTo(ship.x, ship.y, pos.x, pos.y),
+          };
         } else {
           return "Helm didn't copy that heading.";
         }
@@ -259,23 +316,57 @@ export class Sim {
         return null;
       }
       case "fire_missile": {
-        if (ship.missiles <= 0) return "Magazine's empty, Captain.";
-        ship.missiles--;
-        const [fx, fy] = headingVec(ship.facing);
-        this.missiles.push({
-          id: this.nextId++,
-          owner: ship.id,
-          x: ship.x,
-          y: ship.y,
-          prevX: ship.x,
-          prevY: ship.y,
-          vx: ship.vx + fx * C.MISSILE_SPEED_MPS,
-          vy: ship.vy + fy * C.MISSILE_SPEED_MPS,
-          age: 0,
-          lock: null,
-          seekTimer: 0,
-          ballistic: false,
-        });
+        if (!ship.lock.has) return "No lock, Captain.";
+
+        // Which tubes? Explicit list (1-based) or the first ready tube.
+        let requested: number[];
+        const rawTubes = cmd.params.tubes;
+        if (Array.isArray(rawTubes) && rawTubes.length > 0) {
+          requested = [...new Set(rawTubes.map(Number))].filter(
+            (n) => Number.isInteger(n) && n >= 1 && n <= C.TUBE_COUNT
+          );
+          if (requested.length === 0) return "Helm didn't copy those tube numbers.";
+        } else {
+          const first = ship.tubes.findIndex((t) => t.loaded);
+          if (first === -1) {
+            return ship.tubes.some((t) => t.reload > 0)
+              ? "Tubes are still loading, Captain."
+              : "Magazine dry, Captain.";
+          }
+          requested = [first + 1];
+        }
+
+        let fired = 0;
+        for (const n of requested) {
+          const tube = ship.tubes[n - 1];
+          if (!tube.loaded) {
+            events.push({
+              kind: "reject",
+              ship: ship.id,
+              verb: "fire_missile",
+              reason:
+                tube.reload > 0
+                  ? `Tube ${TUBE_NAMES[n - 1]} is still loading.`
+                  : `Tube ${TUBE_NAMES[n - 1]} is empty.`,
+            });
+            continue;
+          }
+          this.launchMissile(ship, n, events);
+          fired++;
+        }
+        if (fired === 0) {
+          // every requested tube was rejected above; report overall failure
+          // without duplicating the per-tube lines
+          return ship.tubes.some((t) => t.reload > 0)
+            ? "Tubes are still loading, Captain."
+            : "Magazine dry, Captain.";
+        }
+        return null;
+      }
+      case "reload_tubes": {
+        if (C.AUTO_RELOAD) return null; // harmless no-op — "Already on it"
+        // Manual-reload doctrine is out of scope while AUTO_RELOAD is true;
+        // the verb exists so the command vocabulary survives a future flip.
         return null;
       }
       case "deploy_decoy": {
@@ -354,6 +445,61 @@ export class Sim {
     }
   }
 
+  // Fire one missile out of tube `tubeNo` (1-based; caller checked loaded).
+  // Model (b): guidance steers the velocity vector; speed ramps from the
+  // ship's forward momentum at launch up to MISSILE_MAX_SPEED_MPS. Course
+  // starts along the ship's facing (nose-launched).
+  private launchMissile(ship: Ship, tubeNo: number, events: SimEvent[]): void {
+    const tube = ship.tubes[tubeNo - 1];
+    tube.loaded = false;
+    const [fx, fy] = headingVec(ship.facing);
+    const inherited = clamp(ship.vx * fx + ship.vy * fy, 0, C.MISSILE_MAX_SPEED_MPS);
+    this.missiles.push({
+      id: this.nextId++,
+      owner: ship.id,
+      x: ship.x,
+      y: ship.y,
+      prevX: ship.x,
+      prevY: ship.y,
+      course: ship.facing,
+      speed: inherited,
+      vx: fx * inherited,
+      vy: fy * inherited,
+      age: 0,
+      lock: null,
+      seekTimer: 0,
+      ballistic: false,
+    });
+
+    // Launch flash: firing reveals you to the enemy for a few seconds,
+    // sensors or not. Distinct notice here; updateSensors suppresses the
+    // generic contact gained/lost pair for flash-only visibility.
+    ship.launchFlash = C.LAUNCH_FLASH_REVEAL_S;
+    const enemy = this.enemyOf(ship.id);
+    if (enemy && !enemy.isDrone) {
+      events.push({
+        kind: "notice",
+        ship: enemy.id,
+        text: `Launch flash detected — bearing ${fmtBearing(bearingTo(enemy.x, enemy.y, ship.x, ship.y))}!`,
+        alert: true,
+      });
+    }
+
+    if (C.AUTO_RELOAD && ship.reserve > 0) {
+      ship.reserve--;
+      tube.reload = C.TUBE_RELOAD_S;
+      if (!ship.isDrone) {
+        events.push({
+          kind: "notice",
+          ship: ship.id,
+          text: `Tube ${TUBE_NAMES[tubeNo - 1]} reloading.`,
+        });
+      }
+    } else if (missilesAboard(ship) === 0 && !ship.isDrone) {
+      events.push({ kind: "notice", ship: ship.id, text: "Magazine dry, Captain.", alert: true });
+    }
+  }
+
   // ---------- standing orders ----------
 
   // Metric value as THIS ship's sensors know it. null = unknowable through
@@ -378,9 +524,17 @@ export class Sim {
       case "own_speed":
         return this.speedOf(ship);
       case "own_missiles_remaining":
-        return ship.missiles;
+        return missilesAboard(ship);
       case "own_decoys_remaining":
         return ship.decoys;
+      case "have_lock":
+        return ship.lock.has;
+      case "being_painted":
+        return this.paintedState(ship) !== "none";
+      case "propellant_percent":
+        return (ship.propellant / C.PROPELLANT_MAX) * 100;
+      case "tubes_ready":
+        return ship.tubes.filter((t) => t.loaded).length;
       case "enemy_bearing_off_nose": {
         const e = this.enemyOf(ship.id);
         if (!e || !ship.enemyVisible) return null;
@@ -545,15 +699,9 @@ export class Sim {
     }
   }
 
-  // Resolve a ship's goal heading to a compass bearing for this tick.
-  // Returns null if there is nothing to steer toward (hold current facing).
+  // Goal headings are always absolute now (target orders snapshot at apply).
   private resolveGoal(ship: Ship): number | null {
-    if (!ship.goal) return null;
-    if (ship.goal.mode === "absolute") return ship.goal.degrees;
-    // target mode: re-resolve every tick so the ship tracks
-    const target = this.resolveTargetPos(ship, ship.goal.target);
-    if (!target) return null;
-    return bearingTo(ship.x, ship.y, target.x, target.y);
+    return ship.goal ? ship.goal.degrees : null;
   }
 
   // Enemy ordnance this ship's sensors can see (within detect range).
@@ -626,8 +774,10 @@ export class Sim {
     const dt = 1 / C.TICK_RATE_HZ;
     this.tickCount++;
 
-    // 1. evaluate standing orders against each player's sensor picture
+    // 1. drone behavior (fires on last tick's lock state), then standing
+    // orders against each player's sensor picture
     for (const ship of this.ships.values()) {
+      this.droneAct(ship, events, dt);
       this.evaluateStandingOrders(ship, events, dt);
     }
 
@@ -646,9 +796,9 @@ export class Sim {
       }
     }
 
-    // 3. step physics
+    // 3. step physics (also: propellant, tube reloads, flash countdown)
     for (const ship of this.ships.values()) {
-      this.stepShip(ship, dt);
+      this.stepShip(ship, events, dt);
       this.applyBounds(ship, events);
     }
     for (const m of this.missiles) {
@@ -664,35 +814,124 @@ export class Sim {
     this.resolveWeapons(events, dt);
 
     // 5. sensors: per-viewer enemy visibility, last-known tracking, contact
-    // notices on transitions
+    // notices; then ship-to-ship missile locks (needs fresh visibility) and
+    // painted warnings (needs both locks updated)
     for (const ship of this.ships.values()) {
       this.updateSensors(ship, events);
       this.announceInboundMissiles(ship, events);
+    }
+    for (const ship of this.ships.values()) {
+      this.updateLock(ship, events, dt);
+    }
+    for (const ship of this.ships.values()) {
+      this.announcePainted(ship, events);
     }
 
     return events;
   }
 
-  // Seeking missiles turn their velocity vector toward the lock (clamped to
-  // MISSILE_TURN_RATE), keeping speed constant; then everything integrates.
+  // Practice drone offense: with a held lock, a loaded tube, and its
+  // cooldown elapsed, it fires ONE missile (reduced aggression).
+  private droneAct(ship: Ship, events: SimEvent[], dt: number): void {
+    if (!ship.isDrone || !C.DRONE_FIRES_BACK || this.winner) return;
+    ship.droneCooldown = Math.max(0, ship.droneCooldown - dt);
+    if (ship.droneCooldown > 0) return;
+    if (!ship.lock.has || !ship.tubes.some((t) => t.loaded)) return;
+    const reason = this.applyCommand(ship, { verb: "fire_missile", params: {} }, events);
+    if (!reason) ship.droneCooldown = C.DRONE_MISSILE_COOLDOWN_S;
+  }
+
+  // Seeking missiles steer their course toward the lock (clamped to
+  // MISSILE_TURN_RATE); speed ramps toward max; velocity follows course.
   private stepMissile(m: Missile, dt: number): void {
     m.prevX = m.x;
     m.prevY = m.y;
     if (m.lock && !m.ballistic && m.age >= C.MISSILE_LAUNCH_DELAY_TICKS / C.TICK_RATE_HZ) {
       const target = this.lockPos(m.lock);
       if (target) {
-        const speed = Math.hypot(m.vx, m.vy);
-        const course = bearingTo(0, 0, m.vx, m.vy);
         const want = bearingTo(m.x, m.y, target.x, target.y);
-        const step = clamp(angDiff(course, want), -C.MISSILE_TURN_RATE_DPS * dt, C.MISSILE_TURN_RATE_DPS * dt);
-        const [nx, ny] = headingVec(norm360(course + step));
-        m.vx = nx * speed;
-        m.vy = ny * speed;
+        const step = clamp(angDiff(m.course, want), -C.MISSILE_TURN_RATE_DPS * dt, C.MISSILE_TURN_RATE_DPS * dt);
+        m.course = norm360(m.course + step);
       }
     }
+    m.speed = Math.min(m.speed + C.MISSILE_ACCEL_MPS2 * dt, C.MISSILE_MAX_SPEED_MPS);
+    const [nx, ny] = headingVec(m.course);
+    m.vx = nx * m.speed;
+    m.vy = ny * m.speed;
     m.x += m.vx * dt;
     m.y += m.vy * dt;
     m.age += dt;
+  }
+
+  // ---------- ship-to-ship missile lock ----------
+
+  // My lock on the enemy: needs cone + range + sensor visibility held for
+  // LOCK_TIME_S continuous seconds; LOCK_GRACE_S forgives brief breaks.
+  private updateLock(ship: Ship, events: SimEvent[], dt: number): void {
+    const enemy = this.enemyOf(ship.id);
+    const L = ship.lock;
+    let holding = false;
+    if (enemy && ship.enemyVisible) {
+      const range = dist(ship.x, ship.y, enemy.x, enemy.y);
+      const off = Math.abs(angDiff(ship.facing, bearingTo(ship.x, ship.y, enemy.x, enemy.y)));
+      holding = range <= C.LOCK_RANGE_M && off <= C.LOCK_CONE_HALF_ANGLE_DEG;
+    }
+
+    if (holding) {
+      L.grace = C.LOCK_GRACE_S;
+      if (!L.has) {
+        if (L.progress === 0 && !ship.isDrone) {
+          events.push({ kind: "notice", ship: ship.id, text: "Acquiring missile lock..." });
+        }
+        L.progress += dt;
+        if (L.progress >= C.LOCK_TIME_S) {
+          L.has = true;
+          if (!ship.isDrone) {
+            events.push({ kind: "notice", ship: ship.id, text: "Lock acquired." });
+          }
+        }
+      }
+    } else if (L.has || L.progress > 0) {
+      L.grace -= dt;
+      if (L.grace <= 0) {
+        if (!ship.isDrone) {
+          events.push({ kind: "notice", ship: ship.id, text: "Lock lost.", alert: L.has });
+        }
+        L.has = false;
+        L.progress = 0;
+        L.grace = 0;
+      }
+    }
+  }
+
+  // The enemy's lock state as it bears on THIS ship (RWR fiction: you feel
+  // their targeting radiation even if you can't see them).
+  paintedState(ship: Ship): PaintedState {
+    const enemy = this.enemyOf(ship.id);
+    if (!enemy) return "none";
+    if (enemy.lock.has) return "locked";
+    if (enemy.lock.progress > 0) return "acquiring";
+    return "none";
+  }
+
+  private announcePainted(ship: Ship, events: SimEvent[]): void {
+    if (ship.isDrone) return;
+    const now = this.paintedState(ship);
+    const was = ship.prevPainted;
+    ship.prevPainted = now;
+    if (now === was) return;
+    if (now === "acquiring" && was === "none") {
+      events.push({
+        kind: "notice",
+        ship: ship.id,
+        text: "Captain, we're being painted — missile lock in progress!",
+        alert: true,
+      });
+    } else if (now === "locked") {
+      events.push({ kind: "notice", ship: ship.id, text: "They have lock!", alert: true });
+    } else if (now === "none") {
+      events.push({ kind: "notice", ship: ship.id, text: "Enemy lock is off us." });
+    }
   }
 
   private lockPos(lock: NonNullable<Missile["lock"]>): { x: number; y: number } | null {
@@ -777,7 +1016,7 @@ export class Sim {
     // tick's turn uses this lock)
     for (const m of this.missiles) {
       if (m.ballistic || m.age < C.MISSILE_LAUNCH_DELAY_TICKS / C.TICK_RATE_HZ) continue;
-      const course = bearingTo(0, 0, m.vx, m.vy);
+      const course = m.course;
       const enemy = this.ships.get(m.owner === "A" ? "B" : "A");
 
       // every-tick re-evaluation: highest signature wins, so a fresh decoy
@@ -835,14 +1074,19 @@ export class Sim {
   }
 
   // You see the enemy iff (distance <= your current sensor range) OR (the
-  // enemy is outside the zone).
+  // enemy is outside the zone) OR (their launch flash is still burning).
+  // Flash-only visibility gets no generic contact gained/lost notices — the
+  // distinct "Launch flash detected" line was sent at fire time.
   private updateSensors(ship: Ship, events: SimEvent[]): void {
     const enemy = this.enemyOf(ship.id);
     const wasVisible = ship.enemyVisible;
+    const wasFlashOnly = ship.contactWasFlashOnly;
     let visible = false;
+    let baseVisible = false;
     if (enemy) {
       const range = dist(ship.x, ship.y, enemy.x, enemy.y);
-      visible = range <= this.sensorRangeOf(ship) || !this.insideZone(enemy);
+      baseVisible = range <= this.sensorRangeOf(ship) || !this.insideZone(enemy);
+      visible = baseVisible || enemy.launchFlash > 0;
       if (visible) {
         ship.lastKnownEnemy = {
           x: enemy.x,
@@ -851,14 +1095,14 @@ export class Sim {
           t: this.tickCount,
         };
       }
-      if (visible && !wasVisible && !ship.isDrone) {
+      if (visible && !wasVisible && baseVisible && !ship.isDrone) {
         const brg = bearingTo(ship.x, ship.y, enemy.x, enemy.y);
         events.push({
           kind: "notice",
           ship: ship.id,
           text: `Contact on sensors — bearing ${fmtBearing(brg)}, range ${(range / 1000).toFixed(1)} km.`,
         });
-      } else if (!visible && wasVisible && !ship.isDrone) {
+      } else if (!visible && wasVisible && !wasFlashOnly && !ship.isDrone) {
         events.push({
           kind: "notice",
           ship: ship.id,
@@ -867,11 +1111,29 @@ export class Sim {
       }
     }
     ship.enemyVisible = visible;
+    ship.contactWasFlashOnly = visible && !baseVisible;
   }
 
-  private stepShip(ship: Ship, dt: number): void {
-    // Practice drone: fixed-speed gentle circle, ignores thrust physics
-    // (thrust is set only so its signature reads as a ship at 50% thrust).
+  private stepShip(ship: Ship, events: SimEvent[], dt: number): void {
+    // Housekeeping shared by drones and players: cooldowns, launch flash,
+    // tube reloads.
+    ship.laserCooldown = Math.max(0, ship.laserCooldown - dt);
+    ship.launchFlash = Math.max(0, ship.launchFlash - dt);
+    for (let i = 0; i < ship.tubes.length; i++) {
+      const t = ship.tubes[i];
+      if (!t.loaded && t.reload > 0) {
+        t.reload = Math.max(0, t.reload - dt);
+        if (t.reload === 0) {
+          t.loaded = true;
+          if (!ship.isDrone) {
+            events.push({ kind: "notice", ship: ship.id, text: `Tube ${TUBE_NAMES[i]} ready.` });
+          }
+        }
+      }
+    }
+
+    // Practice drone: fixed-speed gentle circle, ignores thrust physics and
+    // propellant (thrust is set only so its signature reads as a ship).
     if (ship.isDrone) {
       ship.facing = norm360(ship.facing + C.DRONE_TURN_RATE_DPS * dt);
       const [fx, fy] = headingVec(ship.facing);
@@ -881,7 +1143,8 @@ export class Sim {
       ship.y += ship.vy * dt;
       return;
     }
-    // rotate toward goal at fixed turn rate, clamped (no overshoot)
+    // rotate toward goal at fixed turn rate, clamped (no overshoot).
+    // Turning is free (reaction wheels) — no propellant cost.
     const goalDeg = this.resolveGoal(ship);
     if (goalDeg !== null) {
       const diff = angDiff(ship.facing, goalDeg);
@@ -889,8 +1152,10 @@ export class Sim {
       ship.facing = norm360(ship.facing + clamp(diff, -maxStep, maxStep));
     }
 
-    // accelerate along facing; rotation does NOT change velocity (drift)
-    const accel = (ship.thrust / 100) * C.ACCEL_FULL_THRUST_MPS2;
+    // accelerate along facing; rotation does NOT change velocity (drift).
+    // Output thrust dies with the tank; the throttle SETTING is remembered.
+    const effective = effectiveThrust(ship);
+    const accel = (effective / 100) * C.ACCEL_FULL_THRUST_MPS2;
     const [fx, fy] = headingVec(ship.facing);
     ship.vx += fx * accel * dt;
     ship.vy += fy * accel * dt;
@@ -906,7 +1171,35 @@ export class Sim {
     ship.x += ship.vx * dt;
     ship.y += ship.vy * dt;
 
-    ship.laserCooldown = Math.max(0, ship.laserCooldown - dt);
+    this.stepPropellant(ship, effective, events, dt);
+  }
+
+  // Burn scales linearly with EFFECTIVE thrust; the ramscoop regenerates
+  // only inside the zone with the throttle SETTING at or below the regen
+  // ceiling (the captain must actually order low thrust to harvest).
+  private stepPropellant(ship: Ship, effective: number, events: SimEvent[], dt: number): void {
+    ship.propellant = Math.max(
+      0,
+      ship.propellant - (effective / 100) * C.PROPELLANT_BURN_AT_FULL * dt
+    );
+    if (this.insideZone(ship) && ship.thrust <= C.REGEN_MAX_THRUST_PCT) {
+      ship.propellant = Math.min(C.PROPELLANT_MAX, ship.propellant + C.PROPELLANT_REGEN_PER_S * dt);
+    }
+
+    // warnings at falling 50/25/10/0 thresholds, re-armed on recovery
+    const p = ship.propellant;
+    const tier = p <= 0 ? 0 : p <= 10 ? 10 : p <= 25 ? 25 : p <= 50 ? 50 : 100;
+    if (tier < ship.propellantTier) {
+      const lines: Record<number, [string, boolean]> = {
+        50: ["Propellant at one-half.", false],
+        25: ["Propellant at one-quarter, Captain.", false],
+        10: ["Propellant critical — ten percent.", true],
+        0: ["Tanks dry — we're adrift.", true],
+      };
+      const [text, alert] = lines[tier];
+      events.push({ kind: "notice", ship: ship.id, text, alert });
+    }
+    ship.propellantTier = tier;
   }
 
   // Hard limit clamp + server-generated transcript events on zone
@@ -1004,13 +1297,23 @@ export class Sim {
     const lines: string[] = [];
     const zoneDist = dist(ship.x, ship.y, 0, 0);
     lines.push(
-      `Own ship: heading ${fmtBearing(ship.facing)}, speed ${Math.round(this.speedOf(ship))} m/s, thrust ${Math.round(ship.thrust)}%, hull ${ship.hull}/${C.HULL_POINTS}.`
+      `Own ship: heading ${fmtBearing(ship.facing)}, speed ${Math.round(this.speedOf(ship))} m/s, thrust ${Math.round(ship.thrust)}%${effectiveThrust(ship) < ship.thrust ? " (NO output — tanks dry)" : ""}, hull ${ship.hull}/${C.HULL_POINTS}, propellant ${Math.round(ship.propellant)}/${C.PROPELLANT_MAX}.`
     );
     lines.push(
       `Position: ${(zoneDist / 1000).toFixed(1)} km from zone center (${this.insideZone(ship) ? "inside" : "OUTSIDE"} the zone).`
     );
     lines.push(
-      `Weapons: laser ${ship.laserCooldown > 0 ? `recharging ${ship.laserCooldown.toFixed(0)}s` : "ready"}, missiles ${ship.missiles}/${C.MISSILE_MAGAZINE}, decoys ${ship.decoys}/${C.DECOY_SUPPLY}.`
+      `Weapons: laser ${ship.laserCooldown > 0 ? `recharging ${ship.laserCooldown.toFixed(0)}s` : "ready"}, ${this.tubeSummary(ship)}, missiles aboard ${missilesAboard(ship)}/${C.MISSILE_MAGAZINE}, decoys ${ship.decoys}/${C.DECOY_SUPPLY}.`
+    );
+    const painted = this.paintedState(ship);
+    lines.push(
+      `Missile lock: ${
+        ship.lock.has
+          ? "HELD on enemy (can fire)"
+          : ship.lock.progress > 0
+            ? `acquiring (${ship.lock.progress.toFixed(0)}/${C.LOCK_TIME_S}s)`
+            : "none (need enemy within " + C.LOCK_RANGE_M / 1000 + " km and " + C.LOCK_CONE_HALF_ANGLE_DEG + " deg of our nose for " + C.LOCK_TIME_S + "s to fire missiles)"
+      }. Enemy lock on us: ${painted === "none" ? "none detected" : painted === "acquiring" ? "PAINTING US (lock in progress)" : "THEY HAVE LOCK"}.`
     );
     const intel = this.enemyIntel(ship);
     if (intel.on_sensors) {
@@ -1045,6 +1348,19 @@ export class Sim {
     return lines.join("\n");
   }
 
+  // One-line human tube status, shared by prompts and query answers.
+  tubeSummary(ship: Ship): string {
+    return ship.tubes
+      .map((t, i) =>
+        t.loaded
+          ? `tube ${TUBE_NAMES[i]} ready`
+          : t.reload > 0
+            ? `tube ${TUBE_NAMES[i]} reloading (${t.reload.toFixed(0)}s)`
+            : `tube ${TUBE_NAMES[i]} empty`
+      )
+      .join(", ");
+  }
+
   // Read-only query execution against sensor-visible state.
   queryData(id: ShipId, topic: string): Record<string, unknown> {
     const ship = this.ships.get(id);
@@ -1053,16 +1369,31 @@ export class Sim {
       heading: Math.round(ship.facing),
       speed_mps: Math.round(this.speedOf(ship)),
       thrust_percent: Math.round(ship.thrust),
+      thrust_output: effectiveThrust(ship) < ship.thrust ? "ZERO — tanks dry" : "nominal",
       hull: `${ship.hull}/${ship.isDrone ? C.DRONE_HULL_POINTS : C.HULL_POINTS}`,
       course_over_ground:
         this.speedOf(ship) > 1
           ? Math.round(bearingTo(0, 0, ship.vx, ship.vy))
           : null,
     };
+    const propellant = {
+      propellant: `${Math.round(ship.propellant)}/${C.PROPELLANT_MAX}`,
+      regenerating:
+        this.insideZone(ship) && ship.thrust <= C.REGEN_MAX_THRUST_PCT,
+      regen_requires: `inside the zone AND throttle setting <= ${C.REGEN_MAX_THRUST_PCT}%`,
+    };
+    const tubes = {
+      tubes: this.tubeSummary(ship),
+      tubes_ready: ship.tubes.filter((t) => t.loaded).length,
+      reserve_missiles: ship.reserve,
+      missiles_aboard: missilesAboard(ship),
+      lock: ship.lock.has ? "held" : ship.lock.progress > 0 ? "acquiring" : "none",
+    };
     const weapons = {
       laser: ship.laserCooldown > 0 ? `recharging, ready in ${ship.laserCooldown.toFixed(0)}s` : "ready",
       laser_range_m: C.LASER_RANGE_M,
-      missiles_remaining: ship.missiles,
+      missiles_remaining: missilesAboard(ship),
+      ...tubes,
       decoys_remaining: ship.decoys,
     };
     const zone = {
@@ -1093,9 +1424,24 @@ export class Sim {
       case "enemy":
         return this.enemyIntel(ship);
       case "own_ship":
-        return { ...own, ...zone };
+        return { ...own, ...propellant, ...zone };
       case "weapons":
         return weapons;
+      case "propellant":
+        return propellant;
+      case "tubes":
+        return tubes;
+      case "damage_report":
+        // answered by a server template in match.ts — no LLM call
+        return {
+          hull: ship.hull,
+          hull_max: ship.isDrone ? C.DRONE_HULL_POINTS : C.HULL_POINTS,
+          propellant: Math.round(ship.propellant),
+          tube_summary: this.tubeSummary(ship),
+          missiles_aboard: missilesAboard(ship),
+          decoys: ship.decoys,
+          laser_ready_in_s: Math.ceil(ship.laserCooldown),
+        };
       case "missiles_inbound":
         return missilesInbound;
       case "standing_orders":
@@ -1107,6 +1453,7 @@ export class Sim {
         return {
           own_ship: own,
           weapons,
+          ...propellant,
           enemy: this.enemyIntel(ship),
           zone,
           ...missilesInbound,
@@ -1146,9 +1493,20 @@ export class Sim {
         vy: ship.vy,
         facing: ship.facing,
         thrust: ship.thrust,
+        thrustOut: effectiveThrust(ship),
         speed: Math.round(this.speedOf(ship)),
         hull: ship.hull,
-        missiles: ship.missiles,
+        propellant: ship.propellant,
+        missiles: missilesAboard(ship),
+        tubes: ship.tubes.map((t) => ({
+          state: t.loaded ? "ready" : t.reload > 0 ? "reloading" : "empty",
+          t: Math.ceil(t.reload),
+        })),
+        lock: {
+          has: ship.lock.has,
+          progress: Math.min(1, ship.lock.progress / C.LOCK_TIME_S),
+        },
+        painted: this.paintedState(ship),
         decoys: ship.decoys,
         laserCooldown: ship.laserCooldown,
         insideZone: this.insideZone(ship),

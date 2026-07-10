@@ -75,13 +75,38 @@ const assert = (cond: boolean, msg: string) => {
 // 6. sensor range halved outside zone
 {
   const sim = new Sim();
-  const a = sim.addShip("A", 0, 25000, 0); // outside 20km zone
+  const a = sim.addShip("A", 0, C.ZONE_RADIUS_M + 5000, 0); // outside the zone
   assert(sim.sensorRangeOf(a) === C.SENSOR_RANGE_M * C.OUTSIDE_ZONE_SENSOR_MULT, "sensor range halved outside zone");
   // and an outside-zone ship is visible regardless of range
   const sim2 = new Sim();
   const a2 = sim2.addShip("A", 0, -14000, 0);
-  const b2 = sim2.addShip("B", 0, 25000, 180, true); // outside zone, 39km away
+  const b2 = sim2.addShip("B", 0, C.ZONE_RADIUS_M + 5000, 180, true); // outside zone, ~49km away
   sim2.tick();
   assert((sim2.snapshotFor("A") as any).enemy?.visible === true, "outside-zone enemy visible at any range");
+}
+
+// 7. launch flash: firing reveals the shooter regardless of sensor range,
+// with the distinct notice and WITHOUT the generic contact gained/lost pair
+{
+  const sim = new Sim();
+  const a = sim.addShip("A", 0, 0, 0);
+  const b = sim.addShip("B", 0, 20000, 180, false); // off A's sensors (20km > 12km), inside zone
+  sim.tick();
+  assert((sim.snapshotFor("A") as any).enemy === null, "shooter hidden before launch");
+  (b as any).lock = { progress: C.LOCK_TIME_S, has: true, grace: C.LOCK_GRACE_S };
+  sim.enqueue("B", [{ verb: "fire_missile", params: {} } as any]);
+  const ev = sim.tick();
+  assert(ev.some(e => e.kind === "notice" && e.ship === "A" && /Launch flash detected/.test((e as any).text)), "launch flash notice to the enemy");
+  assert(!ev.some(e => e.kind === "notice" && e.ship === "A" && /Contact on sensors/.test((e as any).text)), "no generic contact-gained for flash-only visibility");
+  let snap = sim.snapshotFor("A") as any;
+  assert(snap.enemy?.visible === true, "shooter revealed during flash");
+  let lostNotice = false;
+  for (let i = 0; i < C.LAUNCH_FLASH_REVEAL_S + 2; i++) {
+    const e2 = sim.tick();
+    lostNotice ||= e2.some(e => e.kind === "notice" && e.ship === "A" && /Contact lost/.test((e as any).text));
+  }
+  snap = sim.snapshotFor("A") as any;
+  assert(snap.enemy?.visible !== true, "flash expires — shooter hidden again");
+  assert(!lostNotice, "no generic contact-lost when a flash fades");
 }
 console.log("done");

@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import * as C from "./constants.js";
+import { PERSONA } from "./persona.js";
 import type { Command } from "./sim.js";
 
 const schema = JSON.parse(
@@ -35,12 +36,16 @@ function buildSystemPrompt(): string {
 
     `## Command schema (source of truth)\n${JSON.stringify(schema.definitions, null, 1)}`,
 
+    PERSONA,
+
     `## World constants
 - Max speed ${C.MAX_SPEED_MPS} m/s, full-thrust acceleration ${C.ACCEL_FULL_THRUST_MPS2} m/s^2, turn rate ${C.TURN_RATE_DEG_PER_SEC} deg/s.
-- Ships drift (Newtonian): rotating does not change velocity. Braking = flip 180 and burn.
+- Ships drift (Newtonian): rotating does not change velocity. Braking = flip 180 and burn. Turning is free (reaction wheels).
+- Propellant: tank ${C.PROPELLANT_MAX}, burns ${C.PROPELLANT_BURN_AT_FULL}/s at 100% thrust (linear). Regenerates ${C.PROPELLANT_REGEN_PER_S}/s ONLY inside the zone with throttle set <= ${C.REGEN_MAX_THRUST_PCT}%. At zero: no thrust output (setting remembered), ship coasts; turning and weapons still work.
 - Sensor range ${C.SENSOR_RANGE_M / 1000} km (halved outside the zone). Zone radius ${C.ZONE_RADIUS_M / 1000} km, hard limit ${C.HARD_LIMIT_RADIUS_M / 1000} km.
 - Laser: range ${C.LASER_RANGE_M / 1000} km, ${C.LASER_BEAM_WIDTH_DEG} deg half-angle off boresight, ${C.LASER_COOLDOWN_S}s cooldown, ${C.LASER_DAMAGE} damage; instantly kills missiles/decoys. Fires along current facing.
-- Missiles: ${C.MISSILE_MAGAZINE} carried, ${C.MISSILE_SPEED_MPS} m/s, seeker locks strongest signature in a ${C.MISSILE_ACQ_CONE_DEG} deg cone after ${C.MISSILE_LAUNCH_DELAY_TICKS}s, ${C.MISSILE_DAMAGE} damage, proximity fuse ${C.MISSILE_PROX_FUSE_M} m.
+- Missiles: ${C.MISSILE_MAGAZINE} aboard total, ${C.TUBE_COUNT} launch tubes (auto-reload ${C.TUBE_RELOAD_S}s each from reserves). FIRING REQUIRES A LOCK: automatic when the enemy is on sensors within ${C.LOCK_RANGE_M / 1000} km and ${C.LOCK_CONE_HALF_ANGLE_DEG} deg of our nose for ${C.LOCK_TIME_S}s continuous. Missiles accelerate at ${C.MISSILE_ACCEL_MPS2} m/s^2 to ${C.MISSILE_MAX_SPEED_MPS} m/s (same top speed as a ship), seeker locks strongest signature in a ${C.MISSILE_ACQ_CONE_DEG} deg cone after ${C.MISSILE_LAUNCH_DELAY_TICKS}s, ${C.MISSILE_DAMAGE} damage, proximity fuse ${C.MISSILE_PROX_FUSE_M} m. Firing produces a launch flash revealing us to the enemy for ${C.LAUNCH_FLASH_REVEAL_S}s.
+- Being painted: when the ENEMY is acquiring/holding a lock on us, we know (and can react via the being_painted metric).
 - Decoys: ${C.DECOY_SUPPLY} carried, hot signature for ${C.DECOY_LIFETIME_S}s, attracts missile seekers.
 - Compass headings: 0 = north, 90 = east, clockwise. port = left = counterclockwise, starboard = right = clockwise.
 - Max ${C.STANDING_ORDER_MAX} standing orders.`,
@@ -84,17 +89,31 @@ const METRICS = [
   "enemy_bearing_off_nose",
   "distance_from_zone_center",
   "time_elapsed_seconds",
+  "have_lock",
+  "being_painted",
+  "propellant_percent",
+  "tubes_ready",
 ];
 const OPS = ["lt", "lte", "gt", "gte", "eq"];
 const TOPICS = [
   "enemy",
   "own_ship",
   "weapons",
+  "propellant",
+  "tubes",
+  "damage_report",
   "missiles_inbound",
   "standing_orders",
   "zone",
   "full_report",
 ];
+
+function validTubesParam(v: unknown): number[] | null {
+  if (!Array.isArray(v) || v.length === 0) return null;
+  const tubes = v.map(Number);
+  if (tubes.some((n) => !Number.isInteger(n) || n < 1 || n > 2)) return null;
+  return [...new Set(tubes)];
+}
 
 function isObj(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -166,9 +185,18 @@ export function validateCommand(raw: unknown, nested = false): Command | null {
       return null;
     }
     case "fire_laser":
-    case "fire_missile":
     case "deploy_decoy":
       return out({});
+    case "fire_missile": {
+      if (p.tubes === undefined) return out({});
+      const tubes = validTubesParam(p.tubes);
+      return tubes ? out({ tubes }) : null;
+    }
+    case "reload_tubes": {
+      if (p.tubes === undefined) return out({});
+      const tubes = validTubesParam(p.tubes);
+      return tubes ? out({ tubes }) : null;
+    }
     case "set_standing_order": {
       if (nested) return null; // no recursive standing orders
       if (typeof p.cancel_label === "string" && !p.condition && !p.actions) {

@@ -1,4 +1,4 @@
-import { Sim, segmentMinDist } from "../server/sim.js";
+import { Sim, segmentMinDist, missilesAboard, type Ship } from "../server/sim.js";
 import * as C from "../server/constants.js";
 
 const assert = (cond: boolean, msg: string) => {
@@ -6,6 +6,11 @@ const assert = (cond: boolean, msg: string) => {
   else console.log("ok:", msg);
 };
 const fire = (sim: Sim, id: "A"|"B", verb: string) => sim.enqueue(id, [{verb, params:{}} as any]);
+// Missiles require a held lock; tests that aren't about lock acquisition
+// grant one directly (the lock suite covers acquisition itself).
+const grantLock = (ship: Ship) => {
+  ship.lock = { progress: C.LOCK_TIME_S, has: true, grace: C.LOCK_GRACE_S };
+};
 
 // 1. laser: hit, damage, cooldown reject, miss off-boresight
 {
@@ -41,20 +46,21 @@ const fire = (sim: Sim, id: "A"|"B", verb: string) => sim.enqueue(id, [{verb, pa
   assert((sim as any).decoys.length === 1, "own decoy survives own laser");
 }
 
-// 3. missile: launch delay, lock, tracking kill of the drone + gameover
+// 3. missile: launch delay, seeker, accelerating kill of the drone + gameover
 {
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 0);
   const b = sim.addShip("B", 500, 6000, 90, true); // ahead, will drift east on its circle
+  grantLock(a);
   let dead = false;
   let winner: string | null = null;
   fire(sim, "A", "fire_missile");
-  fire(sim, "A", "fire_missile"); // 2 x 35 = 70 >= 60 hull
+  fire(sim, "A", "fire_missile"); // 2 x 35 = 70 >= 60 hull (one from each tube)
   for (let i = 0; i < 60 && !dead; i++) {
     const ev = sim.tick();
     for (const e of ev) if (e.kind === "gameover") { dead = true; winner = e.winner; }
   }
-  assert(a.missiles === C.MISSILE_MAGAZINE - 2, "magazine decremented");
+  assert(missilesAboard(a) === C.MISSILE_MAGAZINE - 2, `magazine decremented (${missilesAboard(a)} aboard)`);
   assert(dead && winner === "A", `missiles kill the drone (winner ${winner})`);
   assert(sim.winner === "A", "sim.winner set");
 }
@@ -65,6 +71,7 @@ const fire = (sim: Sim, id: "A"|"B", verb: string) => sim.enqueue(id, [{verb, pa
   const a = sim.addShip("A", 0, 0, 0);
   const b = sim.addShip("B", 0, 5000, 0, false);
   b.thrust = 0; // quiet: sig 40 < decoy 120
+  grantLock(a);
   fire(sim, "A", "fire_missile");
   sim.tick(); sim.tick(); sim.tick(); // past launch delay, locked on ship
   const m = (sim as any).missiles[0];
@@ -75,9 +82,10 @@ const fire = (sim: Sim, id: "A"|"B", verb: string) => sim.enqueue(id, [{verb, pa
   assert(m.lock?.type === "decoy", "decoy (sig 120) steals lock from quiet ship (sig 40)");
 
   const sim2 = new Sim();
-  sim2.addShip("A", 0, 0, 0);
+  const a2 = sim2.addShip("A", 0, 0, 0);
   const b2 = sim2.addShip("B", 0, 5000, 0, false);
   b2.thrust = 100; // sig 140 > decoy 120
+  grantLock(a2);
   sim2.enqueue("A", [{verb: "fire_missile", params: {}} as any]);
   sim2.tick(); sim2.tick(); sim2.tick();
   sim2.enqueue("B", [{verb: "deploy_decoy", params: {}} as any]);
@@ -92,13 +100,14 @@ const fire = (sim: Sim, id: "A"|"B", verb: string) => sim.enqueue(id, [{verb, pa
   const a = sim.addShip("A", 0, 0, 0);
   const b = sim.addShip("B", 0, 3000, 180, false);
   b.vx = 0; b.vy = -280; b.thrust = 100; // charging at us fast, head-on
+  grantLock(a);
   fire(sim, "A", "fire_missile");
   let hit = false;
   for (let i = 0; i < 10 && !hit; i++) {
     const ev = sim.tick();
     hit = ev.some(e => e.kind === "notice" && /Missile strike/.test((e as any).text));
   }
-  assert(hit, "head-on closing ~730 m/s still detonates (segment fuse)");
+  assert(hit, "fast head-on closure still detonates (segment fuse)");
   assert(b.hull === C.HULL_POINTS - C.MISSILE_DAMAGE, `missile damage applied (hull ${b.hull})`);
 }
 
@@ -106,16 +115,23 @@ const fire = (sim: Sim, id: "A"|"B", verb: string) => sim.enqueue(id, [{verb, pa
 assert(segmentMinDist(0,0, 1000,0, 500,100, 500,100) === 100, "segment vs static point");
 assert(segmentMinDist(0,0, 1000,0, 500,-50, 500,50) === 0, "crossing paths -> 0");
 
-// 7. rejects: empty magazine, no decoys
+// 7. rejects: no lock, dry magazine, no decoys
 {
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 0);
-  sim.addShip("B", 0, 25000, 180, true);
-  a.missiles = 0; a.decoys = 0;
+  sim.addShip("B", 0, 40000, 180, true);
+  fire(sim, "A", "fire_missile"); // no lock yet
+  let ev = sim.tick();
+  assert(ev.some(e => e.kind === "reject" && /No lock/.test((e as any).reason)), "fire without lock rejected");
+
+  grantLock(a);
+  a.tubes.forEach(t => { t.loaded = false; t.reload = 0; });
+  a.reserve = 0;
+  a.decoys = 0;
   fire(sim, "A", "fire_missile");
   fire(sim, "A", "deploy_decoy");
-  const ev = sim.tick();
-  assert(ev.some(e => e.kind === "reject" && /Magazine's empty/.test((e as any).reason)), "empty magazine reject");
+  ev = sim.tick();
+  assert(ev.some(e => e.kind === "reject" && /Magazine dry/.test((e as any).reason)), "dry magazine reject");
   assert(ev.some(e => e.kind === "reject" && /No decoys/.test((e as any).reason)), "no decoys reject");
 }
 
@@ -124,6 +140,7 @@ assert(segmentMinDist(0,0, 1000,0, 500,-50, 500,50) === 0, "crossing paths -> 0"
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 180); // firing south, away from B
   const b = sim.addShip("B", 0, 20000, 0, true);
+  grantLock(a); // test bypass: aiming away on purpose
   fire(sim, "A", "fire_missile");
   for (let i = 0; i < 6; i++) sim.tick();
   const m = (sim as any).missiles[0];
@@ -137,10 +154,11 @@ assert(segmentMinDist(0,0, 1000,0, 500,-50, 500,50) === 0, "crossing paths -> 0"
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 0);
   const b = sim.addShip("B", 0, 10000, 180, false);
+  grantLock(b);
   sim.enqueue("B", [{verb: "fire_missile", params: {}} as any]);
   sim.tick();
   let snap = sim.snapshotFor("A") as any;
-  assert(snap.missiles.length === 0, "enemy missile at ~9.5km not in snapshot (detect 6km)");
+  assert(snap.missiles.length === 0, "enemy missile at ~9.9km not in snapshot (detect 6km)");
   for (let i = 0; i < 8; i++) sim.tick();
   snap = sim.snapshotFor("A") as any;
   assert(snap.missiles.some((m: any) => !m.own), "enemy missile appears within 6km");
