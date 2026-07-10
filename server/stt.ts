@@ -78,7 +78,15 @@ function filterSegments(segments: WhisperSegment[], durationS: number): string {
 }
 
 export async function transcribe(audio: Buffer, mime: string): Promise<string> {
-  const ext = mime.includes("mp4") ? "m4a" : mime.includes("ogg") ? "ogg" : "webm";
+  const ext = mime.includes("wav")
+    ? "wav"
+    : mime.includes("mp4")
+      ? "m4a"
+      : mime.includes("ogg")
+        ? "ogg"
+        : mime.includes("mpeg")
+          ? "mp3"
+          : "webm";
   const form = new FormData();
   form.append("file", new Blob([new Uint8Array(audio)], { type: mime }), `utterance.${ext}`);
   form.append("model", model());
