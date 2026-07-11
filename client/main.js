@@ -342,6 +342,11 @@ function updateHUDFromSnapshot(snap) {
       cls: you.rail ? (you.rail.slugs <= 0 ? "alert" : you.rail.cooldownS > 0 ? "warn" : "good") : "",
     },
     {
+      label: "PROBES",
+      value: `${you.probes ?? 0}${(snap.probes ?? []).some((p) => p.own) ? ` · ${(snap.probes ?? []).filter((p) => p.own).length} out` : ""}`,
+      cls: (snap.probes ?? []).some((p) => p.own) ? "good" : "",
+    },
+    {
       label: "PING",
       // LIT = the reveal window: everyone on the map reads us at ID tier.
       // A countdown, not a voice line — dread for exactly as long as earned.

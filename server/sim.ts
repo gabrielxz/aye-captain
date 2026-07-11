@@ -41,6 +41,7 @@ export interface Command {
     | "set_lock_target"
     | "fire_missile"
     | "fire_railgun"
+    | "launch_probe"
     | "reload_tubes"
     | "deploy_decoy"
     | "maneuver"
@@ -98,6 +99,9 @@ export interface LockState {
 // fog is enforced when snapshotFor reads it.
 export interface ContactState {
   tier: 0 | 1 | 2 | 3;
+  // v5 §6: true when a probe relay (not the ship's own sensors) is what
+  // sustains the current tier — the "via probe" provenance marker
+  viaProbe: boolean;
   faint: { x: number; y: number; t: number } | null;
   lastKnown: { x: number; y: number; facing: number; t: number } | null;
 }
@@ -190,6 +194,9 @@ export interface Ship {
   // v5 §5 railgun (frigate/cruiser; corvette carries none)
   railSlugs: number;
   railCooldownS: number;
+  // v5 §6 probes (per archetype; no reloads)
+  probesLeft: number;
+  probeCounter: number; // launch ordinal ("probe two")
   sigSpikeRail: number; // seconds of +RAIL_SIG_SPIKE remaining after firing
   droneCooldown: number; // drone-only: seconds until it may fire again
   droneWaypoint: number; // drone-only: index into the patrol route
@@ -270,7 +277,11 @@ export interface Missile {
   cmdBearing: number | null; // blind fire: absolute bearing to steer onto
   // lock: what the seeker is steering at right now (autonomous only; an
   // uplinked bird's target is the mother ship's track)
-  lock: { type: "ship"; id: ShipId } | { type: "decoy"; id: number } | null;
+  lock:
+    | { type: "ship"; id: ShipId }
+    | { type: "decoy"; id: number }
+    | { type: "probe"; id: number }
+    | null;
 }
 
 export interface Decoy {
@@ -290,6 +301,23 @@ export interface Decoy {
 export interface Slug {
   id: number;
   owner: ShipId;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  prevX: number;
+  prevY: number;
+  age: number;
+}
+
+// v5 §6: a sensor probe — burn-and-drift ballistics (PROBE_ACCEL along
+// the fixed launch bearing for PROBE_BURN_S, then coast), a relay for its
+// own fog-scoped sensor picture, and a legitimate target.
+export interface Probe {
+  id: number;
+  owner: ShipId;
+  idx: number; // 1-based per owner: "probe two"
+  bearing: number; // launch bearing; the burn never steers
   x: number;
   y: number;
   vx: number;
@@ -408,6 +436,7 @@ export function spokenBearing(deg: number): string {
 }
 
 const TUBE_NAMES = ["one", "two", "three", "four"];
+const PROBE_NAMES = ["one", "two", "three", "four", "five", "six"];
 
 // ---------- sim ----------
 
@@ -416,6 +445,7 @@ export class Sim {
   missiles: Missile[] = [];
   decoys: Decoy[] = [];
   slugs: Slug[] = [];
+  probes: Probe[] = [];
   terrain: Terrain;
   tickCount = 0;
   // Ship id in FFA, team name in Teams mode; set when hostilities end.
@@ -513,6 +543,8 @@ export class Sim {
       lockDesignation: null,
       railSlugs: stats.railSlugs,
       railCooldownS: 0,
+      probesLeft: stats.probes,
+      probeCounter: 0,
       sigSpikeRail: 0,
       prevPainted: "none",
       sigSpikeLaunch: 0,
@@ -602,6 +634,34 @@ export class Sim {
     return granted as 0 | 2;
   }
 
+  // v5 §6: the tier a PROBE earns on an emitter — the same band math from
+  // the probe's own position with its reduced PROBE_SENSOR_BASE_M eyes.
+  // All fog rules apply from there: LOS from the probe, ping reveals and
+  // outside-the-region signature-max included.
+  private probeTierOn(
+    pr: Probe,
+    x: number,
+    y: number,
+    sig: number,
+    revealed = false,
+    outsideZone = false
+  ): 0 | 1 | 2 | 3 {
+    if (revealed) return 3;
+    if (!this.losClear(pr.x, pr.y, x, y)) return 0;
+    if (outsideZone) return 3;
+    const detect = C.PROBE_SENSOR_BASE_M * (sig / 100);
+    if (detect <= 0) return 0;
+    const frac = dist(pr.x, pr.y, x, y) / detect;
+    if (frac <= C.TIER_ID_FRAC) return 3;
+    if (frac <= C.TIER_TRACK_FRAC) return 2;
+    if (frac <= C.TIER_FAINT_FRAC) return 1;
+    return 0;
+  }
+
+  private probesOf(id: ShipId): Probe[] {
+    return this.probes.filter((pr) => pr.owner === id);
+  }
+
   // v5 §2 hostility: everyone in FFA (team null); teammates never.
   isHostile(a: Ship, b: Ship): boolean {
     return a.id !== b.id && (a.team === null || b.team === null || a.team !== b.team);
@@ -624,7 +684,7 @@ export class Sim {
     }
     let st = m.get(targetId);
     if (!st) {
-      st = { tier: 0, faint: null, lastKnown: null };
+      st = { tier: 0, viaProbe: false, faint: null, lastKnown: null };
       m.set(targetId, st);
     }
     return st;
@@ -975,6 +1035,39 @@ export class Sim {
             text: `Rail fire, bearing ${q}.`,
             speak: `Rail fire, bearing ${spokenBearing(brg)}.`,
             alert: true,
+          });
+        }
+        return null;
+      }
+      case "launch_probe": {
+        // v5 §6: fire-and-drift remote sensors. Nose launch unless a
+        // bearing is named; the burn never steers.
+        if (ship.probesLeft <= 0) return "No probes left, Captain.";
+        const raw = cmd.params.bearing_degrees;
+        const brg =
+          typeof raw === "number" && Number.isFinite(raw) ? norm360(raw) : ship.facing;
+        ship.probesLeft--;
+        ship.probeCounter++;
+        this.probes.push({
+          id: this.nextId++,
+          owner: ship.id,
+          idx: ship.probeCounter,
+          bearing: brg,
+          x: ship.x,
+          y: ship.y,
+          prevX: ship.x,
+          prevY: ship.y,
+          vx: ship.vx,
+          vy: ship.vy,
+          age: 0,
+        });
+        delete cmd.acknowledgement; // the ship owns this voice
+        if (!ship.isDrone) {
+          events.push({
+            kind: "notice",
+            ship: ship.id,
+            text: `Probe ${PROBE_NAMES[ship.probeCounter - 1] ?? ship.probeCounter} away — bearing ${fmtBearing(brg)}.`,
+            speak: `Probe away — bearing ${spokenBearing(brg)}.`,
           });
         }
         return null;
@@ -1348,6 +1441,7 @@ export class Sim {
   private stepPdc(
     ship: Ship,
     deadMissiles: Set<number>,
+    deadProbes: Set<number>,
     pdcVictims: Map<ShipId, ShipId>, // victim -> one shooter (edge notices resolved after all mounts fire)
     events: SimEvent[],
     dt: number
@@ -1376,6 +1470,23 @@ export class Sim {
         if (shooter && this.canObserve(shooter, m.x, m.y)) {
           events.push({ kind: "notice", ship: m.owner, text: "Their point defense got our missile." });
         }
+      }
+    }
+
+    // (a2) enemy probes (v5 §6): fair game for the mount, same rules —
+    // sensor-slaved (probe sig ${C.PROBE_SIGNATURE} is visible far beyond
+    // PDC range, so in practice: in envelope = engaged)
+    for (const pr of this.probes) {
+      if (pr.owner === ship.id || deadProbes.has(pr.id)) continue;
+      const range = dist(ship.x, ship.y, pr.x, pr.y);
+      if (range > C.PDC_RANGE_M) continue;
+      if (range > this.detectionRange(C.PROBE_SIGNATURE, ship)) continue;
+      if (!this.losClear(ship.x, ship.y, pr.x, pr.y)) continue;
+      firing = true;
+      this.fx.push({ type: "pdc", owner: ship.id, x1: ship.x, y1: ship.y, x2: pr.x, y2: pr.y });
+      if (Math.random() < C.PDC_KILL_PROB_PER_S * dt) {
+        deadProbes.add(pr.id);
+        this.fx.push({ type: "boom", x: pr.x, y: pr.y });
       }
     }
 
@@ -1627,12 +1738,25 @@ export class Sim {
     // ordinary contacts (a ping never resolves a decoy; that stays ID-only)
     const granted =
       viewer.pingGrantS > 0 && viewer.pingGrantDecoys.has(d.id) ? 2 : 0;
-    if (!this.losClear(viewer.x, viewer.y, d.x, d.y)) return granted as 0 | 2;
-    const frac = dist(viewer.x, viewer.y, d.x, d.y) / this.detectionRange(C.DECOY_SIGNATURE, viewer);
-    if (frac <= C.TIER_ID_FRAC) return 3;
-    if (frac <= C.TIER_TRACK_FRAC) return 2;
-    if (frac <= C.TIER_FAINT_FRAC) return Math.max(1, granted) as 1 | 2;
-    return granted as 0 | 2;
+    // v5 §6: probe relays fuse here too — a close probe can even RESOLVE
+    // a decoy remotely (tier 3 from the probe's position is earned)
+    let probeTier: 0 | 1 | 2 | 3 = 0;
+    for (const pr of this.probesOf(viewer.id)) {
+      const t = this.probeTierOn(pr, d.x, d.y, C.DECOY_SIGNATURE);
+      if (t > probeTier) probeTier = t;
+    }
+    let own: 0 | 1 | 2 | 3;
+    if (!this.losClear(viewer.x, viewer.y, d.x, d.y)) {
+      own = granted as 0 | 2;
+    } else {
+      const frac = dist(viewer.x, viewer.y, d.x, d.y) / this.detectionRange(C.DECOY_SIGNATURE, viewer);
+      own =
+        frac <= C.TIER_ID_FRAC ? 3
+        : frac <= C.TIER_TRACK_FRAC ? 2
+        : frac <= C.TIER_FAINT_FRAC ? (Math.max(1, granted) as 1 | 2)
+        : (granted as 0 | 2);
+    }
+    return Math.max(own, probeTier) as 0 | 1 | 2 | 3;
   }
 
   // v4.5 hearing channel: emitters this ship HEARS but cannot see — beyond
@@ -1650,23 +1774,34 @@ export class Sim {
   // per-viewer opaque alias ("r1", "r2", ...) — the wire must not let a
   // client correlate rumbles by object identity or tell ships from decoys
   // by prefix (invariants 11/13; v5 §3 hardening).
-  rumblesFor(ship: Ship): { key: string; cid: string; bearing: number; loud: number }[] {
+  rumblesFor(ship: Ship): {
+    key: string;
+    cid: string;
+    bearing: number;
+    loud: number;
+    probe?: number; // launch ordinal of the relaying probe (v5 §6)
+    ox?: number; // chevron origin = the probe's position (own equipment)
+    oy?: number;
+  }[] {
     let aliases = this.rumbleAliases.get(ship.id);
     if (!aliases) {
       aliases = new Map();
       this.rumbleAliases.set(ship.id, aliases);
     }
-    const out: { key: string; cid: string; bearing: number; loud: number }[] = [];
+    const out: ReturnType<Sim["rumblesFor"]> = [];
+    const alias = (key: string): string => {
+      let cid = aliases.get(key);
+      if (!cid) {
+        cid = `r${aliases.size + 1}`;
+        aliases.set(key, cid);
+      }
+      return cid;
+    };
     const hear = (x: number, y: number, sig: number, key: string) => {
       if (dist(ship.x, ship.y, x, y) <= this.detectionRange(sig, ship) * C.HEARING_RANGE_MULT) {
-        let cid = aliases.get(key);
-        if (!cid) {
-          cid = `r${aliases.size + 1}`;
-          aliases.set(key, cid);
-        }
         out.push({
           key,
-          cid,
+          cid: alias(key),
           bearing: Math.round(norm360(bearingTo(ship.x, ship.y, x, y))) % 360, // 359.6 rounds to 360 -> wrap to 000
           loud: Math.min(1, sig / 150),
         });
@@ -1680,6 +1815,37 @@ export class Sim {
     for (const d of this.decoys) {
       if (d.owner === ship.id) continue;
       if (this.decoyTierFor(ship, d) === 0) hear(d.x, d.y, C.DECOY_SIGNATURE, `d${d.id}`);
+    }
+    // v5 §6: probe-relayed rumbles — the probe's FULL hearing (same
+    // multiplier on its reduced sensor base), bearing FROM THE PROBE.
+    // A second bearing on the same emitter is the whole point: two
+    // chevrons cross into a human-made fix. The XO never crosses them.
+    for (const pr of this.probesOf(ship.id)) {
+      const probeHear = (x: number, y: number, sig: number, key: string) => {
+        const hearing = C.PROBE_SENSOR_BASE_M * (sig / 100) * C.HEARING_RANGE_MULT;
+        if (dist(pr.x, pr.y, x, y) <= hearing) {
+          out.push({
+            key,
+            cid: alias(key),
+            bearing: Math.round(norm360(bearingTo(pr.x, pr.y, x, y))) % 360,
+            loud: Math.min(1, sig / 150),
+            probe: pr.idx,
+            ox: pr.x,
+            oy: pr.y,
+          });
+        }
+      };
+      for (const h of this.hostilesOf(ship)) {
+        if (this.contactOn(ship.id, h.id).tier === 0) {
+          probeHear(h.x, h.y, this.signatureOf(h), `p${pr.id}:s${h.id}`);
+        }
+      }
+      for (const d of this.decoys) {
+        if (d.owner === ship.id) continue;
+        if (this.decoyTierFor(ship, d) === 0) {
+          probeHear(d.x, d.y, C.DECOY_SIGNATURE, `p${pr.id}:d${d.id}`);
+        }
+      }
     }
     return out;
   }
@@ -1703,13 +1869,17 @@ export class Sim {
     const spoken = (b: number) => fmtBearing((Math.round(b / 10) * 10) % 360);
     for (const r of current) {
       const st = state.get(r.key);
+      const viaProbe = r.probe !== undefined ? ` — probe ${PROBE_NAMES[r.probe - 1] ?? r.probe}'s bearing` : "";
       if (!st || (!st.live && st.cooldown <= 0)) {
         state.set(r.key, { bearing: r.bearing, cooldown: C.RUMBLE_ANNOUNCE_COOLDOWN_S, live: true });
         events.push({
           kind: "notice",
           ship: ship.id,
-          text: `Drive rumble, bearing ${spoken(r.bearing)}.`,
-          speak: `Drive rumble, bearing ${spokenBearing(r.bearing)}.`,
+          text: `Drive rumble, bearing ${spoken(r.bearing)}${viaProbe}.`,
+          speak:
+            r.probe !== undefined
+              ? `Probe rumble, bearing ${spokenBearing(r.bearing)}.`
+              : `Drive rumble, bearing ${spokenBearing(r.bearing)}.`,
         });
       } else if (
         st.live &&
@@ -1737,11 +1907,13 @@ export class Sim {
         continue;
       }
       st.live = false;
-      // silent when it hardened into a contact (rumble -> faint handoff)
-      const becameContact = key.startsWith("s")
-        ? this.contactOn(ship.id, key.slice(1)).tier >= 1
+      // silent when it hardened into a contact (rumble -> faint handoff);
+      // probe-relayed keys look through to their emitter
+      const emitter = key.includes(":") ? key.slice(key.indexOf(":") + 1) : key;
+      const becameContact = emitter.startsWith("s")
+        ? this.contactOn(ship.id, emitter.slice(1)).tier >= 1
         : this.decoys.some(
-            (d) => `d${d.id}` === key && this.decoyTierFor(ship, d) >= 1
+            (d) => `d${d.id}` === emitter && this.decoyTierFor(ship, d) >= 1
           );
       if (!becameContact) {
         st.cooldown = C.RUMBLE_ANNOUNCE_COOLDOWN_S;
@@ -1988,6 +2160,18 @@ export class Sim {
       sl.y += sl.vy * dt;
       sl.age += dt;
     }
+    for (const pr of this.probes) {
+      pr.prevX = pr.x;
+      pr.prevY = pr.y;
+      if (pr.age < C.PROBE_BURN_S) {
+        const [dx, dy] = headingVec(pr.bearing);
+        pr.vx += dx * C.PROBE_ACCEL_MPS2 * dt;
+        pr.vy += dy * C.PROBE_ACCEL_MPS2 * dt;
+      }
+      pr.x += pr.vx * dt;
+      pr.y += pr.vy * dt;
+      pr.age += dt;
+    }
 
     // 5. resolve weapons: proximity fuses, expiry, seeker locks
     this.resolveWeapons(events, dt);
@@ -2211,7 +2395,10 @@ export class Sim {
   private updateLock(ship: Ship, events: SimEvent[], dt: number): void {
     const L = ship.lock;
     const eligible = (h: Ship): boolean => {
-      if (this.contactOn(ship.id, h.id).tier < 2) return false;
+      // OWN sensors only (live) — a probe-relayed track deliberately
+      // cannot feed a lock (v5 §6: probes FIND ships, they don't shoot
+      // them; a fused tier here would let you lock through a rock)
+      if (this.contactTierFor(ship, h) < 2) return false;
       const range = dist(ship.x, ship.y, h.x, h.y);
       const off = Math.abs(angDiff(ship.facing, bearingTo(ship.x, ship.y, h.x, h.y)));
       return range <= C.LOCK_RANGE_M && off <= C.LOCK_CONE_HALF_ANGLE_DEG;
@@ -2339,6 +2526,10 @@ export class Sim {
       const s = this.ships.get(lock.id);
       return s ? { x: s.x, y: s.y } : null;
     }
+    if (lock.type === "probe") {
+      const pr = this.probes.find((p) => p.id === lock.id);
+      return pr ? { x: pr.x, y: pr.y } : null;
+    }
     const d = this.decoys.find((d) => d.id === lock.id);
     return d ? { x: d.x, y: d.y } : null;
   }
@@ -2348,11 +2539,12 @@ export class Sim {
     // so a 450 m/s missile can't tunnel past a 150 m fuse between ticks)
     const deadMissiles = new Set<number>();
     const deadDecoys = new Set<number>();
+    const deadProbes = new Set<number>();
 
     // --- point defense fires before fuses resolve (defense gets the last word)
     const pdcVictims = new Map<ShipId, ShipId>();
     for (const ship of this.ships.values()) {
-      this.stepPdc(ship, deadMissiles, pdcVictims, events, dt);
+      this.stepPdc(ship, deadMissiles, deadProbes, pdcVictims, events, dt);
     }
     this.announcePdcShipFire(pdcVictims, events);
 
@@ -2432,8 +2624,52 @@ export class Sim {
           events.push({ kind: "notice", ship: d.owner, text: "We just lost a decoy." });
         }
       }
+      for (const pr of this.probes) {
+        if (deadProbes.has(pr.id)) continue;
+        const dMin = segmentMinDist(
+          sl.prevX, sl.prevY, sl.x, sl.y,
+          pr.prevX, pr.prevY, pr.x, pr.y
+        );
+        if (dMin <= C.RAIL_HIT_RADIUS_M) {
+          deadProbes.add(pr.id);
+          this.fx.push({ type: "boom", x: pr.x, y: pr.y });
+        }
+      }
     }
     this.slugs = this.slugs.filter((sl) => !deadSlugs.has(sl.id));
+
+    // --- v5 §6 probes: rocks, lifetime; deaths announce to the owner
+    // (own equipment — the v4.7.1 decoy rule)
+    for (const pr of this.probes) {
+      if (deadProbes.has(pr.id)) continue;
+      if (this.terrain.rocks.length > 0 && firstRockHit(pr.prevX, pr.prevY, pr.x, pr.y, this.terrain)) {
+        deadProbes.add(pr.id);
+        this.fx.push({ type: "boom", x: pr.x, y: pr.y });
+      } else if (pr.age >= C.PROBE_LIFETIME_S) {
+        deadProbes.add(pr.id);
+        const owner = this.ships.get(pr.owner);
+        if (owner && !owner.isDrone) {
+          events.push({
+            kind: "notice",
+            ship: pr.owner,
+            text: `Probe ${PROBE_NAMES[pr.idx - 1] ?? pr.idx} is spent.`,
+          });
+        }
+      }
+    }
+    for (const pr of this.probes) {
+      if (!deadProbes.has(pr.id) || pr.age >= C.PROBE_LIFETIME_S) continue;
+      const owner = this.ships.get(pr.owner);
+      if (owner && !owner.isDrone) {
+        events.push({
+          kind: "notice",
+          ship: pr.owner,
+          text: `We just lost probe ${PROBE_NAMES[pr.idx - 1] ?? pr.idx}.`,
+          alert: true,
+        });
+      }
+    }
+    this.probes = this.probes.filter((pr) => !deadProbes.has(pr.id));
 
     for (const m of this.missiles) {
       if (deadMissiles.has(m.id)) continue;
@@ -2479,6 +2715,21 @@ export class Sim {
           if (shooter2 && this.canObserve(shooter2, m.x, m.y)) {
             events.push({ kind: "notice", ship: m.owner, text: "Missile detonated — it was a decoy." });
           }
+          break;
+        }
+      }
+      if (deadMissiles.has(m.id)) continue;
+      // probes (v5 §6): a probe is a legitimate prox target
+      for (const pr of this.probes) {
+        if (pr.owner === m.owner || deadProbes.has(pr.id)) continue;
+        const dMin = segmentMinDist(
+          m.prevX, m.prevY, m.x, m.y,
+          pr.prevX, pr.prevY, pr.x, pr.y
+        );
+        if (dMin <= C.MISSILE_PROX_FUSE_M) {
+          deadMissiles.add(m.id);
+          deadProbes.add(pr.id);
+          this.fx.push({ type: "boom", x: m.x, y: m.y });
           break;
         }
       }
@@ -2566,6 +2817,14 @@ export class Sim {
         if (d.owner === m.owner || deadDecoys.has(d.id)) continue;
         if (seekerSees(d.x, d.y, C.DECOY_SIGNATURE)) {
           cands.push({ lock: { type: "decoy", id: d.id }, sig: C.DECOY_SIGNATURE });
+        }
+      }
+      // v5 §6: a probe is a weak seeker candidate too (sig 25 — only a
+      // very close bird bothers; §8 IFF exempts friendly probes)
+      for (const pr of this.probes) {
+        if (pr.owner === m.owner || deadProbes.has(pr.id)) continue;
+        if (seekerSees(pr.x, pr.y, C.PROBE_SIGNATURE)) {
+          cands.push({ lock: { type: "probe", id: pr.id }, sig: C.PROBE_SIGNATURE });
         }
       }
       cands.sort((a, b) => b.sig - a.sig);
@@ -2675,8 +2934,26 @@ export class Sim {
   private updateSensors(ship: Ship): void {
     for (const enemy of this.hostilesOf(ship)) {
       const st = this.contactOn(ship.id, enemy.id);
-      const tier = this.contactTierFor(ship, enemy);
+      const ownTier = this.contactTierFor(ship, enemy);
+      // v5 §6: fuse in probe relays — best tier from any of our probes,
+      // each judging from ITS position. contactOn becomes the captain's
+      // MAP picture; anything that must stay own-sensor (missile locks)
+      // reads contactTierFor directly.
+      let probeTier: 0 | 1 | 2 | 3 = 0;
+      for (const pr of this.probesOf(ship.id)) {
+        const t = this.probeTierOn(
+          pr,
+          enemy.x,
+          enemy.y,
+          this.signatureOf(enemy),
+          enemy.pingRevealS > 0,
+          !this.insideZone(enemy)
+        );
+        if (t > probeTier) probeTier = t;
+      }
+      const tier = Math.max(ownTier, probeTier) as 0 | 1 | 2 | 3;
       st.tier = tier;
+      st.viaProbe = probeTier > ownTier && tier >= 1;
 
       if (tier === 1) {
         // approximate position only, refreshed every FAINT_UPDATE_INTERVAL_S
@@ -2725,6 +3002,7 @@ export class Sim {
     type Entry = {
       key: string;
       tier: 0 | 1 | 2 | 3;
+      viaProbe?: boolean;
       x: number;
       y: number;
       lastKnown: ContactRecord["lastKnown"];
@@ -2736,6 +3014,7 @@ export class Sim {
       entries.push({
         key: `s${h.id}`,
         tier: st.tier,
+        viaProbe: st.viaProbe,
         x: h.x,
         y: h.y,
         lastKnown: st.lastKnown,
@@ -2777,14 +3056,17 @@ export class Sim {
       const rangeKm = Math.round(dist(ship.x, ship.y, e.x, e.y) / 1000);
 
       if (e.tier >= 1 && !rec) {
-        // first acquisition ever
+        // first acquisition ever ("via probe" names the relay, v5 §6)
         rec = { letter: this.nextLetter(book), identified: false, prevTier: 0, lostAt: null, lastKnown: null };
         book.records.set(e.key, rec);
+        const via = e.viaProbe ? " (via probe)" : "";
         say(
           e.tier === 1
-            ? `New contact — designating ${rec.letter}. Faint, bearing ${brg}, range approximately ${rangeKm} km.`
-            : `New contact — designating ${rec.letter}. I have a track — bearing ${brg}, range ${rangeKm} km.`,
-          `New contact — designating ${rec.letter}. Bearing ${spokenBearing(brgDeg)}.`
+            ? `New contact${via} — designating ${rec.letter}. Faint, bearing ${brg}, range approximately ${rangeKm} km.`
+            : `New contact${via} — designating ${rec.letter}. I have a track — bearing ${brg}, range ${rangeKm} km.`,
+          e.viaProbe
+            ? `New contact via probe — designating ${rec.letter}. Bearing ${spokenBearing(brgDeg)}.`
+            : `New contact — designating ${rec.letter}. Bearing ${spokenBearing(brgDeg)}.`
         );
       } else if (e.tier >= 1 && rec && rec.lostAt !== null) {
         // reacquisition: keep the letter only if the XO can plausibly
@@ -3258,7 +3540,7 @@ export class Sim {
       );
     }
     lines.push(
-      `Weapons: PDC posture ${ship.pdcPosture.toUpperCase()} (ammo ${Math.round(ship.pdcAmmoS)}s of fire left), ${this.tubeSummary(ship)}, missiles aboard ${missilesAboard(ship)}/${statsOf(ship).magazine}, decoys ${ship.decoys}/${statsOf(ship).decoys}. Railgun: ${statsOf(ship).railguns === 0 ? "NOT FITTED (corvette)" : ship.railSlugs <= 0 ? "slugs out" : ship.railCooldownS > 0 ? `recharging (${Math.ceil(ship.railCooldownS)}s), ${ship.railSlugs} slugs` : `READY, ${ship.railSlugs} slugs (solution needs a TRACK; any target thrust during flight = miss)`}. Active ping: ${ship.pingCooldownS <= 0 ? "READY (reveals us map-wide for " + C.PING_REVEAL_S + "s)" : `recharging (${Math.ceil(ship.pingCooldownS)}s)`}.`
+      `Weapons: PDC posture ${ship.pdcPosture.toUpperCase()} (ammo ${Math.round(ship.pdcAmmoS)}s of fire left), ${this.tubeSummary(ship)}, missiles aboard ${missilesAboard(ship)}/${statsOf(ship).magazine}, decoys ${ship.decoys}/${statsOf(ship).decoys}. Railgun: ${statsOf(ship).railguns === 0 ? "NOT FITTED (corvette)" : ship.railSlugs <= 0 ? "slugs out" : ship.railCooldownS > 0 ? `recharging (${Math.ceil(ship.railCooldownS)}s), ${ship.railSlugs} slugs` : `READY, ${ship.railSlugs} slugs (solution needs a TRACK; any target thrust during flight = miss)`}. Probes: ${ship.probesLeft} left${this.probesOf(ship.id).length > 0 ? `, ${this.probesOf(ship.id).length} deployed (relaying)` : ""}. Active ping: ${ship.pingCooldownS <= 0 ? "READY (reveals us map-wide for " + C.PING_REVEAL_S + "s)" : `recharging (${Math.ceil(ship.pingCooldownS)}s)`}.`
     );
     const painted = this.paintedState(ship);
     lines.push(
@@ -3302,8 +3584,9 @@ export class Sim {
         if (rec.lostAt === null && pos && pos.live) {
           const tierWord = rec.prevTier >= 3 ? "ID" : rec.prevTier === 2 ? "TRACK" : "FAINT";
           const approx = rec.prevTier === 1 ? "~" : "";
+          const via = key.startsWith("s") && this.contactBooks.get(ship.id) && this.shipContacts.get(ship.id)?.get(key.slice(1))?.viaProbe ? " (via probe)" : "";
           rows.push(
-            `${name}: ${tierWord}, bearing ${fmtBearing(bearingTo(ship.x, ship.y, pos.x, pos.y))}, range ${approx}${(dist(ship.x, ship.y, pos.x, pos.y) / 1000).toFixed(1)} km`
+            `${name}: ${tierWord}${via}, bearing ${fmtBearing(bearingTo(ship.x, ship.y, pos.x, pos.y))}, range ${approx}${(dist(ship.x, ship.y, pos.x, pos.y) / 1000).toFixed(1)} km`
           );
         } else if (rec.lastKnown) {
           rows.push(
@@ -3421,6 +3704,8 @@ export class Sim {
     const weapons = {
       ...pdc,
       ...rail,
+      probes_left: ship.probesLeft,
+      probes_deployed: this.probesOf(ship.id).length,
       missiles_remaining: missilesAboard(ship),
       ...tubes,
       own_birds_in_flight: this.missiles
@@ -3565,6 +3850,7 @@ export class Sim {
           cid: rec.letter,
           label,
           tier: 1,
+          ...(st.viaProbe ? { viaProbe: true } : {}),
           x: st.faint.x,
           y: st.faint.y,
           // no vector, no facing: a faint contact is a smudge
@@ -3574,6 +3860,7 @@ export class Sim {
           cid: rec.letter,
           label,
           tier: st.tier,
+          ...(st.viaProbe ? { viaProbe: true } : {}),
           x: enemy.x,
           y: enemy.y,
           vx: enemy.vx,
@@ -3643,6 +3930,9 @@ export class Sim {
       cid: r.cid,
       bearing: r.bearing,
       loud: r.loud,
+      // v5 §6: probe-relayed rumbles carry their chevron origin (the
+      // probe is the owner's own equipment — not a leak)
+      ...(r.probe !== undefined ? { probe: r.probe, ox: r.ox, oy: r.oy } : {}),
     }));
 
     return {
@@ -3679,6 +3969,7 @@ export class Sim {
           statsOf(ship).railguns > 0
             ? { slugs: ship.railSlugs, cooldownS: Math.ceil(ship.railCooldownS) }
             : null,
+        probes: ship.probesLeft,
         // revealS: OWNER-ONLY (drives the LIT countdown) — the fog tests pin
         // that it never appears in the enemy's snapshot of this ship
         ping: {
@@ -3719,6 +4010,23 @@ export class Sim {
         ...this.visibleEnemyDecoys(ship).map((d) => ({
           id: d.id, x: d.x, y: d.y, vx: d.vx, vy: d.vy, own: false,
         })),
+      ],
+      // v5 §6: own probes always (with their ordinal); enemy probes when
+      // detected (sig 25, LOS) — findable if hunted
+      probes: [
+        ...this.probesOf(id).map((pr) => ({
+          id: pr.id, idx: pr.idx, x: pr.x, y: pr.y, vx: pr.vx, vy: pr.vy,
+          burnS: Math.max(0, C.PROBE_BURN_S - pr.age), lifeS: Math.max(0, C.PROBE_LIFETIME_S - pr.age),
+          own: true,
+        })),
+        ...this.probes
+          .filter(
+            (pr) =>
+              pr.owner !== id &&
+              dist(ship.x, ship.y, pr.x, pr.y) <= this.detectionRange(C.PROBE_SIGNATURE, ship) &&
+              this.losClear(ship.x, ship.y, pr.x, pr.y)
+          )
+          .map((pr) => ({ id: pr.id, x: pr.x, y: pr.y, vx: pr.vx, vy: pr.vy, own: false })),
       ],
       // v5 §5: own slugs always; enemy slugs only inside the near-nothing
       // detection of a driveless projectile (you hear the SHOT, not the round)
@@ -3789,6 +4097,9 @@ export class Sim {
       })),
       slugs: this.slugs.map((sl) => ({
         id: sl.id, x: sl.x, y: sl.y, vx: sl.vx, vy: sl.vy, owner: sl.owner, own: sl.owner === "A",
+      })),
+      probes: this.probes.map((pr) => ({
+        id: pr.id, idx: pr.idx, x: pr.x, y: pr.y, vx: pr.vx, vy: pr.vy, owner: pr.owner, own: pr.owner === "A",
       })),
       fx: this.fx,
     };

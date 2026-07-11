@@ -841,18 +841,33 @@ function drawRumbles(you) {
   if (!you || rumbles.length === 0) return;
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
-  const [ox, oy] = worldToScreen(you.x, you.y);
+  const [sx0, sy0] = worldToScreen(you.x, you.y);
   const pad = 26; // chevron sits just inside the view edge
   for (const r of rumbles) {
+    // v5 §6: a probe-relayed rumble originates AT THE PROBE — its bearing
+    // ray is the second line the captain crosses for a fix
+    const [ox, oy] = r.ox !== undefined ? worldToScreen(r.ox, r.oy) : [sx0, sy0];
     const rad = ((r.bearing ?? 0) * Math.PI) / 180;
     const dx = Math.sin(rad);
     const dy = -Math.cos(rad); // screen y is down
-    // march from own ship to the view edge along the bearing
+    // march from the origin to the view edge along the bearing
     let t = Infinity;
     if (dx > 0) t = Math.min(t, (w - pad - ox) / dx);
     if (dx < 0) t = Math.min(t, (pad - ox) / dx);
     if (dy > 0) t = Math.min(t, (h - pad - oy) / dy);
     if (dy < 0) t = Math.min(t, (pad - oy) / dy);
+    if (r.ox !== undefined && Number.isFinite(t) && t > 40) {
+      // faint dashed ray from the probe along the heard bearing
+      ctx.save();
+      ctx.strokeStyle = "#8fa8bf";
+      ctx.globalAlpha = 0.3;
+      ctx.setLineDash([4, 6]);
+      ctx.beginPath();
+      ctx.moveTo(ox, oy);
+      ctx.lineTo(ox + dx * t, oy + dy * t);
+      ctx.stroke();
+      ctx.restore();
+    }
     if (!Number.isFinite(t) || t < 40) continue; // own ship at/off the edge
     const cx = ox + dx * t;
     const cy = oy + dy * t;
@@ -1087,6 +1102,31 @@ function interpolateById(listKey, id) {
 
 function drawOrdnance() {
   if (!state.lastSnap) return;
+
+  // v5 §6 probes: a small diamond with a sensor ring (own) or a bare
+  // diamond (detected enemy probe)
+  for (const pr of state.lastSnap.probes ?? []) {
+    const ent = interpolateById("probes", pr.id) ?? pr;
+    const [px, py] = worldToScreen(ent.x, ent.y);
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.rotate(Math.PI / 4);
+    ctx.strokeStyle = pr.own ? COLORS.own : COLORS.enemy;
+    ctx.lineWidth = 1.4;
+    ctx.strokeRect(-4, -4, 8, 8);
+    ctx.restore();
+    if (pr.own) {
+      ctx.strokeStyle = COLORS.own;
+      ctx.globalAlpha = 0.25 + 0.1 * Math.sin(performance.now() / 500);
+      ctx.beginPath();
+      ctx.arc(px, py, 14, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = COLORS.own;
+      ctx.font = "9px monospace";
+      ctx.fillText(`P${pr.idx ?? "?"}`, px + 10, py - 8);
+    }
+  }
 
   // v5 §5 rail slugs: a hot hypervelocity streak along the velocity vector
   for (const sl of state.lastSnap.slugs ?? []) {

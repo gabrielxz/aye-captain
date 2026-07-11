@@ -18,6 +18,7 @@
             "set_lock_target",
             "fire_missile",
             "fire_railgun",
+            "launch_probe",
             "reload_tubes",
             "deploy_decoy",
             "maneuver",
@@ -116,6 +117,15 @@
         { "mode": "solution", "target": "Bravo" },
         { "mode": "bearing", "bearing_degrees": 90 }
       ]
+    },
+
+    "launch_probe": {
+      "description": "Launch a sensor probe down a bearing (or straight out the nose if omitted). The probe burns hard for 20 s along that fixed line, then drifts for its ~3-minute life, RELAYING its own sensor picture back live: contacts it earns (reduced eyes, 60 km base) and rumbles it hears (full hearing) merge into the captain's map marked 'via probe'. All fog applies from the probe's position. Probes are findable and killable (PDCs, slugs, seekers). Supply is per-archetype and does NOT reload — corvettes carry 4, frigates 2, cruisers 1. Two bearings on one rumble (ship + probe) make a human triangulation — the XO never crosses them for you.",
+      "type": "object",
+      "properties": {
+        "bearing_degrees": { "type": "number", "description": "Launch bearing. Omitted = out the nose." }
+      },
+      "examples": [ {}, { "bearing_degrees": 90 } ]
     },
 
     "fire_missile": {
@@ -467,6 +477,12 @@
         ]
       },
       {
+        "captain": "Probe out, bearing zero nine zero",
+        "commands": [
+          { "verb": "launch_probe", "params": { "bearing_degrees": 90 }, "acknowledgement": "" }
+        ]
+      },
+      {
         "captain": "Guns free — if anything comes at us the PDCs handle it",
         "commands": [
           { "verb": "set_pdc", "params": { "posture": "free" }, "acknowledgement": "PDCs weapons-free." }
@@ -683,6 +699,7 @@
       "DRIFT vs VECTOR: any request naming the DRIFT ('drift marker', 'show me our drift', 'put our drift on the map') is the persistent overlay — set_overlay. Asking about the VECTOR or the direction of travel ('show me our vector', 'which way are we drifting', 'what's our vector') is a momentary look — show_vector. When in doubt: a request phrased as a STATE ('keep it up', 'leave it on', 'kill/drop it') is set_overlay; a QUESTION is show_vector.",
       "A plain 'fire missile' fires ONE tube (omit the tubes param). Only an explicit salvo ('fire everything', 'both tubes', 'full salvo') uses tubes [1,2].",
       "Blind fire (guidance='bearing') ONLY when the captain explicitly asks for unlocked/blind/bearing fire. A plain 'fire missile' with no lock stays a locked attempt and gets the server's rejection, which offers blind fire as the follow-up.",
+      "PROBE acks: leave the acknowledgement EMPTY — the ship speaks its own launch line. 'probe out'/'launch a probe (down) bearing X' = launch_probe. Probes are the tooling for rumble triangulation: if the captain wants a fix on a rumble, a probe off-axis gives the second bearing — suggest it only when asked how.",
       "RAILGUN acks: leave the acknowledgement EMPTY — the ship speaks its own stock line on fire ('Solution ready — firing.' / 'Slug away.'). 'put a slug on him/that solution' = fire_railgun solution; naming a bearing ('rail on 090') = bearing mode. The rail is a snapshot, not a duel-opener: remind the captain only when relevant that a thrusting target will dodge a solution."
     ]
   }

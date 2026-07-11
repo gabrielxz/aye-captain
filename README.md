@@ -96,6 +96,14 @@ be going somewhere — not both.
   mauling. The mounts are **sensor-slaved** — they can't shoot what your
   sensors can't see, so a ballistic torpedo out of a dust shadow may
   arrive with almost no warning.
+- **Probes**: fire-and-drift remote sensors ("probe out, bearing 090") —
+  a 20 s burn, then ~3 minutes of relay: contacts it earns (reduced eyes)
+  and rumbles it hears merge into your map marked "via probe", with the
+  chevron anchored at the probe. Two bearings on one rumble — yours and
+  the probe's — cross into a fix; plotting it is your job, not the XO's.
+  A relayed track can steer the helm and answer questions but never feeds
+  a missile lock. Probes are killable (PDCs, slugs, seekers) and don't
+  reload: corvettes carry 4, frigates 2, cruisers 1.
 - **Countermeasures**: 4 decoys — hotter than a cruising ship but not a
   hard burn, so the doctrine is **break the lock, throttle down, decoy**
   (an uplinked bird ignores decoys; you must orphan it first via rocks,

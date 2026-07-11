@@ -179,6 +179,9 @@ const STOCK_LINES = [
   "This boat doesn't mount a railgun, Captain.",
   "Rail slug connected.",
   "We just lost a decoy.",
+  // v5 §6: probes (launch/loss/spent lines carry ordinals and quantized
+  // bearings — bounded dynamic shapes, cached on first use)
+  "No probes left, Captain.",
 ];
 
 // Sequential on purpose: ElevenLabs free/low tiers have tight concurrency

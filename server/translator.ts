@@ -202,6 +202,14 @@ export function validateCommand(raw: unknown, nested = false): Command | null {
       if (typeof p.contact !== "string" || !CONTACT_REF.test(p.contact)) return null;
       return out({ contact: p.contact });
     }
+    case "launch_probe": {
+      const clean: Record<string, unknown> = {};
+      if (p.bearing_degrees !== undefined) {
+        if (typeof p.bearing_degrees !== "number" || !Number.isFinite(p.bearing_degrees)) return null;
+        clean.bearing_degrees = p.bearing_degrees;
+      }
+      return out(clean);
+    }
     case "fire_railgun": {
       const mode = p.mode === "bearing" ? "bearing" : "solution";
       const clean: Record<string, unknown> = { mode };

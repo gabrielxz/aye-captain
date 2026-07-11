@@ -130,6 +130,23 @@ export const RAIL_SLUG_LIFETIME_S = 60;
 // what you hear). Same near-nothing signature as a coasting torpedo.
 export const RAIL_SLUG_SIG = 8;
 
+// v5 §6: sensor probes — remote ears (and reduced eyes). A probe is
+// implementation-wise a decoy with sensors: burn-and-drift ballistics,
+// findable if hunted (PDCs engage it, slugs hit it, seekers can grab it),
+// and it RELAYS its picture to the owning captain live, merged into their
+// map with "via probe" provenance. All fog rules apply FROM THE PROBE'S
+// POSITION (it can be LOS-blocked; it hears through terrain). The design
+// payoff: a rumble heard by your ship AND your probe = two bearing
+// chevrons = a human-triangulated fix — the XO still never triangulates
+// (deliberately human skill, v4.5 law). Probe-relayed tiers deliberately
+// do NOT feed missile locks (the information ladder: probes FIND ships;
+// locks need your own sensors). Counts per archetype; no reloads.
+export const PROBE_ACCEL_MPS2 = 150; // along the launch bearing, then drifts
+export const PROBE_BURN_S = 20;
+export const PROBE_LIFETIME_S = 180;
+export const PROBE_SENSOR_BASE_M = 60000; // reduced eyes; FULL hearing (same multiplier)
+export const PROBE_SIGNATURE = 25; // findable if hunted
+
 // Contact tiers, as fractions of the computed detection range:
 export const TIER_FAINT_FRAC = 1.0; // approximate position only, no vector
 export const TIER_TRACK_FRAC = 0.6; // true position + velocity, continuous
