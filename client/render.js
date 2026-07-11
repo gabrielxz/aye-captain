@@ -21,6 +21,8 @@ const COLORS = {
 const SHIP_DESIGN = "interceptor";
 const SHIP_LEN_M = 60; // true hull length; far below one pixel at map scale
 const MIN_SHIP_PX = 22; // legibility clamp: never render smaller than this
+const VECTOR_SECONDS = 10; // the vector line = this much travel at current velocity
+const MIN_VECTOR_PX = 34; // legibility floor; clears the 22px hull clamp
 
 // ---------- sprite loading (SVG text -> tinted blob -> Image) ----------
 
@@ -233,7 +235,14 @@ function drawVectorOverlay(you) {
   if (speed < 1) return;
 
   const [sx, sy] = worldToScreen(you.x, you.y);
-  const [ex, ey] = worldToScreen(you.x + vx * 10, you.y + vy * 10); // 10 s of travel
+  // screen-space travel direction (world north = screen up)
+  const dx = vx / speed;
+  const dy = -vy / speed;
+  // below the floor the line is a direction indicator, not a projection:
+  // at that speed "where I'll be in 10 s" is approximately right here anyway
+  const lenPx = Math.max(MIN_VECTOR_PX, speed * VECTOR_SECONDS * camera.zoom);
+  const ex = sx + dx * lenPx;
+  const ey = sy + dy * lenPx;
   ctx.beginPath();
   ctx.moveTo(sx, sy);
   ctx.lineTo(ex, ey);
@@ -244,7 +253,7 @@ function drawVectorOverlay(you) {
   ctx.stroke();
   ctx.setLineDash([]);
   // arrowhead
-  const ang = Math.atan2(ey - sy, ex - sx);
+  const ang = Math.atan2(dy, dx);
   ctx.beginPath();
   ctx.moveTo(ex, ey);
   ctx.lineTo(ex - 8 * Math.cos(ang - 0.4), ey - 8 * Math.sin(ang - 0.4));
@@ -253,7 +262,7 @@ function drawVectorOverlay(you) {
   ctx.fillStyle = COLORS.own;
   ctx.fill();
   ctx.font = "10px monospace";
-  ctx.fillText(`${Math.round(speed)} m/s`, ex + 8, ey);
+  ctx.fillText(`+${VECTOR_SECONDS}s · ${Math.round(speed)} m/s`, ex + 8, ey);
   ctx.globalAlpha = 1;
 
   // projected stop point for an immediate full-stop maneuver: coast through
@@ -271,16 +280,25 @@ function drawVectorOverlay(you) {
       you.x + (vx / speed) * stopDist,
       you.y + (vy / speed) * stopDist
     );
+    // stop glyph: a dashed bracket straddling the velocity line, opening
+    // toward the ship — a wall you come to rest against, not a contact
+    const nx = -dy; // perpendicular to travel, screen space
+    const ny = dx;
     ctx.beginPath();
-    ctx.arc(px, py, 5, 0, Math.PI * 2);
+    ctx.moveTo(px + nx * 7 - dx * 4, py + ny * 7 - dy * 4);
+    ctx.lineTo(px + nx * 7, py + ny * 7);
+    ctx.lineTo(px - nx * 7, py - ny * 7);
+    ctx.lineTo(px - nx * 7 - dx * 4, py - ny * 7 - dy * 4);
     ctx.strokeStyle = COLORS.own;
     ctx.globalAlpha = 0.8;
-    ctx.setLineDash([2, 3]);
+    ctx.setLineDash([3, 3]);
     ctx.stroke();
     ctx.setLineDash([]);
+    const km = stopDist / 1000;
+    const kmLabel = km < 10 ? `${km.toFixed(1)} km` : `${Math.round(km)} km`;
     ctx.font = "10px monospace";
     ctx.fillStyle = COLORS.own;
-    ctx.fillText("stop", px + 8, py + 3);
+    ctx.fillText(`all stop · ${kmLabel}`, px + 10, py + 3);
     ctx.globalAlpha = 1;
   }
 }
