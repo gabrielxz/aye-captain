@@ -208,6 +208,7 @@ function soundFromSnapshot(snap) {
 
   audio.setThrust(you.thrustOut ?? you.thrust);
   audio.setWarning(you.painted ?? "none");
+  audio.setDustHiss(!!you.inDust);
   // hearing: the loudest rumble drives the low ambience (0 = silence)
   audio.setRumble(Math.max(0, ...(snap.rumbles ?? []).map((r) => r.loud ?? 0)));
 

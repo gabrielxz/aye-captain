@@ -284,6 +284,28 @@ export function setRumble(level) {
   rumbleNodes.g.gain.linearRampToValueAtTime(lvl * 0.11, ctx.currentTime + 0.6);
 }
 
+// v4.7 §4.3: dust immersion — a soft filtered-noise wash while inside a
+// cloud. Low on the SFX bus; the state speaks, not the XO.
+let dustNodes = null;
+export function setDustHiss(on) {
+  if (!ctx) return;
+  if (!dustNodes) {
+    const src = ctx.createBufferSource();
+    src.buffer = noiseBuffer();
+    src.loop = true;
+    const f = ctx.createBiquadFilter();
+    f.type = "bandpass";
+    f.frequency.value = 900;
+    f.Q.value = 0.5;
+    const g = ctx.createGain();
+    g.gain.value = 0;
+    src.connect(f).connect(g).connect(sfxBus);
+    src.start();
+    dustNodes = { g };
+  }
+  dustNodes.g.gain.linearRampToValueAtTime(on ? 0.045 : 0, ctx.currentTime + 0.8);
+}
+
 // Lock warning (RWR): "acquiring" = rising two-tone; "locked" = continuous
 // urgent pulse. The single most important sound in the game.
 let warnState = "none";
@@ -340,6 +362,7 @@ export function stopContinuous() {
   proxDist = null;
   if (thrustNodes && ctx) thrustNodes.g.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.4);
   if (rumbleNodes && ctx) rumbleNodes.g.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.4);
+  if (dustNodes && ctx) dustNodes.g.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.4);
 }
 
 // ---------- ship-AI speech queue ----------

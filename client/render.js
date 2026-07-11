@@ -753,8 +753,33 @@ function draw() {
   drawRumbles(you);
   drawDriftMarker(you);
   drawVectorOverlay(you);
+  drawDustShroud();
   drawCursorReadout(you);
   drawInset(you);
+}
+
+// v4.7 §4.3: being inside a dust cloud is a STATE, not a voice line —
+// a wash + vignette + light grain over the whole scene while blind.
+function drawDustShroud() {
+  if (!state.lastSnap?.you?.inDust) return;
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  // desaturating wash
+  ctx.fillStyle = "rgba(96, 112, 128, 0.13)";
+  ctx.fillRect(0, 0, w, h);
+  // vignette: clear center, closing in at the edges
+  const vg = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.3, w / 2, h / 2, Math.max(w, h) * 0.72);
+  vg.addColorStop(0, "rgba(20, 26, 34, 0)");
+  vg.addColorStop(1, "rgba(20, 26, 34, 0.55)");
+  ctx.fillStyle = vg;
+  ctx.fillRect(0, 0, w, h);
+  // light grain, redrawn per frame
+  ctx.fillStyle = "rgba(159, 180, 200, 0.35)";
+  for (let i = 0; i < 40; i++) {
+    ctx.globalAlpha = 0.08 + Math.random() * 0.2;
+    ctx.fillRect(Math.random() * w, Math.random() * h, 1, 1);
+  }
+  ctx.globalAlpha = 1;
 }
 
 // The captain's plotting table: bearing from own ship to the cursor. Makes
