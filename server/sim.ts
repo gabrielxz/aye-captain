@@ -219,7 +219,9 @@ export type Fx =
 export type SimEvent =
   | { kind: "reject"; ship: ShipId; verb: string; reason: string }
   | { kind: "ack"; ship: ShipId; text: string }
-  | { kind: "notice"; ship: ShipId | "all"; text: string; alert?: boolean }
+  // speak: optional TTS-safe variant (quantized digit-word bearings, no
+  // abbreviations); the transcript displays `text`, the voice says `speak`
+  | { kind: "notice"; ship: ShipId | "all"; text: string; alert?: boolean; speak?: string }
   | { kind: "ui"; ship: ShipId; what: "show_vector" } // client-side overlay triggers
   // persistent client-side overlay toggles (v4.7): pure ui, no sim state.
   // v5 adds ELEMENT values (probe markers, designations), not new events.
@@ -278,6 +280,23 @@ export function segmentMinDist(
 
 export function fmtBearing(deg: number): string {
   return String(Math.round(norm360(deg)) % 360).padStart(3, "0");
+}
+
+// Spoken form of a bearing: 10°-quantized digit words ("three three zero").
+// Two problems, one fix (v4.7.1): ElevenLabs reads numerals like "331" and
+// trailing "km." unpredictably (playtest: "totally garbled"), and every
+// unique numeral string is a fresh synthesis — digit words at 10° cap each
+// line shape at 36 cached variants (the v4.6 rumble lesson, applied to the
+// rest of the XO's bearing calls). Display text keeps the exact numbers;
+// this is only what the voice says.
+const DIGIT_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
+export function spokenBearing(deg: number): string {
+  const q = (Math.round(norm360(deg) / 10) * 10) % 360;
+  return String(q)
+    .padStart(3, "0")
+    .split("")
+    .map((d) => DIGIT_WORDS[Number(d)])
+    .join(" ");
 }
 
 const TUBE_NAMES = ["one", "two", "three", "four"];
@@ -550,6 +569,7 @@ export class Sim {
             kind: "notice",
             ship: enemy.id,
             text: `Active ping — he's lit himself up. Bearing ${fmtBearing(bearingTo(enemy.x, enemy.y, ship.x, ship.y))}.`,
+            speak: `Active ping — he's lit himself up. Bearing ${spokenBearing(bearingTo(enemy.x, enemy.y, ship.x, ship.y))}.`,
             alert: true,
           });
         }
@@ -760,6 +780,7 @@ export class Sim {
         kind: "notice",
         ship: enemy.id,
         text: `Launch flash detected — bearing ${fmtBearing(bearingTo(enemy.x, enemy.y, ship.x, ship.y))}!`,
+        speak: `Launch flash detected — bearing ${spokenBearing(bearingTo(enemy.x, enemy.y, ship.x, ship.y))}!`,
         alert: true,
       });
     }
@@ -922,7 +943,11 @@ export class Sim {
         deadMissiles.add(m.id);
         this.fx.push({ type: "boom", x: m.x, y: m.y });
         events.push({ kind: "notice", ship: ship.id, text: "PDC splash — missile destroyed." });
-        events.push({ kind: "notice", ship: m.owner, text: "Their point defense got our missile." });
+        // the shooter only learns the bird's fate if they could watch it die
+        const shooter = this.ships.get(m.owner);
+        if (shooter && this.canObserve(shooter, m.x, m.y)) {
+          events.push({ kind: "notice", ship: m.owner, text: "Their point defense got our missile." });
+        }
       }
     }
 
@@ -984,6 +1009,19 @@ export class Sim {
     ship.pdcAmmoTier = tier;
   }
 
+  // Could this ship have WATCHED something happen at (x, y)? Same rule the
+  // explosion fx use in snapshotFor (SENSOR_BASE_M + LOS). XO reports about
+  // our own distant ordnance are gated on this: an autonomous bird is
+  // one-way (HANDOFF-v4.1 §3) — if we couldn't see it die, nobody tells us
+  // it died. (An uplinked bird's death is near a locked target, which lock
+  // rules already require us to see — the gate passes there by construction.)
+  private canObserve(viewer: Ship, x: number, y: number): boolean {
+    return (
+      dist(viewer.x, viewer.y, x, y) <= C.SENSOR_BASE_M &&
+      this.losClear(viewer.x, viewer.y, x, y)
+    );
+  }
+
   private damageShip(
     target: Ship,
     amount: number,
@@ -993,8 +1031,10 @@ export class Sim {
     if (this.winner) return;
     target.hull = Math.max(0, target.hull - amount);
     const attackerId: ShipId = target.id === "A" ? "B" : "A";
-    if (source !== "rock") {
-      // terrain kills credit the survivor, but nobody "scored" the hit
+    const attacker = this.ships.get(attackerId);
+    if (source !== "rock" && attacker && this.canObserve(attacker, target.x, target.y)) {
+      // terrain kills credit the survivor, but nobody "scored" the hit;
+      // and a strike we couldn't see is a strike we don't get told about
       events.push({
         kind: "notice",
         ship: attackerId,
@@ -1110,6 +1150,7 @@ export class Sim {
           kind: "notice",
           ship: ship.id,
           text: `Drive rumble, bearing ${spoken(r.bearing)}.`,
+          speak: `Drive rumble, bearing ${spokenBearing(r.bearing)}.`,
         });
       } else if (
         st.live &&
@@ -1122,6 +1163,7 @@ export class Sim {
           kind: "notice",
           ship: ship.id,
           text: `That rumble's drifted to ${spoken(r.bearing)}.`,
+          speak: `That rumble's drifted to ${spokenBearing(r.bearing)}.`,
         });
       } else if (!st.live) {
         st.live = true; // back within cooldown: resume silently
@@ -1608,8 +1650,15 @@ export class Sim {
           deadMissiles.add(m.id);
           deadDecoys.add(d.id);
           this.fx.push({ type: "boom", x: m.x, y: m.y });
+          // the decoy is OUR equipment — its owner always learns it's off
+          // the board. The missile's owner only learns what the bird ate
+          // if they could watch the intercept (else "it was a decoy" hands
+          // an ID-tier fact through fog to a fire-and-forget shooter).
           events.push({ kind: "notice", ship: d.owner, text: "Their missile took the decoy." });
-          events.push({ kind: "notice", ship: m.owner, text: "Missile detonated — it was a decoy." });
+          const shooter2 = this.ships.get(m.owner);
+          if (shooter2 && this.canObserve(shooter2, m.x, m.y)) {
+            events.push({ kind: "notice", ship: m.owner, text: "Missile detonated — it was a decoy." });
+          }
           break;
         }
       }
@@ -1722,6 +1771,7 @@ export class Sim {
           kind: "notice",
           ship: ship.id,
           text: `Missile inbound — bearing ${fmtBearing(brg)}!`,
+          speak: `Missile inbound — bearing ${spokenBearing(brg)}!`,
           alert: true,
         });
       }
@@ -1833,11 +1883,16 @@ export class Sim {
     }
 
     if (tier === was || ship.isDrone) return;
-    const brg = fmtBearing(bearingTo(ship.x, ship.y, enemy.x, enemy.y));
+    const brgDeg = bearingTo(ship.x, ship.y, enemy.x, enemy.y);
+    const brg = fmtBearing(brgDeg);
     const rangeKm = Math.round(dist(ship.x, ship.y, enemy.x, enemy.y) / 1000);
+    // spoken variants: bearing only, digit words — ranges and "km" garble
+    // in TTS and multiply the cache (bearing is the speakable currency,
+    // v4.3 §3; the exact numbers stay in the transcript text)
     if (tier === 0) {
       const lk = ship.lastKnownEnemy;
-      const lkBrg = lk ? fmtBearing(bearingTo(ship.x, ship.y, lk.x, lk.y)) : brg;
+      const lkDeg = lk ? bearingTo(ship.x, ship.y, lk.x, lk.y) : brgDeg;
+      const lkBrg = fmtBearing(lkDeg);
       events.push({
         kind: "notice",
         ship: ship.id,
@@ -1845,6 +1900,10 @@ export class Sim {
           was >= 2
             ? `Track lost — last known bearing ${lkBrg}.`
             : `Contact faded — last known bearing ${lkBrg}.`,
+        speak:
+          was >= 2
+            ? `Track lost — last known bearing ${spokenBearing(lkDeg)}.`
+            : `Contact faded — last known bearing ${spokenBearing(lkDeg)}.`,
         alert: was >= 2,
       });
     } else if (tier === 1) {
@@ -1855,6 +1914,9 @@ export class Sim {
           was === 0
             ? `Faint contact — bearing ${brg}, range approximately ${rangeKm} km.`
             : "Losing resolution — contact's gone faint.",
+        ...(was === 0
+          ? { speak: `Faint contact — bearing ${spokenBearing(brgDeg)}.` }
+          : {}),
       });
     } else if (tier === 2) {
       events.push({
@@ -1864,6 +1926,9 @@ export class Sim {
           was < 2
             ? `Contact firming up — I have a track. Bearing ${brg}, range ${rangeKm} km.`
             : "Lost the detail readout — still holding the track.",
+        ...(was < 2
+          ? { speak: `Contact firming up — I have a track. Bearing ${spokenBearing(brgDeg)}.` }
+          : {}),
       });
     } else {
       events.push({

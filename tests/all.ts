@@ -20,3 +20,4 @@ import "./hearing.test.js";
 import "./ping.test.js";
 import "./overlay.test.js";
 import "./pingfx.test.js";
+import "./ordnance-fog.test.js";

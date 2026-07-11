@@ -56,7 +56,9 @@ be going somewhere — not both.
   weak seeker (30° cone — blind fire needs a good bearing, not a gesture).
   You can also **fire blind** down a bearing with no lock at all ("put a
   torpedo down bearing 220") — a flushing tool for dust clouds and rock
-  shadows. Torpedoes accelerate to 2.4 km/s over ~16 s (25 s of fuel) then
+  shadows. Autonomous birds are fire-and-forget in the honest sense: no
+  telemetry — you only learn a bird's fate (splashed by PDCs, ate a decoy,
+  struck home) if your own sensors could watch it happen. Torpedoes accelerate to 2.4 km/s over ~16 s (25 s of fuel) then
   coast ballistic — nearly invisible, blind to maneuver, still lethal on
   their line. The fuse arms 3 km from the launch point: inside that,
   standoff is part of the weapon and your bird duds past. Tubes reload in

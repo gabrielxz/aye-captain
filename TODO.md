@@ -1,5 +1,25 @@
 # TODO — next steps
 
+## v4.7.1 — playtest patch (reports 2026-07-11, same day as v4.7)
+
+- **"XO said 'kilometer' weird / garbled the end of the sentence"**: the
+  faint/track contact lines spoke exact numerals + "km" — ElevenLabs
+  garbles them, and every unique string was a fresh synthesis (the v4.6
+  furnace, still burning in four other line shapes). Fix: notices carry a
+  `speak` variant — bearings as 10°-quantized digit words ("three three
+  zero"), no ranges/"km" in the voice, exact numbers stay in the
+  transcript. Applied to contact tiers, ping scream, launch flash,
+  missile inbound, rumbles.
+- **"Their PDCs got our missile — should I know that?"**: no. Autonomous
+  birds are one-way (v4.1 §3); the code told the owner anyway. All
+  own-ordnance fate reports (PDC kill, ate-a-decoy, strike call) now gate
+  on `canObserve` (SENSOR_BASE_M + LOS — the explosion-fx rule). Decoy
+  owners still always learn (own equipment). tests/ordnance-fog.test.ts.
+- **"Weren't rocks supposed to rotate?"**: they do (v4.7 §4.4) — at the
+  spec'd ±0.6°/s max for the smallest rocks (a full turn takes 10+ min),
+  slower for big ones. Working as specified; visibility knob available if
+  wanted.
+
 ## v4.7 "Sensation" (HANDOFF-v4.7.md) — DEPLOYED 2026-07-11
 
 The feel release before v5: §1 vector overlay repair (34px floor, labeled

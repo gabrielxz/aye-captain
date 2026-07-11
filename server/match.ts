@@ -337,7 +337,7 @@ export class Match {
     } else if (ev.kind === "notice") {
       const targets: ShipId[] = ev.ship === "all" ? ["A", "B"] : [ev.ship];
       for (const id of targets) {
-        this.sendTranscript(id, "sys", ev.text, ev.alert);
+        this.sendTranscript(id, "sys", ev.text, ev.alert, ev.speak);
       }
     }
   }
@@ -350,7 +350,10 @@ export class Match {
     }
   }
 
-  sendTranscript(id: ShipId, who: string, text: string, alert = false): void {
+  // speakText (v4.7.1): optional TTS-safe variant of `text` — quantized
+  // digit-word bearings, no "km" — so the voice never garbles numerals and
+  // the synthesis cache stays bounded. The transcript always shows `text`.
+  sendTranscript(id: ShipId, who: string, text: string, alert = false, speakText?: string): void {
     const ws = this.sockets.get(id);
     if (ws && ws.readyState === ws.OPEN) {
       // Ship-AI lines get a voice; skip bookkeeping noise (standing-order
@@ -359,7 +362,7 @@ export class Match {
         (who === "xo" || who === "xo-note" || who === "sys") &&
         !text.startsWith("Standing order '") &&
         !text.startsWith("direct");
-      const speech = speak ? ensureSpeech(text) : null;
+      const speech = speak ? ensureSpeech(speakText ?? text) : null;
       ws.send(JSON.stringify({ type: "transcript", who, text, alert, ...(speech ? { speech } : {}) }));
     }
   }

@@ -190,6 +190,17 @@ Note: on this machine's rootless Docker, `-p` port publishing doesn't route
   bearings made every announcement a unique ElevenLabs synthesis and
   drained the whole TTS quota in a day. Dynamic XO lines with unbounded
   numeric content are a quota hazard: quantize or template them.
+- v4.7.1: XO reports about OUR ordnance are gated on `canObserve` (same
+  SENSOR_BASE_M + LOS rule as explosion fx): "their PDCs got our missile",
+  "it was a decoy", "missile strike on the enemy ship" only when the owner
+  could watch it happen — autonomous birds are one-way (v4.1 §3) and an
+  unseen bird just never phones home. Exception: the DECOY owner always
+  learns their decoy died (own equipment). Playtest report 2026-07-11.
+- v4.7.1: notices may carry `speak` — a TTS-safe variant the voice says
+  while the transcript shows `text`. Bearings speak as 10°-quantized digit
+  words ("three three zero"); ranges and "km" never reach the voice
+  (ElevenLabs garbled "143 km."; also each numeral string was a fresh
+  synthesis — the v4.6 furnace lesson extended to every bearing call).
 - v4.4: relative turns are REAL turns — a `turn` heading goal carries
   signed remaining degrees, so "starboard 270" goes starboard the long way
   and a 360 pirouette actually happens (they used to collapse to an
