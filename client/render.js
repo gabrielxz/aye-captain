@@ -10,11 +10,16 @@ const COLORS = {
   grid: "#0d1520",
   zone: "#2a4a5a",
   own: "#2dd4bf",
+  ally: "#6ea8fe", // v5 §8: teammates (transponders)
   enemy: "#fc8181",
   ghost: "#4a5a6a",
   rings: "#3d5468",
   star: "#9fb4c8",
 };
+// v5 §8: FFA spectator identity tints, one per seat (team colors override
+// in Teams mode)
+const SEAT_TINTS = ["#2dd4bf", "#fc8181", "#f6ad55", "#6ea8fe", "#d6bcfa", "#68d391", "#f687b3", "#e2e8f0"];
+const TEAM_TINTS = { red: "#e07a7a", blue: "#7ab0e0" };
 
 // v5 §4: shape = archetype (tint = player/side). The three authored
 // designs map straight across; SHIP_DESIGN remains the UNKNOWN-contact
@@ -43,6 +48,7 @@ const SHAKE_DECAY_MS = 320;
 
 const TINTS = {
   own: { HULL: "#0e3f3a", ACCENT: "#2dd4bf" },
+  ally: { HULL: "#14283f", ACCENT: "#6ea8fe" },
   enemy: { HULL: "#3f1518", ACCENT: "#fc8181" },
   ghost: { HULL: "#141c26", ACCENT: "#4a5a6a" },
 };
@@ -774,6 +780,7 @@ function draw() {
     });
   }
 
+  drawAllies();
   drawContacts();
   drawRumbles(you);
   drawCommsSpikes(you);
@@ -937,8 +944,18 @@ function drawRumbles(you) {
   }
 }
 
-// Spectator (v4.2): both ships in full detail — A in own-tint, B in enemy
-// tint, matching the ordnance coloring the server pre-baked into `own`.
+// v5 §8: a spectator tint per ship — team color in Teams mode, a seat
+// palette entry in FFA (shape stays the archetype).
+function spectatorTint(shipId) {
+  const ships = state.lastSnap?.ships ?? [];
+  const idx = ships.findIndex((s) => s.id === shipId);
+  const s = ships[idx];
+  if (s?.team && TEAM_TINTS[s.team]) return TEAM_TINTS[s.team];
+  return SEAT_TINTS[(idx + SEAT_TINTS.length) % SEAT_TINTS.length];
+}
+
+// Spectator (v4.2): all ships in full detail — archetype shapes with a
+// per-ship identity ring + callsign in the seat/team tint.
 function drawSpectatorShips() {
   for (const s of state.lastSnap.ships ?? []) {
     const ent = interpolate((sn) => (sn.ships ?? []).find((k) => k.id === s.id) ?? null);
@@ -950,9 +967,36 @@ function drawSpectatorShips() {
       hullMax: s.hullMax ?? 100,
     });
     const [sx, sy] = worldToScreen(ent.x, ent.y);
-    ctx.fillStyle = s.id === "A" ? COLORS.own : COLORS.enemy;
+    const tint = spectatorTint(s.id);
+    ctx.strokeStyle = tint;
+    ctx.globalAlpha = 0.6;
+    ctx.beginPath();
+    ctx.arc(sx, sy, MIN_SHIP_PX / 2 + 4, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = tint;
     ctx.font = "10px monospace";
-    ctx.fillText(s.callsign ?? s.id, sx + MIN_SHIP_PX / 2 + 5, sy + 3);
+    ctx.fillText(s.callsign ?? s.id, sx + MIN_SHIP_PX / 2 + 6, sy + 3);
+  }
+}
+
+// v5 §8 transponders: teammates render at full state — real archetype
+// shape, real plume (their thrust is legitimately known), callsign label.
+function drawAllies() {
+  const snap = state.lastSnap;
+  if (!snap) return;
+  for (const t of snap.allies ?? []) {
+    const ent = interpolate((s) => (s.allies ?? []).find((k) => k.id === t.id) ?? null) ?? t;
+    drawShip(ent, "ally", {
+      thrust: t.thrustOut ?? 0,
+      hull: t.hull,
+      hullMax: t.hullMax ?? 100,
+      archetype: t.archetype ?? null,
+    });
+    const [sx, sy] = worldToScreen(ent.x, ent.y);
+    ctx.fillStyle = COLORS.ally;
+    ctx.font = "10px monospace";
+    ctx.fillText(t.callsign ?? "", sx + 14, sy - 10);
   }
 }
 
@@ -1196,7 +1240,9 @@ function drawOrdnance() {
     const ent = interpolateById("missiles", m.id);
     if (!ent) continue;
     const [sx, sy] = worldToScreen(ent.x, ent.y);
-    const color = m.own ? COLORS.own : COLORS.enemy;
+    const color = state.lastSnap.spectator && m.owner !== undefined
+      ? spectatorTint(m.owner)
+      : m.own ? COLORS.own : m.ally ? COLORS.ally : COLORS.enemy;
     // engine trail only while burning — a coasting torpedo is a bare dot
     if (m.burning !== false) {
       const speed = Math.hypot(m.vx, m.vy) || 1;

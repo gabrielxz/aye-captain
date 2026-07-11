@@ -189,6 +189,8 @@ const STOCK_LINES = [
   "No track on them — I can't point the dish, Captain.",
   "Nothing to send, Captain.",
   "Tightbeam to whom, Captain?",
+  // v5 §8: teams
+  "They're squawking friendly, Captain.",
 ];
 
 // Sequential on purpose: ElevenLabs free/low tiers have tight concurrency

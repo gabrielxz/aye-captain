@@ -111,6 +111,12 @@ be going somewhere — not both.
   (and rumbles like a real drive) for a full minute — fake contacts are a
   strategy. Plus: burning away at range genuinely outruns a torpedo's tank
   now, or dodge late to waste its fuel.
+- **Teams** (room option): teammates share transponders — always on each
+  other's maps at full state, in friendly blue. NOTHING else is shared: no
+  fused sensor picture, no rumbles, no probe feeds — intel moves by
+  tightbeam, on purpose. Guided weapons check IFF (locks, seekers, prox
+  fuses, and PDCs all ignore friendlies) — but rail slugs and collisions
+  check nothing. Physics doesn't read transponders.
 - **Comms**: talk to other captains. "Broadcast: anyone want to team up on
   the cruiser?" reaches everyone — and flares a comms spike: every captain
   gets your bearing AND your callsign for 5 s (voiceprint; a broadcast is

@@ -278,6 +278,9 @@ export interface Missile {
   // with several hostiles "the enemy" is no longer derivable from owner).
   // null for blind-fired birds.
   target: ShipId | null;
+  // v5 §8 IFF: the launcher's team, stamped at launch (the transponder
+  // outlives its owner — a dead teammate's bird still knows its friends)
+  team: string | null;
   cmdBearing: number | null; // blind fire: absolute bearing to steer onto
   // lock: what the seeker is steering at right now (autonomous only; an
   // uplinked bird's target is the mother ship's track)
@@ -291,6 +294,7 @@ export interface Missile {
 export interface Decoy {
   id: number;
   owner: ShipId;
+  team: string | null; // v5 §8 IFF stamp
   x: number;
   y: number;
   vx: number;
@@ -320,6 +324,7 @@ export interface Slug {
 export interface Probe {
   id: number;
   owner: ShipId;
+  team: string | null; // v5 §8 IFF stamp
   idx: number; // 1-based per owner: "probe two"
   bearing: number; // launch bearing; the burn never steers
   x: number;
@@ -675,9 +680,34 @@ export class Sim {
     return this.probes.filter((pr) => pr.owner === id);
   }
 
+  // v5 §8 IFF for GUIDED systems: same owner or same stamped team. Rail
+  // slugs and collisions deliberately never consult this — physics doesn't
+  // read transponders.
+  private sameSide(
+    aOwner: ShipId,
+    aTeam: string | null,
+    bOwner: ShipId,
+    bTeam: string | null
+  ): boolean {
+    // != null (not !==): hand-built test ordnance may omit the stamp, and
+    // undefined === undefined must not read as "same team"
+    return aOwner === bOwner || (aTeam != null && aTeam === bTeam);
+  }
+
   // v5 §2 hostility: everyone in FFA (team null); teammates never.
   isHostile(a: Ship, b: Ship): boolean {
     return a.id !== b.id && (a.team === null || b.team === null || a.team !== b.team);
+  }
+
+  // v5 §8 transponders: teammates are permanently on each other's maps at
+  // full state. NOTHING else is shared — no fused contacts, no rumbles,
+  // no probe feeds; intel moves by TALKING (deliberate and load-bearing).
+  alliesOf(ship: Ship): Ship[] {
+    const out: Ship[] = [];
+    for (const s of this.ships.values()) {
+      if (s.id !== ship.id && !this.isHostile(ship, s)) out.push(s);
+    }
+    return out;
   }
 
   hostilesOf(ship: Ship): Ship[] {
@@ -757,6 +787,13 @@ export class Sim {
     for (const t of book.tombstones) {
       if (t.letter.toLowerCase() === norm) return `t:${t.letter}`;
     }
+    // v5 §8: teammates resolve by callsign (transponders — always known)
+    const viewer = this.ships.get(viewerId);
+    if (viewer) {
+      for (const t of this.alliesOf(viewer)) {
+        if (t.callsign.toLowerCase() === norm) return `a${t.id}`;
+      }
+    }
     return null;
   }
 
@@ -771,6 +808,11 @@ export class Sim {
     if (key.startsWith("t:")) {
       const t = book?.tombstones.find((k) => `t:${k.letter}` === key);
       return t ? { x: t.lastKnown.x, y: t.lastKnown.y, live: false } : null;
+    }
+    if (key.startsWith("a")) {
+      // a teammate: transponder truth, always live (v5 §8)
+      const t = this.ships.get(key.slice(1));
+      return t ? { x: t.x, y: t.y, live: true } : null;
     }
     const rec = book?.records.get(key);
     if (!rec) return null;
@@ -963,6 +1005,7 @@ export class Sim {
         if (!key || key.startsWith("t:")) {
           return "No contact by that name on the board, Captain.";
         }
+        if (key.startsWith("a")) return "They're squawking friendly, Captain.";
         ship.lockDesignation = key;
         const shipTarget = key.startsWith("s") ? key.slice(1) : null;
         if (ship.lock.target !== shipTarget || shipTarget === null) {
@@ -995,6 +1038,7 @@ export class Sim {
           if (ref) {
             const key = this.resolveContactRef(ship.id, ref);
             if (!key || key.startsWith("t:")) return "No contact by that name on the board, Captain.";
+            if (key.startsWith("a")) return "They're squawking friendly, Captain.";
             if (key.startsWith("s")) {
               const t = this.ships.get(key.slice(1));
               if (t && this.contactOn(ship.id, t.id).tier >= 2) tgt = t;
@@ -1064,6 +1108,7 @@ export class Sim {
         this.probes.push({
           id: this.nextId++,
           owner: ship.id,
+          team: ship.team,
           idx: ship.probeCounter,
           bearing: brg,
           x: ship.x,
@@ -1255,6 +1300,7 @@ export class Sim {
         this.decoys.push({
           id: this.nextId++,
           owner: ship.id,
+          team: ship.team,
           x: ship.x,
           y: ship.y,
           vx: ship.vx + Math.cos(driftAngle) * C.DECOY_DRIFT_MPS,
@@ -1353,6 +1399,7 @@ export class Sim {
     this.missiles.push({
       id: this.nextId++,
       owner: ship.id,
+      team: ship.team,
       x: ship.x,
       y: ship.y,
       prevX: ship.x,
@@ -1552,7 +1599,8 @@ export class Sim {
     // detects (signature detection range + LOS). A ballistic torpedo
     // arriving from sensor shadow may never be engaged. Intended.
     for (const m of this.missiles) {
-      if (m.owner === ship.id || deadMissiles.has(m.id)) continue;
+      // v5 §8 IFF: the mounts ignore friendly ordnance
+      if (this.sameSide(ship.id, ship.team, m.owner, m.team) || deadMissiles.has(m.id)) continue;
       const range = dist(ship.x, ship.y, m.x, m.y);
       if (range > C.PDC_RANGE_M) continue;
       if (range > this.detectionRange(this.missileSignature(m), ship)) continue;
@@ -1575,7 +1623,7 @@ export class Sim {
     // sensor-slaved (probe sig ${C.PROBE_SIGNATURE} is visible far beyond
     // PDC range, so in practice: in envelope = engaged)
     for (const pr of this.probes) {
-      if (pr.owner === ship.id || deadProbes.has(pr.id)) continue;
+      if (this.sameSide(ship.id, ship.team, pr.owner, pr.team) || deadProbes.has(pr.id)) continue;
       const range = dist(ship.x, ship.y, pr.x, pr.y);
       if (range > C.PDC_RANGE_M) continue;
       if (range > this.detectionRange(C.PROBE_SIGNATURE, ship)) continue;
@@ -1821,7 +1869,7 @@ export class Sim {
   private visibleEnemyMissiles(ship: Ship): Missile[] {
     return this.missiles.filter(
       (m) =>
-        m.owner !== ship.id &&
+        !this.sameSide(ship.id, ship.team, m.owner, m.team) &&
         ((ship.pingGrantS > 0 && ship.pingGrantMissiles.has(m.id)) || // pinged: a coasting bird shows for the window
           (dist(ship.x, ship.y, m.x, m.y) <= this.detectionRange(this.missileSignature(m), ship) &&
             this.losClear(ship.x, ship.y, m.x, m.y)))
@@ -2024,7 +2072,9 @@ export class Sim {
   // and what the snapshot labels as a decoy.
   private visibleEnemyDecoys(ship: Ship): Decoy[] {
     return this.decoys.filter(
-      (d) => d.owner !== ship.id && this.decoyTierFor(ship, d) === 3
+      (d) =>
+        !this.sameSide(ship.id, ship.team, d.owner, d.team) &&
+        this.decoyTierFor(ship, d) === 3
     );
   }
 
@@ -2777,10 +2827,9 @@ export class Sim {
       // duds straight past the target (standoff is part of the weapon)
       if (dist(m.x, m.y, m.launchX, m.launchY) < C.MISSILE_ARMING_DIST_M) continue;
 
-      // ships (v5 §2: any ship but the launcher — friendly prox exemption
-      // arrives with §8 IFF)
+      // ships — friendly hulls never trip the fuse (v5 §8 IFF)
       for (const target of this.ships.values()) {
-        if (target.id === m.owner) continue;
+        if (this.sameSide(m.owner, m.team, target.id, target.team)) continue;
         const dMin = segmentMinDist(
           m.prevX, m.prevY, m.x, m.y,
           target.x - target.vx * dt, target.y - target.vy * dt, target.x, target.y
@@ -2793,9 +2842,9 @@ export class Sim {
         }
       }
       if (deadMissiles.has(m.id)) continue;
-      // enemy decoys
+      // enemy decoys (friendly ones are IFF-exempt)
       for (const d of this.decoys) {
-        if (d.owner === m.owner || deadDecoys.has(d.id)) continue;
+        if (this.sameSide(m.owner, m.team, d.owner, d.team) || deadDecoys.has(d.id)) continue;
         const dMin = segmentMinDist(
           m.prevX, m.prevY, m.x, m.y,
           d.x - d.vx * dt, d.y - d.vy * dt, d.x, d.y
@@ -2817,9 +2866,9 @@ export class Sim {
         }
       }
       if (deadMissiles.has(m.id)) continue;
-      // probes (v5 §6): a probe is a legitimate prox target
+      // probes (v5 §6): a legitimate prox target — hostile ones only
       for (const pr of this.probes) {
-        if (pr.owner === m.owner || deadProbes.has(pr.id)) continue;
+        if (this.sameSide(m.owner, m.team, pr.owner, pr.team) || deadProbes.has(pr.id)) continue;
         const dMin = segmentMinDist(
           m.prevX, m.prevY, m.x, m.y,
           pr.prevX, pr.prevY, pr.x, pr.y
@@ -2832,9 +2881,10 @@ export class Sim {
         }
       }
       if (deadMissiles.has(m.id)) continue;
-      // enemy missiles ("any enemy object" per the handoff)
+      // enemy missiles ("any enemy object" per the handoff — a friendly
+      // bird is not an enemy object)
       for (const other of this.missiles) {
-        if (other.owner === m.owner || deadMissiles.has(other.id)) continue;
+        if (this.sameSide(m.owner, m.team, other.owner, other.team) || deadMissiles.has(other.id)) continue;
         const dMin = segmentMinDist(
           m.prevX, m.prevY, m.x, m.y,
           other.prevX, other.prevY, other.x, other.y
@@ -2902,25 +2952,24 @@ export class Sim {
         dist(m.x, m.y, x, y) <= C.MISSILE_SEEKER_BASE_M * (sig / 100) &&
         Math.abs(angDiff(course, bearingTo(m.x, m.y, x, y))) <= C.MISSILE_ACQ_CONE_DEG &&
         this.losClear(m.x, m.y, x, y);
-      // v5 §2: any ship but the launcher is a candidate (friendly seeker
-      // exemption arrives with §8 IFF)
+      // v5 §8 IFF: seekers never acquire friendly ships/decoys/probes
       for (const s of this.ships.values()) {
-        if (s.id === m.owner) continue;
+        if (this.sameSide(m.owner, m.team, s.id, s.team)) continue;
         const sig = this.signatureOf(s);
         if (seekerSees(s.x, s.y, sig)) {
           cands.push({ lock: { type: "ship", id: s.id }, sig });
         }
       }
       for (const d of this.decoys) {
-        if (d.owner === m.owner || deadDecoys.has(d.id)) continue;
+        if (this.sameSide(m.owner, m.team, d.owner, d.team) || deadDecoys.has(d.id)) continue;
         if (seekerSees(d.x, d.y, C.DECOY_SIGNATURE)) {
           cands.push({ lock: { type: "decoy", id: d.id }, sig: C.DECOY_SIGNATURE });
         }
       }
       // v5 §6: a probe is a weak seeker candidate too (sig 25 — only a
-      // very close bird bothers; §8 IFF exempts friendly probes)
+      // very close bird bothers); friendly probes are IFF-exempt
       for (const pr of this.probes) {
-        if (pr.owner === m.owner || deadProbes.has(pr.id)) continue;
+        if (this.sameSide(m.owner, m.team, pr.owner, pr.team) || deadProbes.has(pr.id)) continue;
         if (seekerSees(pr.x, pr.y, C.PROBE_SIGNATURE)) {
           cands.push({ lock: { type: "probe", id: pr.id }, sig: C.PROBE_SIGNATURE });
         }
@@ -3668,6 +3717,18 @@ export class Sim {
         `Enemy: NO contact. Last seen ${intel.last_seen_seconds_ago}s ago, bearing ${fmtBearing(intel.last_known_bearing as number)}, range ${(((intel.last_known_range_m as number) / 1000)).toFixed(1)} km.`
       );
     }
+    // v5 §8: transponders — teammates at full state, by callsign
+    const allies = this.alliesOf(ship);
+    if (allies.length > 0) {
+      lines.push(
+        `Team ${ship.team}: ${allies
+          .map(
+            (t) =>
+              `${t.callsign} (${t.archetype}, bearing ${fmtBearing(bearingTo(ship.x, ship.y, t.x, t.y))}, ${(dist(ship.x, ship.y, t.x, t.y) / 1000).toFixed(0)} km, hull ${t.hull}/${hullMaxOf(t)})`
+          )
+          .join("; ")}. Teammates are always tightbeamable and are valid helm targets ("form up on ${allies[0].callsign}") — but never lock targets.`
+      );
+    }
     // v5 §3: the per-observer CONTACT TABLE — the names the captain may use
     // as targets ("point at Bravo", "lock Kestrel"). Unresolved decoy
     // contacts appear exactly like ship contacts (fog law).
@@ -4098,6 +4159,20 @@ export class Sim {
         })),
       },
       contacts,
+      // v5 §8 transponders: full state, always (own equipment class)
+      allies: this.alliesOf(ship).map((t) => ({
+        id: t.id,
+        callsign: t.callsign,
+        archetype: t.archetype,
+        x: t.x,
+        y: t.y,
+        vx: t.vx,
+        vy: t.vy,
+        facing: t.facing,
+        thrustOut: effectiveThrust(t),
+        hull: t.hull,
+        hullMax: hullMaxOf(t),
+      })),
       rumbles,
       comms,
       ghost,
@@ -4113,6 +4188,19 @@ export class Sim {
         ...this.visibleEnemyMissiles(ship).map((m) => ({
           id: m.id, x: m.x, y: m.y, vx: m.vx, vy: m.vy, burning: m.burning, own: false,
         })),
+        // a teammate's bird, if our sensors happen to see it: friendly
+        // paint, no alarm (detected normally — ordnance feeds aren't shared)
+        ...this.missiles
+          .filter(
+            (m) =>
+              m.owner !== id &&
+              this.sameSide(id, ship.team, m.owner, m.team) &&
+              dist(ship.x, ship.y, m.x, m.y) <= this.detectionRange(this.missileSignature(m), ship) &&
+              this.losClear(ship.x, ship.y, m.x, m.y)
+          )
+          .map((m) => ({
+            id: m.id, x: m.x, y: m.y, vx: m.vx, vy: m.vy, burning: m.burning, own: false, ally: true,
+          })),
       ],
       decoys: [
         ...this.decoys
