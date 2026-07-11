@@ -145,6 +145,24 @@ function initVoice() {
   document.addEventListener("keyup", (e) => {
     if (e.code === "Space") voice.stop();
   });
+
+  // Mobile push-to-talk (visible on coarse pointers only, via CSS): hold
+  // the button = hold Space. Pointer capture keeps the release working
+  // even when the thumb slides off; cancel/leave stop cleanly too.
+  const ptt = document.getElementById("ptt");
+  ptt.addEventListener("pointerdown", (e) => {
+    e.preventDefault(); // no focus steal, no long-press menu
+    ptt.setPointerCapture(e.pointerId);
+    ptt.classList.add("listening");
+    voice.start();
+  });
+  const pttStop = () => {
+    ptt.classList.remove("listening");
+    voice.stop();
+  };
+  ptt.addEventListener("pointerup", pttStop);
+  ptt.addEventListener("pointercancel", pttStop);
+  ptt.addEventListener("contextmenu", (e) => e.preventDefault());
 }
 
 export function enterGame() {

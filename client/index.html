@@ -128,6 +128,17 @@
       flex: 1; background: none; border: none; outline: none;
       color: var(--fg); font: inherit; padding: 10px;
     }
+    /* mobile push-to-talk: keyboards have Space; thumbs get a button.
+       Shown only on coarse pointers (phones/tablets). */
+    #ptt {
+      display: none; margin: 6px 0 6px 8px; padding: 10px 14px;
+      background: none; border: 1px solid var(--line); color: var(--accent);
+      font: inherit; letter-spacing: 1px; cursor: pointer;
+      touch-action: none; -webkit-user-select: none; user-select: none;
+      -webkit-touch-callout: none;
+    }
+    #ptt.listening { border-color: var(--danger); color: var(--danger); animation: mic-blink 1.2s step-start infinite; }
+    @media (pointer: coarse) { #ptt { display: block; } }
     #mic { display: none; padding-right: 10px; color: var(--danger); letter-spacing: 1px; }
     #mic.listening { display: block; animation: mic-blink 1.2s step-start infinite; }
     #mic.transcribing { display: block; color: var(--dim); }
@@ -234,6 +245,7 @@
       <div id="hud"></div>
       <div id="transcript"></div>
       <div id="cmd-row">
+        <button id="ptt" aria-label="hold to talk">🎙 HOLD</button>
         <span id="cmd-prompt">&gt;</span>
         <input id="cmd" autocomplete="off" spellcheck="false"
                placeholder="orders, captain? — ENTER to type, hold SPACE to talk" />

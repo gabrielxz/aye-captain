@@ -23,7 +23,8 @@ be going somewhere — not both.
   Echo, ...); players see who's watching.
 - **Practice**: solo mode against a drone that patrols the rocks — and
   shoots back.
-- **Input**: voice push-to-talk (hold Space) or typed text.
+- **Input**: voice push-to-talk (hold Space — or the on-screen HOLD
+  button on phones/tablets) or typed text.
 - **Output**: the ship AI talks back (ElevenLabs voice) and the ship itself
   sounds alive (procedurally synthesized SFX, no audio assets).
 
