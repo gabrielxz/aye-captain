@@ -146,15 +146,18 @@ const ping = (sim: Sim, id: "A" | "B") =>
   sim.tick();
   // decoy drifts at B's position, 210 km out: beyond passive decoy detection (180 km)
   const sim1snap = sim.snapshotFor("A") as any;
-  assert(!sim1snap.contacts.some((c: any) => String(c.cid).startsWith("d")), "decoy unseen passively at 210 km");
+  assert(sim1snap.contacts.length === 0, "decoy unseen passively at 210 km");
   // move the decoy inside ping range and sweep
   (sim as any).decoys[0].x = 0;
   (sim as any).decoys[0].y = 100000;
   ping(sim, "A");
   sim.tick();
   const snap = sim.snapshotFor("A") as any;
-  const dc = snap.contacts.find((c: any) => String(c.cid).startsWith("d"));
+  // v5 §3: the cid is a designation letter — nothing on the wire may say
+  // "decoy" (the only contact on the board is the decoy)
+  const dc = snap.contacts[0];
   assert(dc?.tier === 2, "pinged decoy shows as an ordinary TRACK contact");
+  assert(dc && !/^d\d+$/.test(String(dc.cid)), "decoy contact cid is a designation, not an object id");
   assert(!snap.decoys.some((d: any) => !d.own), "the snapshot never labels it a decoy below ID");
 }
 console.log("done");

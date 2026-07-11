@@ -179,6 +179,27 @@ export const COLLISION_WARNING_S = 20; // project own velocity this far ahead
 export const SPAWN_RING_RADIUS_M = 150000; // LINKED to REGION_RADIUS_M (60%)
 export const TEAM_SPAWN_SPACING_M = 40000; // teammate spacing along the team arc
 
+// Callsigns & contact designations (v5 §3)
+// Permanent per-ship callsigns, assigned at match start (never typed).
+// Known to an observer only at/after ID tier (or via a §7 broadcast
+// voiceprint) — leaking one earlier is a fog bug.
+export const CALLSIGN_POOL = [
+  "Kestrel", "Vagrant", "Mako", "Aurora", "Bastion", "Wraith", "Halcyon", "Sable",
+];
+// Per-observer track labels in acquisition order ("Contact Alpha", ...).
+// Wraps with -2 suffixes if a long match burns the alphabet.
+export const DESIGNATION_LETTERS = [
+  "Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel",
+  "India", "Juliet", "Kilo", "Lima", "Mike", "November", "Oscar", "Papa",
+  "Quebec", "Romeo", "Sierra", "Tango", "Uniform", "Victor", "Whiskey",
+  "X-ray", "Yankee", "Zulu",
+];
+// A lost track reacquired within this window (and physically plausibly —
+// within max-speed reach of its last known fix) keeps its letter;
+// otherwise the XO can't correlate and opens a NEW letter (identification
+// resets with it).
+export const CONTACT_CORRELATE_S = 60;
+
 // Match lifecycle (v5 §2)
 export const MAX_PLAYERS = 8; // captains per room; spectators unlimited
 // A disconnected captain's ship becomes a drifting GHOST (thrust 0,

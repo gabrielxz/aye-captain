@@ -32,6 +32,13 @@ be going somewhere — not both.
   and says so. Ships drift (Newtonian): turning doesn't change your
   velocity. "Show me our vector" (or V) draws where you're going and where
   you could stop.
+- **Contacts have names**: your XO designates hostile tracks in acquisition
+  order — "Contact Alpha", "Contact Bravo" (decoys get letters too; you
+  can't tell). At ID range a track resolves to the ship's permanent
+  **callsign** ("Contact Bravo identified: it's Kestrel"). Letters and
+  callsigns are valid targets: "point at Bravo", "lock up Kestrel". A track
+  lost for over a minute can't be correlated — it comes back as a new
+  letter.
 - **Detection**: your drive plume is your signature. A hard-burning ship is
   visible ~234 km out; a dark drifter ~54 km (and unlockable until ~32).
   Contacts have **tiers**: FAINT (a smudge — approximate position, no

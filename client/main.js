@@ -118,11 +118,14 @@ function handleMessage(msg) {
       const standings =
         (msg.placements ?? []).length > 2 ? ` — standings: ${msg.placements.join(" · ")}` : "";
       const isTeamWin = msg.winner === "red" || msg.winner === "blue";
-      const winnerLabel = isTeamWin ? `${String(msg.winner).toUpperCase()} TEAM WINS` : `SHIP ${msg.winner} WINS`;
+      const winnerName = msg.winnerName ?? msg.winner;
+      const winnerLabel = isTeamWin
+        ? `${String(winnerName).toUpperCase()} TEAM WINS`
+        : `${String(winnerName).toUpperCase()} WINS`;
       if (state.role === "spectator") {
         audio.sfxBoom(true, false);
         showBanner(winnerLabel, (msg.forfeit ? "win by forfeit — " : "") + timeLine + standings);
-        addTranscript("sys", `${isTeamWin ? `team ${msg.winner}` : `ship ${msg.winner}`} wins — match over`);
+        addTranscript("sys", `${isTeamWin ? `team ${winnerName}` : winnerName} wins — match over`);
         break;
       }
       audio.sfxBoom(true, !msg.youWin);
@@ -269,7 +272,7 @@ function updateHUDFromSnapshot(snap) {
     // referee panel: just the two hulls (everything else is on the map)
     updateHUD(
       (snap.ships ?? []).map((s) => ({
-        label: `SHIP ${s.id} HULL`,
+        label: `${(s.callsign ?? s.id).toUpperCase()} HULL`,
         value: `${s.hull}/${s.hullMax}${s.drone ? " (drone)" : ""}`,
         cls: s.hull <= s.hullMax * 0.35 ? "alert" : s.hull <= s.hullMax * 0.65 ? "warn" : "",
       }))
@@ -289,16 +292,25 @@ function updateHUDFromSnapshot(snap) {
       : "no lock";
   const painted = you.painted ?? "none";
   const prop = Math.round(you.propellant ?? 0);
-  const contact = (snap.contacts ?? [])[0] ?? null;
-  // each tier names what it buys — the anchor for the XO's "detail
-  // readout" / "track" / "faint" vocabulary (playtest 2026-07-11)
-  const TIER_LABEL = { 1: "FAINT · pos only", 2: "TRACK · lockable", 3: "ID · full readout" };
-  const contactLabel = contact ? TIER_LABEL[contact.tier] ?? "?" : snap.ghost ? "ghost" : "—";
-  const enemyHull = contact?.tier === 3 && contact.hull !== undefined ? `${contact.hull}/${contact.hullMax ?? 100}` : "—";
+  // v5 §3: contacts carry designation labels; each tier names what it buys
+  // (the tier vocabulary anchor, playtest 2026-07-11)
+  const TIER_WORD = { 1: "FAINT", 2: "TRACK", 3: "ID" };
+  const contacts = snap.contacts ?? [];
+  const ghosts = snap.ghosts ?? (snap.ghost ? [snap.ghost] : []);
+  const contactsLine =
+    contacts.length === 0 && ghosts.length === 0
+      ? "—"
+      : [
+          ...contacts.map((c) => `${c.label ?? "?"}·${TIER_WORD[c.tier] ?? "?"}`),
+          ...ghosts.map((g) => `${g.label ?? "ghost"}·lost`),
+        ].join("  ");
+  const idContact = contacts.find((c) => c.tier === 3 && c.hull !== undefined) ?? null;
+  const enemyHull = idContact ? `${idContact.hull}/${idContact.hullMax ?? 100}` : "—";
   updateHUD([
+    { label: "SHIP", value: you.callsign ?? state.role ?? "—", cls: "good" },
     { label: "HULL", value: `${you.hull}`, cls: you.hull <= 35 ? "alert" : you.hull <= 65 ? "warn" : "" },
-    { label: "EN HULL", value: enemyHull, cls: contact?.tier === 3 && contact.hull <= (contact.hullMax ?? 100) / 2 ? "good" : "" },
-    { label: "CONTACT", value: contactLabel, cls: contact ? (contact.tier >= 2 ? "good" : "warn") : "" },
+    { label: "EN HULL", value: enemyHull, cls: idContact && idContact.hull <= (idContact.hullMax ?? 100) / 2 ? "good" : "" },
+    { label: "CONTACTS", value: contactsLine, cls: contacts.some((c) => c.tier >= 2) ? "good" : contacts.length ? "warn" : "", full: true },
     { label: "SIG", value: `${Math.round(you.signature ?? 0)}`, cls: (you.signature ?? 0) > 100 ? "alert" : (you.signature ?? 0) > 50 ? "warn" : "good" },
     { label: "THRUST", value: `${Math.round(you.thrust)}%${tanksDry && you.thrust > 0 ? " (DRY)" : ""}`, cls: tanksDry && you.thrust > 0 ? "alert" : "" },
     { label: "SPD", value: `${you.speed} m/s` },

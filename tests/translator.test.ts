@@ -96,7 +96,12 @@ const assert = (cond: boolean, msg: string) => {
 {
   assert(validateCommand({verb:"set_heading",params:{mode:"relative",direction:"port",degrees:40}}) !== null, "relative heading valid");
   assert(validateCommand({verb:"set_heading",params:{mode:"relative",degrees:40}}) === null, "relative without direction rejected");
-  assert(validateCommand({verb:"set_heading",params:{mode:"target",target:"mothership"}}) === null, "unknown target rejected");
+  // v5 §3: free-form contact refs pass the validator (the sim rejects
+  // unknown names at execution); structurally invalid refs still die here
+  assert(validateCommand({verb:"set_heading",params:{mode:"target",target:"Bravo"}}) !== null, "contact-ref target accepted");
+  assert(validateCommand({verb:"set_heading",params:{mode:"target",target:"9%bogus\n"}}) === null, "malformed target rejected");
+  assert(validateCommand({verb:"set_lock_target",params:{contact:"Kestrel"}}) !== null, "set_lock_target accepted");
+  assert(validateCommand({verb:"set_lock_target",params:{}}) === null, "set_lock_target needs a contact");
   assert(validateCommand({verb:"query",params:{topic:"enemy"}}) !== null, "query valid");
   assert(validateCommand({verb:"query",params:{topic:"weather"}}) === null, "unknown topic rejected");
 }

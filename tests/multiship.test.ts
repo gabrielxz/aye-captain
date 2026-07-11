@@ -28,7 +28,7 @@ const collect = (sim: Sim, ticks: number): SimEvent[] => {
   assert(sim.contactOn("A", "C").tier === 0, "A holds nothing on C (200 km, quiet)");
   assert(sim.contactOn("C", "A").tier === 0, "C sees neither (200 km)");
   const snap = sim.snapshotFor("A") as any;
-  assert(snap.contacts.length === 1 && snap.contacts[0].cid === "sB", "snapshot carries exactly the earned contact, cid by ship");
+  assert(snap.contacts.length === 1 && snap.contacts[0].cid === "Alpha", "snapshot carries exactly the earned contact, cid = designation letter");
   const json = JSON.stringify(snap);
   assert(!json.includes("200000"), "C's position leaks nowhere into A's snapshot");
 }

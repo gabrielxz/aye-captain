@@ -160,11 +160,11 @@ function plantMissile(sim: Sim, owner: "A" | "B", x: number, y: number, vx = 0, 
   sim.addShip("B", 0, quietDetect * 0.9, 180, false); // faint band, due north
   let faint: any = null;
   for (let i = 0; i < 3 && !faint; i++) {
-    faint = sim.tick().find((e) => e.kind === "notice" && /Faint contact — bearing/.test((e as any).text));
+    faint = sim.tick().find((e) => e.kind === "notice" && /New contact — designating Alpha. Faint, bearing/.test((e as any).text));
   }
   assert(!!faint, "faint contact announced");
   assert(/range approximately \d+ km/.test(faint.text), "display text keeps exact range");
-  assert(faint.speak === "Faint contact — bearing zero zero zero.", `speak is bearing-only digit words (${faint.speak})`);
+  assert(faint.speak === "New contact — designating Alpha. Bearing zero zero zero.", `speak is bearing-only digit words (${faint.speak})`);
   void a;
 }
 

@@ -166,6 +166,10 @@ const STOCK_LINES = [
   "Contact regained — helm's tracking him again.",
   "No contact to point at, Captain.",
   "No rumble to steer on, Captain.",
+  // v5 §3: designations (letter/callsign lines are dynamic — synthesized
+  // on first use and cached; only the fixed shapes pre-generate)
+  "No contact by that name on the board, Captain.",
+  "Contact identified — it's a decoy.",
 ];
 
 // Sequential on purpose: ElevenLabs free/low tiers have tight concurrency

@@ -77,6 +77,10 @@ const SYSTEM_PROMPT = buildSystemPrompt();
 // ---------- validation ----------
 
 const TARGETS = ["enemy_ship", "nearest_missile", "nearest_decoy", "nearest_contact", "nearest_rumble"];
+// v5 §3: free-form contact refs — a designation letter or callsign as it
+// appears in the contact table ("Bravo", "Contact Alpha", "Kestrel").
+// Resolution (and rejection of unknown names) happens in the sim.
+const CONTACT_REF = /^[A-Za-z][A-Za-z0-9' -]{0,30}$/;
 const METRICS = [
   "enemy_contact_tier",
   "enemy_range",
@@ -186,10 +190,15 @@ export function validateCommand(raw: unknown, nested = false): Command | null {
         return out({ mode: "absolute", degrees: p.degrees });
       }
       if (p.mode === "target") {
-        if (typeof p.target !== "string" || !TARGETS.includes(p.target)) return null;
+        if (typeof p.target !== "string") return null;
+        if (!TARGETS.includes(p.target) && !CONTACT_REF.test(p.target)) return null;
         return out({ mode: "target", target: p.target });
       }
       return null;
+    }
+    case "set_lock_target": {
+      if (typeof p.contact !== "string" || !CONTACT_REF.test(p.contact)) return null;
+      return out({ contact: p.contact });
     }
     case "deploy_decoy":
       return out({});

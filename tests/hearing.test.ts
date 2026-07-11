@@ -21,7 +21,7 @@ const darkHearing = darkDetect * C.HEARING_RANGE_MULT; // ~135 km
   sim.tick();
   const snap = sim.snapshotFor("A") as any;
   assert(snap.contacts.length === 0, "no contact at 100 km on a quiet ship");
-  assert(snap.rumbles.length === 1 && snap.rumbles[0].cid === "sB", "rumble present");
+  assert(snap.rumbles.length === 1 && snap.rumbles[0].cid === "r1", "rumble present (opaque per-viewer alias)");
   assert(snap.rumbles[0].bearing === 0, `rumble carries the true bearing (${snap.rumbles[0].bearing})`);
   const keys = Object.keys(snap.rumbles[0]).sort().join(",");
   assert(keys === "bearing,cid,loud", `fog leak check: rumble carries ONLY {cid,bearing,loud} (got ${keys})`);
@@ -75,7 +75,7 @@ const darkHearing = darkDetect * C.HEARING_RANGE_MULT; // ~135 km
   sim.enqueue("B", [{ verb: "fire_missile", params: { guidance: "bearing", bearing_degrees: 180 } }]);
   sim.tick();
   const snap = sim.snapshotFor("A") as any;
-  assert(snap.rumbles.some((r: any) => r.cid === "sB"), "launch spike heard 400 km away");
+  assert(snap.rumbles.length === 1, "launch spike heard 400 km away");
   assert(snap.contacts.length === 0, "heard, not seen — still no contact");
 }
 
@@ -147,7 +147,9 @@ const darkHearing = darkDetect * C.HEARING_RANGE_MULT; // ~135 km
   sim.tick();
   const snap = sim.snapshotFor("A") as any;
   // ship (sig 30): inaudible at 210 km. decoy (sig 100): heard to 450 km.
-  assert(!snap.rumbles.some((r: any) => r.cid === "sB"), "quiet mother ship inaudible");
-  assert(snap.rumbles.some((r: any) => String(r.cid).startsWith("d")), "the decoy rumbles on its own");
+  // v5 §3: cids are opaque aliases — a decoy rumble must be
+  // indistinguishable from a ship rumble on the wire (invariant 11)
+  assert(snap.rumbles.length === 1, "the decoy rumbles on its own (mother ship inaudible)");
+  assert(/^r\d+$/.test(String(snap.rumbles[0].cid)), "rumble cid is an opaque alias, not an object id");
 }
 console.log("done");

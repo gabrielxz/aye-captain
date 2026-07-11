@@ -48,8 +48,10 @@ v4.7.1 + v4.7.2 (same-day playtest patches) are deployed: TTS-safe
 reload note, 2x rock spin. ALL of v4 through v4.7.2 is LIVE in
 production. CURRENT MILESTONE: `HANDOFF-v5.md` "The Fleet" — IN PROGRESS,
 shipping as ONE release (multiplayer plumbing desyncs old clients). Build
-order §12; §1 (continuous target tracking restored + nearest_rumble ref)
-is done. v5 design policy: archetypes differ in NUMBERS ONLY — stat
+order §12; §1 (continuous tracking + nearest_rumble), §2 (N-ship sim,
+8-captain rooms, ghosts, death→spectator) and §3 (callsigns, per-observer
+designations, contact-ref targeting, set_lock_target) are done on branch
+v5-the-fleet. v5 design policy: archetypes differ in NUMBERS ONLY — stat
 blocks, no special abilities (explicitly a v5 policy, not permanent
 doctrine; the railgun loadout row is the first sanctioned asymmetry).
 
@@ -226,8 +228,13 @@ Note: on this machine's rootless Docker, `-p` port publishing doesn't route
   REMOVED: a target-less autonomous bird holds course and may acquire
   later (blind fire needs long candidate-less flight); only dry fuel ends
   steering.
-- v4.1: decoy contacts get no XO transition lines (only the enemy SHIP
-  drives contact-tier announcements) — snapshot-level deception only.
+- v4.1: decoy contacts get no XO transition lines — REVERSED in v5 §3:
+  with per-observer designation letters, silence would unmask decoys, so
+  decoy contacts draw letters and get the full XO ceremony ("New contact —
+  designating Bravo"; at ID: "it's a decoy"). Same reasoning made contact
+  cids the designation LETTERS and rumble cids per-viewer opaque aliases
+  ("r1") — object-keyed wire ids let a JSON reader correlate tracks and
+  spot decoys by prefix.
 - v4: "tell me when X" standing orders use a harmless `show_vector` action —
   the trigger log line itself is the telling (there is no notify verb).
 - v4: PDC ship-fire hull damage is applied directly (fractional per substep)

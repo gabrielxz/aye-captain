@@ -28,7 +28,7 @@ const quietDetect = C.SENSOR_BASE_M * (C.SIG_BASE / 100); // ~54 km at v4.3 valu
   const b = sim.addShip("B", 0, quietDetect * 0.9, 180, false); // faint band
   const ev1 = sim.tick();
   assert(a.contactTier === 1, `faint band => tier 1 (got ${a.contactTier})`);
-  assert(ev1.some(e => e.kind === "notice" && e.ship === "A" && /Faint contact/.test((e as any).text)), "faint contact XO line");
+  assert(ev1.some(e => e.kind === "notice" && e.ship === "A" && /New contact — designating .*Faint/.test((e as any).text)), "faint contact XO line (designated)");
   let snap = sim.snapshotFor("A") as any;
   assert(snap.contacts[0].tier === 1, "snapshot carries tier 1");
   assert(snap.contacts[0].vx === undefined && snap.contacts[0].facing === undefined, "NO vector data at faint");
@@ -128,7 +128,7 @@ const quietDetect = C.SENSOR_BASE_M * (C.SIG_BASE / 100); // ~54 km at v4.3 valu
   const seenY = b.y;
   b.y = 200000; // gone
   const ev = sim.tick();
-  assert(ev.some(e => e.kind === "notice" && /Track lost — last known bearing/.test((e as any).text)), "track lost XO line");
+  assert(ev.some(e => e.kind === "notice" && /Track lost on .+ — last known bearing/.test((e as any).text)), "track lost XO line (designated)");
   const snap = sim.snapshotFor("A") as any;
   assert(snap.contacts.length === 0 && snap.ghost, "ghost lastKnown in snapshot");
   assert(Math.abs(snap.ghost.y - seenY) < 200, "ghost ~= position when last tracked");

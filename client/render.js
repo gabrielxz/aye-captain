@@ -923,7 +923,7 @@ function drawContacts() {
       ctx.globalAlpha = 1;
       ctx.fillStyle = COLORS.enemy;
       ctx.font = "10px monospace";
-      ctx.fillText("faint contact", sx + pulse + 6, sy + 3);
+      ctx.fillText(c.label ? `${c.label} · faint` : "faint contact", sx + pulse + 6, sy + 3);
       continue;
     }
     // track/id: interpolate across consecutive snapshots, matched by the
@@ -937,6 +937,13 @@ function drawContacts() {
       hull: c.tier === 3 ? (c.hull ?? null) : null,
       hullMax: c.hullMax ?? 100,
     });
+    if (c.label) {
+      // v5 §3: the designation letter (or callsign once identified)
+      const [lx, ly] = worldToScreen(ent.x, ent.y);
+      ctx.fillStyle = COLORS.enemy;
+      ctx.font = "10px monospace";
+      ctx.fillText(c.label, lx + 14, ly - 10);
+    }
   }
 
   // v5 §2: one last-known ghost per lost hostile (they draw even while
@@ -949,7 +956,11 @@ function drawContacts() {
     const age = Math.max(0, snap.tick - ghost.t);
     ctx.fillStyle = COLORS.ghost;
     ctx.font = "10px monospace";
-    ctx.fillText(`last seen ${age}s ago`, sx + 14, sy + 4);
+    ctx.fillText(
+      `${ghost.label ? `${ghost.label} · ` : ""}last seen ${age}s ago`,
+      sx + 14,
+      sy + 4
+    );
   }
 }
 

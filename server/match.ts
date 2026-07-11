@@ -58,8 +58,8 @@ export class Match {
   // Practice: the captain plus the drone, on the classic two-point spawn.
   private static buildPracticeSim(seed: string): Sim {
     const sim = new Sim(seed);
-    sim.addShip("A", 0, -C.SPAWN_RING_RADIUS_M, 0);
-    sim.addShip("B", 0, C.SPAWN_RING_RADIUS_M, 180, true); // drone
+    sim.addShip("A", 0, -C.SPAWN_RING_RADIUS_M, 0, false, null, C.CALLSIGN_POOL[0]);
+    sim.addShip("B", 0, C.SPAWN_RING_RADIUS_M, 180, true, null, "Drone"); // practice target
     return sim;
   }
 
@@ -211,7 +211,12 @@ export class Match {
   // theirs.
   private spawnShips(): void {
     const ring = C.SPAWN_RING_RADIUS_M;
-    const place = (seat: Seat, angleDeg: number) => {
+    // v5 §3: permanent callsigns from the themed pool, shuffled per match
+    // (suffixes only if a room somehow outgrows the pool)
+    const pool = [...C.CALLSIGN_POOL].sort(() => Math.random() - 0.5);
+    const callsignFor = (i: number) =>
+      i < pool.length ? pool[i] : `${pool[i % pool.length]}-${Math.floor(i / pool.length) + 1}`;
+    const place = (seat: Seat, angleDeg: number, i: number) => {
       const [dx, dy] = headingVec(angleDeg);
       this.sim.addShip(
         seat.id,
@@ -219,21 +224,23 @@ export class Match {
         dy * ring,
         norm360(angleDeg + 180), // face the center
         false,
-        this.mode === "teams" ? seat.team : null
+        this.mode === "teams" ? seat.team : null,
+        callsignFor(i)
       );
     };
     if (this.mode === "teams") {
       const spacingDeg = (C.TEAM_SPAWN_SPACING_M / ring) * (180 / Math.PI);
+      let n = 0;
       for (const team of ["red", "blue"] as Team[]) {
         const members = this.seats.filter((s) => s.team === team);
         const base = team === "red" ? 0 : 180; // opposite arcs
         members.forEach((seat, i) => {
-          place(seat, base + (i - (members.length - 1) / 2) * spacingDeg);
+          place(seat, base + (i - (members.length - 1) / 2) * spacingDeg, n++);
         });
       }
     } else {
       this.seats.forEach((seat, i) => {
-        place(seat, (360 / this.seats.length) * i);
+        place(seat, (360 / this.seats.length) * i, i);
       });
     }
   }
@@ -435,14 +442,14 @@ export class Match {
   // flows into the existing spectator pipeline, keeping their seat for the
   // rematch. Their spectator name is their ship's name (§3 upgrades it to
   // the callsign).
-  private captainDown(shipId: ShipId): void {
+  private captainDown(shipId: ShipId, shipCallsign: string): void {
     const seat = this.seats.find((s) => s.id === shipId);
     if (!seat) return;
     this.sendTranscript(seat.id, "sys", "Hull breach — we're done. Abandon ship.", true);
     this.sendTranscript(seat.id, "xo", "It's been an honor, Captain.");
     seat.dead = true;
     if (seat.ws && seat.ws.readyState === seat.ws.OPEN) {
-      const callsign = `Ship ${seat.id}`;
+      const callsign = shipCallsign; // "SPECTATOR — Kestrel" (v5 §3)
       this.spectators.set(seat.ws, callsign);
       seat.ws.send(
         JSON.stringify({
@@ -463,7 +470,7 @@ export class Match {
     } else if (ev.kind === "ack") {
       this.sendTranscript(ev.ship, "xo", ev.text);
     } else if (ev.kind === "death") {
-      this.captainDown(ev.ship);
+      this.captainDown(ev.ship, ev.callsign);
     } else if (ev.kind === "scuttle") {
       // quiet by design: free the seat, tell no one
       const seat = this.seats.find((s) => s.id === ev.ship);
@@ -479,13 +486,14 @@ export class Match {
               type: "gameover",
               youWin,
               winner: ev.winner,
-              placements: ev.placements,
+              winnerName: ev.winnerName,
+              placements: ev.placementNames,
               durationS,
             })
           );
         }
       }
-      this.sendGameoverToSpectators(ev.winner, ev.placements, durationS, false);
+      this.sendGameoverToSpectators(ev.winnerName, ev.placementNames, durationS, false);
     } else if (ev.kind === "ui") {
       const seat = this.seats.find((s) => s.id === ev.ship);
       if (seat?.ws && seat.ws.readyState === seat.ws.OPEN) {
@@ -502,13 +510,20 @@ export class Match {
   }
 
   private sendGameoverToSpectators(
-    winner: string,
+    winnerName: string,
     placements: string[],
     durationS: number,
     forfeit: boolean
   ): void {
-    // no youWin: the spectator client banners the winner
-    const payload = JSON.stringify({ type: "gameover", winner, placements, durationS, forfeit });
+    // no youWin: the spectator client banners the winner by name
+    const payload = JSON.stringify({
+      type: "gameover",
+      winner: winnerName,
+      winnerName,
+      placements,
+      durationS,
+      forfeit,
+    });
     for (const ws of this.spectators.keys()) {
       if (ws.readyState === ws.OPEN) ws.send(payload);
     }

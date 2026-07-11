@@ -15,6 +15,7 @@
             "set_thrust",
             "set_heading",
             "set_pdc",
+            "set_lock_target",
             "fire_missile",
             "reload_tubes",
             "deploy_decoy",
@@ -68,15 +69,16 @@
           "description": "REQUIRED for mode=relative. port = counterclockwise, starboard = clockwise. The LLM maps 'left'->port, 'right'->starboard."
         },
         "target": {
-          "enum": ["enemy_ship", "nearest_missile", "nearest_decoy", "nearest_contact", "nearest_rumble"],
-          "description": "REQUIRED for mode=target. CONTINUOUS tracking: the helm re-resolves the target's bearing every tick and keeps the nose on it until a new heading or maneuver order replaces the goal — 'point at him' and 'keep facing him' are the same order. 'enemy_ship' steers by the tracked position at tier >= 2, the approximate faint fix at tier 1, or last-known otherwise; if the contact drops below faint mid-track the helm holds the last known position and announces it. 'nearest_rumble' points the nose down the loudest rumble's bearing (bearing-only; there is no range below faint)."
+          "type": "string",
+          "description": "REQUIRED for mode=target. CONTINUOUS tracking: the helm re-resolves the target's bearing every tick and keeps the nose on it until a new heading or maneuver order replaces the goal — 'point at him' and 'keep facing him' are the same order. Accepts the keywords enemy_ship / nearest_missile / nearest_decoy / nearest_contact / nearest_rumble, OR A CONTACT NAME from the CURRENT SHIP STATE contact table: a designation letter ('Bravo', 'Contact Alpha') or an identified callsign ('Kestrel'). Use the exact names the table shows — a name not on the table is rejected. 'enemy_ship' steers by the best-known hostile (with several contacts prefer the specific name the captain used); if a tracked contact drops below faint mid-track the helm holds the last known position and announces it. 'nearest_rumble' points the nose down the loudest rumble's bearing (bearing-only; there is no range below faint)."
         }
       },
       "examples": [
         { "mode": "relative", "direction": "starboard", "degrees": 30 },
         { "mode": "absolute", "degrees": 90 },
         { "mode": "target", "target": "nearest_missile" },
-        { "mode": "target", "target": "nearest_rumble" }
+        { "mode": "target", "target": "nearest_rumble" },
+        { "mode": "target", "target": "Bravo" }
       ]
     },
 
@@ -88,6 +90,16 @@
         "posture": { "enum": ["free", "hold"] }
       },
       "examples": [ { "posture": "hold" }, { "posture": "free" } ]
+    },
+
+    "set_lock_target": {
+      "description": "Designate WHICH contact the missile lock builds on (v5: several hostiles may be on the board). Takes a contact name from the CURRENT SHIP STATE contact table — a designation letter ('Bravo') or an identified callsign ('Kestrel'). The lock still needs the target within lock cone/range at TRACK or better for the lock time; designation just aims the seeker head. Without a designation the lock auto-picks the nearest eligible hostile. Emit this when the captain names WHO to lock ('lock up Bravo', 'target Kestrel'); usually paired with set_heading at the same contact so the nose brings it into the cone.",
+      "type": "object",
+      "required": ["contact"],
+      "properties": {
+        "contact": { "type": "string", "description": "Contact-table name: designation letter or identified callsign." }
+      },
+      "examples": [ { "contact": "Bravo" }, { "contact": "Kestrel" } ]
     },
 
     "fire_missile": {
@@ -402,6 +414,25 @@
         ]
       },
       {
+        "captain": "Point us at Bravo",
+        "commands": [
+          { "verb": "set_heading", "params": { "mode": "target", "target": "Bravo" }, "acknowledgement": "Helm's on Bravo." }
+        ]
+      },
+      {
+        "captain": "Lock up Kestrel and fire when you have him",
+        "commands": [
+          { "verb": "set_lock_target", "params": { "contact": "Kestrel" }, "acknowledgement": "Seeker head on Kestrel." },
+          { "verb": "set_heading", "params": { "mode": "target", "target": "Kestrel" } },
+          { "verb": "set_standing_order", "params": {
+              "label": "fire on lock",
+              "condition": { "metric": "have_lock", "op": "eq", "value": true },
+              "actions": [ { "verb": "fire_missile", "params": {} } ],
+              "repeat": false
+          }, "acknowledgement": "Tube one fires the moment the lock lands." }
+        ]
+      },
+      {
         "captain": "Steer for that rumble",
         "commands": [
           { "verb": "set_heading", "params": { "mode": "target", "target": "nearest_rumble" }, "acknowledgement": "Coming onto the rumble's bearing." }
@@ -606,6 +637,7 @@
     "rules": [
       "Emit only valid commands from this schema. If the captain's intent maps to no verb, emit no command and have the acknowledgement explain what the ship can and cannot do.",
       "Ambiguity policy: make a reasonable interpretation and state it in the acknowledgement rather than asking clarifying questions. Misinterpretation is part of the game; stalling is not.",
+      "CONTACT NAMES: the CURRENT SHIP STATE contact table lists this captain's designations ('Contact Alpha', 'Contact Bravo') and identified callsigns. When the captain names one, pass that exact name as the set_heading target / set_lock_target contact. 'him'/'the contact' with several contacts on the table = the nearest tracked one — say which in the acknowledgement ('On Bravo — the near one'). NEVER use a callsign that is not on the table: unidentified ships have no names yet.",
       "Compound utterances may emit up to 4 commands, executed in order.",
       "Never invent game state. Use query for anything the captain asks about; the acknowledgement for a query is written AFTER the server returns the snapshot.",
       "Conditional phrasing ('if', 'when', 'as soon as', 'the moment') always becomes set_standing_order, never immediate execution.",

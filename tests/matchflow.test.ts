@@ -25,6 +25,8 @@ const fakeWs = () => {
   match.stop(); // deterministic: we drive events by hand below
 
   const sim: any = match.sim;
+  const cs = (id: string) => sim.ships.get(id).callsign as string;
+  const [csA, csB, csC] = [cs("A"), cs("B"), cs("C")];
   const kill = (id: string, attacker: string) => {
     const ship = sim.ships.get(id);
     ship.hull = 1;
@@ -37,14 +39,17 @@ const fakeWs = () => {
   const honor = wsC.sent.filter((m) => m.type === "transcript" && /honor/.test(m.text));
   assert(honor.length === 1, "the XO signs off to the fallen captain");
   const specStart = wsC.sent.find((m) => m.type === "start" && m.role === "spectator");
-  assert(!!specStart && specStart.callsign === "Ship C", "dead captain flows into the spectator pipeline, named for their ship");
+  assert(!!specStart && specStart.callsign === csC, "dead captain flows into the spectator pipeline, named by their ship's callsign");
   assert(wsC.sent.indexOf(honor[0]) < wsC.sent.indexOf(specStart), "sign-off lands before the spectator transition");
   assert(!wsA.sent.some((m) => m.type === "gameover"), "match continues with two hostiles alive");
 
   kill("B", "A");
   const overA = wsA.sent.find((m) => m.type === "gameover");
   assert(!!overA && overA.youWin === true && overA.winner === "A", "winner gets youWin");
-  assert(Array.isArray(overA.placements) && overA.placements.join(",") === "A,B,C", `placements on the banner (got ${overA?.placements})`);
+  assert(
+    Array.isArray(overA.placements) && overA.placements.join(",") === [csA, csB, csC].join(","),
+    `placements on the banner as callsigns, winner first (got ${overA?.placements})`
+  );
   const overC = wsC.sent.find((m) => m.type === "gameover");
   assert(!!overC && overC.youWin === false, "the fallen captain hears the result too");
 

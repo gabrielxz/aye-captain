@@ -16,12 +16,17 @@ import {
 // practice mode; rooms hand out seat ids from their own scheme.
 export type ShipId = string;
 
+// The enum forms plus free-form CONTACT REFS (v5 §3): a designation letter
+// ("Bravo", "contact bravo") or an identified callsign ("Kestrel"). Refs
+// resolve against the ordering captain's own contact book — never against
+// ground truth (asking for a callsign you haven't identified is a miss).
 export type TargetKind =
   | "enemy_ship"
   | "nearest_missile"
   | "nearest_decoy"
   | "nearest_contact"
-  | "nearest_rumble";
+  | "nearest_rumble"
+  | (string & {});
 
 export type HeadingParams =
   | { mode: "relative"; direction: "port" | "starboard"; degrees: number }
@@ -33,6 +38,7 @@ export interface Command {
     | "set_thrust"
     | "set_heading"
     | "set_pdc"
+    | "set_lock_target"
     | "fire_missile"
     | "reload_tubes"
     | "deploy_decoy"
@@ -95,6 +101,22 @@ export interface ContactState {
   lastKnown: { x: number; y: number; facing: number; t: number } | null;
 }
 
+// v5 §3: one per-observer DESIGNATION per tracked object (hostile ships AND
+// unresolved enemy decoys — a decoy contact must be indistinguishable from
+// a ship contact, so both draw letters from the same book and get the same
+// XO ceremony; this deliberately reverses the v4.1 "decoys get no
+// transition lines" call, which would unmask them by silence in a lettered
+// world). The letter doubles as the snapshot contact id — the old
+// object-keyed cids let a JSON-reading client correlate tracks the XO
+// claims it cannot, and told ships from decoys by prefix.
+export interface ContactRecord {
+  letter: string; // "Alpha" — stable per observer unless correlation fails
+  identified: boolean; // ID tier reached: ship -> callsign known; decoy -> resolved
+  prevTier: 0 | 1 | 2 | 3; // last announced tier (drives transition lines)
+  lostAt: number | null; // tickCount when the track dropped to tier 0
+  lastKnown: { x: number; y: number; facing: number; t: number } | null;
+}
+
 export type PaintedState = "none" | "acquiring" | "locked";
 
 export interface Comparison {
@@ -118,6 +140,10 @@ export interface StandingOrder {
 
 export interface Ship {
   id: ShipId;
+  // v5 §3: permanent, server-assigned, never typed. An observer learns it
+  // only at ID tier (or a §7 broadcast voiceprint). Tests default it to
+  // the ship id.
+  callsign: string;
   // v5 §2 teams: null = FFA (everyone hostile). Two ships are hostile iff
   // ids differ and either has no team or the teams differ.
   team: string | null;
@@ -148,7 +174,12 @@ export interface Ship {
   underPdcFire: boolean; // edge flag: were we taking PDC hull fire last tick
   propellant: number; // 0..PROPELLANT_MAX (drones exempt: stays full)
   propellantTier: number; // lowest warning tier announced (100/50/25/10/0)
-  lock: LockState; // my lock on the enemy
+  lock: LockState; // my lock on the designated target
+  // v5 §3: explicit lock designation — a contact-book KEY ("s<id>"/"d<id>")
+  // chosen via set_lock_target. While set, the auto-picker stands down; a
+  // designated decoy contact simply never completes (the fiction: no hard
+  // return), which is fog-correct — rejecting it would unmask the decoy.
+  lockDesignation: string | null;
   prevPainted: PaintedState; // enemy's lock on me last tick (edge-triggered notices)
   sigSpikeLaunch: number; // seconds of +SIG_SPIKE_LAUNCH remaining after firing
   droneCooldown: number; // drone-only: seconds until it may fire again
@@ -258,11 +289,18 @@ export type SimEvent =
   // v5 §2: a ship's destruction is its own event (the match flows that
   // captain into spectator mode); gameover fires when hostilities are over.
   // placements: final standings, winner-first (survivors, then deaths in
-  // reverse order). winner is a ship id in FFA, a team name in Teams.
-  | { kind: "death"; ship: ShipId; attacker: ShipId | null }
+  // reverse order). winner is a ship id in FFA, a team name in Teams;
+  // winnerName/placementNames carry callsigns for banners (§3).
+  | { kind: "death"; ship: ShipId; callsign: string; attacker: ShipId | null }
   // quiet ghost scuttle (v5 §2): the seat is freed but nobody is told
   | { kind: "scuttle"; ship: ShipId }
-  | { kind: "gameover"; winner: string; placements: string[] };
+  | {
+      kind: "gameover";
+      winner: string;
+      winnerName: string;
+      placements: string[];
+      placementNames: string[];
+    };
 
 // ---------- angle helpers ----------
 
@@ -352,6 +390,24 @@ export class Sim {
   private nextId = 1;
   // v5 §2: per-viewer-per-target sensor state (see ContactState).
   private shipContacts = new Map<ShipId, Map<ShipId, ContactState>>();
+  // v5 §3: per-viewer designation books. Records keyed "s<shipId>" /
+  // "d<decoyId>"; tombstones are ghosts orphaned by failed correlation
+  // (the old letter's last-known fix stays on the map — deleting it would
+  // leak that the new letter is the same hull).
+  private contactBooks = new Map<
+    ShipId,
+    {
+      records: Map<string, ContactRecord>;
+      counter: number;
+      tombstones: { letter: string; lastKnown: { x: number; y: number; facing: number; t: number } }[];
+    }
+  >();
+  // v5 §3: per-viewer opaque rumble aliases ("r1", "r2", ...) — the wire
+  // must not let a client correlate rumbles across time by object id, nor
+  // tell a ship rumble from a decoy rumble by prefix (invariants 11/13).
+  private rumbleAliases = new Map<ShipId, Map<string, string>>();
+  // Callsigns survive ship removal (placements/banners name the fallen).
+  private callsigns = new Map<ShipId, string>();
   private fx: Fx[] = [];
   private queues = new Map<ShipId, Command[]>();
   // per-viewer set of enemy missile ids already announced as inbound
@@ -386,10 +442,12 @@ export class Sim {
     y: number,
     facing: number,
     isDrone = false,
-    team: string | null = null
+    team: string | null = null,
+    callsign: string = id
   ): Ship {
     const ship: Ship = {
       id,
+      callsign,
       team,
       ghost: false,
       ghostTimerS: 0,
@@ -414,6 +472,7 @@ export class Sim {
       propellant: C.PROPELLANT_MAX,
       propellantTier: 100,
       lock: { target: null, progress: 0, has: false, grace: 0 },
+      lockDesignation: null,
       prevPainted: "none",
       sigSpikeLaunch: 0,
       pingCooldownS: 0,
@@ -448,6 +507,7 @@ export class Sim {
     });
     if (isDrone) ship.thrust = C.DRONE_THRUST_PERCENT; // signature only
     this.ships.set(id, ship);
+    this.callsigns.set(id, callsign);
     this.queues.set(id, []);
     this.announcedMissiles.set(id, new Set());
     this.rumbleState.set(id, new Map());
@@ -525,6 +585,98 @@ export class Sim {
     return st;
   }
 
+  // ---------- v5 §3: designations ----------
+
+  private bookOf(viewerId: ShipId) {
+    let book = this.contactBooks.get(viewerId);
+    if (!book) {
+      book = { records: new Map(), counter: 0, tombstones: [] };
+      this.contactBooks.set(viewerId, book);
+    }
+    return book;
+  }
+
+  private nextLetter(book: { counter: number }): string {
+    const n = book.counter++;
+    const base = C.DESIGNATION_LETTERS[n % C.DESIGNATION_LETTERS.length];
+    const round = Math.floor(n / C.DESIGNATION_LETTERS.length);
+    return round === 0 ? base : `${base}-${round + 1}`;
+  }
+
+  // The record an observer keeps on one trackable object ("s<shipId>" or
+  // "d<decoyId>"), if any. Records are created by updateDesignations when
+  // a contact is first acquired.
+  recordOn(viewerId: ShipId, key: string): ContactRecord | undefined {
+    return this.contactBooks.get(viewerId)?.records.get(key);
+  }
+
+  // What this viewer's XO calls a tracked ship: the callsign once
+  // identified, the letter designation otherwise, and a generic word if
+  // it was never designated at all (e.g. an unseen attacker).
+  labelFor(viewerId: ShipId, targetId: ShipId): string {
+    const rec = this.recordOn(viewerId, `s${targetId}`);
+    if (!rec) return "the contact";
+    if (rec.identified) return this.callsigns.get(targetId) ?? "the contact";
+    return `Contact ${rec.letter}`;
+  }
+
+  // Resolve a spoken contact reference against this viewer's book: a
+  // designation letter ("bravo", "Contact Bravo", "bravo-2") or an
+  // IDENTIFIED callsign ("kestrel" — asking for one you haven't earned is
+  // a miss, never a leak). Tombstoned letters resolve too ("t:<letter>").
+  resolveContactRef(viewerId: ShipId, ref: string): string | null {
+    const book = this.contactBooks.get(viewerId);
+    if (!book) return null;
+    const norm = ref.trim().toLowerCase().replace(/^contact\s+/, "");
+    for (const [key, rec] of book.records) {
+      if (rec.letter.toLowerCase() === norm) return key;
+    }
+    for (const [key, rec] of book.records) {
+      if (!rec.identified || !key.startsWith("s")) continue;
+      const cs = this.callsigns.get(key.slice(1));
+      if (cs && cs.toLowerCase() === norm) return key;
+    }
+    for (const t of book.tombstones) {
+      if (t.letter.toLowerCase() === norm) return `t:${t.letter}`;
+    }
+    return null;
+  }
+
+  // Fog-aware position of one contact-book entry: live sensor data at the
+  // earned tier, else the record's last-known fix (live:false drives the
+  // helm's "lost him" line).
+  private recordPos(
+    viewer: Ship,
+    key: string
+  ): { x: number; y: number; live: boolean } | null {
+    const book = this.contactBooks.get(viewer.id);
+    if (key.startsWith("t:")) {
+      const t = book?.tombstones.find((k) => `t:${k.letter}` === key);
+      return t ? { x: t.lastKnown.x, y: t.lastKnown.y, live: false } : null;
+    }
+    const rec = book?.records.get(key);
+    if (!rec) return null;
+    if (key.startsWith("s")) {
+      const target = this.ships.get(key.slice(1));
+      const st = target ? this.contactOn(viewer.id, target.id) : null;
+      if (target && st && st.tier >= 2) return { x: target.x, y: target.y, live: true };
+      if (st && st.tier === 1 && st.faint) return { x: st.faint.x, y: st.faint.y, live: true };
+    } else {
+      const did = Number(key.slice(1));
+      const d = this.decoys.find((k) => k.id === did);
+      if (d) {
+        const tier = this.decoyTierFor(viewer, d);
+        if (tier >= 2) return { x: d.x, y: d.y, live: true };
+        if (tier === 1) {
+          const fix = this.decoyFaint.get(viewer.id)?.get(did);
+          if (fix) return { x: fix.x, y: fix.y, live: true };
+        }
+      }
+    }
+    if (rec.lastKnown) return { x: rec.lastKnown.x, y: rec.lastKnown.y, live: false };
+    return null;
+  }
+
   // Nearest hostile this viewer holds at TRACK or better — the subject of
   // the nearest-hostile standing-order metrics (v5 §3 spec change).
   private nearestTrackedHostile(ship: Ship): Ship | null {
@@ -565,9 +717,15 @@ export class Sim {
           // maneuver order replaces this goal.
           const pos = this.resolveTargetPos(ship, p.target);
           if (!pos) {
-            return p.target === "nearest_rumble"
-              ? "No rumble to steer on, Captain."
-              : "No contact to point at, Captain.";
+            if (p.target === "nearest_rumble") return "No rumble to steer on, Captain.";
+            if (
+              !["enemy_ship", "nearest_missile", "nearest_decoy", "nearest_contact"].includes(
+                p.target
+              )
+            ) {
+              return "No contact by that name on the board, Captain.";
+            }
+            return "No contact to point at, Captain.";
           }
           ship.goal = {
             mode: "track",
@@ -675,6 +833,23 @@ export class Sim {
             speak: `Active ping — he's lit himself up. Bearing ${spokenBearing(bearingTo(other.x, other.y, ship.x, ship.y))}.`,
             alert: true,
           });
+        }
+        return null;
+      }
+      case "set_lock_target": {
+        // v5 §3: explicit lock designation by contact ref. Designating an
+        // unresolved DECOY contact is accepted (the captain can't know) —
+        // the lock just never completes. Rejecting would unmask the decoy.
+        const ref = String(cmd.params.contact ?? "");
+        const key = this.resolveContactRef(ship.id, ref);
+        if (!key || key.startsWith("t:")) {
+          return "No contact by that name on the board, Captain.";
+        }
+        ship.lockDesignation = key;
+        const shipTarget = key.startsWith("s") ? key.slice(1) : null;
+        if (ship.lock.target !== shipTarget || shipTarget === null) {
+          // new subject: any progress on the old one is void
+          ship.lock = { target: shipTarget, progress: 0, has: false, grace: 0 };
         }
         return null;
       }
@@ -1201,9 +1376,32 @@ export class Sim {
   private destroyShip(target: Ship, attackerId: ShipId | null, events: SimEvent[]): void {
     if (!this.ships.has(target.id)) return; // already gone (same-substep double kill)
     this.fx.push({ type: "boom", x: target.x, y: target.y });
+    // v5 §3: whoever could WATCH it die closes the book on that track (no
+    // ghost, and the killer's XO names the kill); everyone else keeps a
+    // last-known ghost of a contact that simply went dark — an unseen
+    // death is information nobody earned.
+    for (const viewer of this.ships.values()) {
+      if (viewer.id === target.id || !this.canObserve(viewer, target.x, target.y)) continue;
+      const label = this.labelFor(viewer.id, target.id);
+      this.contactBooks.get(viewer.id)?.records.delete(`s${target.id}`);
+      // kill line to the INVOLVED party only (§10: no global kill feed) —
+      // other observers get the boom fx and a track that simply ends
+      if (viewer.id === attackerId && !viewer.isDrone && label !== "the contact") {
+        events.push({
+          kind: "notice",
+          ship: viewer.id,
+          text: `${label} is destroyed.`,
+        });
+      }
+    }
     this.removeShip(target.id);
     this.placements.push(target.id);
-    events.push({ kind: "death", ship: target.id, attacker: attackerId });
+    events.push({
+      kind: "death",
+      ship: target.id,
+      callsign: this.callsigns.get(target.id) ?? target.id,
+      attacker: attackerId,
+    });
     this.checkVictory(events);
   }
 
@@ -1247,6 +1445,8 @@ export class Sim {
     this.prevVisibleMissiles.delete(id);
     this.decoyFaint.delete(id);
     this.rumbleState.delete(id);
+    this.rumbleAliases.delete(id);
+    this.contactBooks.delete(id);
     for (const state of this.rumbleState.values()) state.delete(`s${id}`);
   }
 
@@ -1258,12 +1458,15 @@ export class Sim {
     if (alive.some((s) => this.hostilesOf(s).length > 0)) return;
     const first = alive[0];
     this.winner = first ? (first.team ?? first.id) : (this.placements[this.placements.length - 1] ?? "nobody");
+    // standings, winner-first: survivors, then the fallen in reverse
+    // death order
+    const placements = [...alive.map((s) => s.id), ...[...this.placements].reverse()];
     events.push({
       kind: "gameover",
       winner: this.winner,
-      // standings, winner-first: survivors, then the fallen in reverse
-      // death order
-      placements: [...alive.map((s) => s.id), ...[...this.placements].reverse().filter((id) => !alive.some((s) => s.id === id))],
+      winnerName: first?.team ?? this.callsigns.get(this.winner) ?? this.winner,
+      placements,
+      placementNames: placements.map((id) => this.callsigns.get(id) ?? id),
     });
   }
 
@@ -1316,11 +1519,26 @@ export class Sim {
   // range, NO vector, NO tier. Decoys rumble exactly like ships (invariant
   // 11: nothing may unmask a decoy below ID tier — a silent "contact"
   // would).
-  rumblesFor(ship: Ship): { cid: string; bearing: number; loud: number }[] {
-    const out: { cid: string; bearing: number; loud: number }[] = [];
-    const hear = (x: number, y: number, sig: number, cid: string) => {
+  // `key` is the real emitter id (internal bookkeeping only); `cid` is a
+  // per-viewer opaque alias ("r1", "r2", ...) — the wire must not let a
+  // client correlate rumbles by object identity or tell ships from decoys
+  // by prefix (invariants 11/13; v5 §3 hardening).
+  rumblesFor(ship: Ship): { key: string; cid: string; bearing: number; loud: number }[] {
+    let aliases = this.rumbleAliases.get(ship.id);
+    if (!aliases) {
+      aliases = new Map();
+      this.rumbleAliases.set(ship.id, aliases);
+    }
+    const out: { key: string; cid: string; bearing: number; loud: number }[] = [];
+    const hear = (x: number, y: number, sig: number, key: string) => {
       if (dist(ship.x, ship.y, x, y) <= this.detectionRange(sig) * C.HEARING_RANGE_MULT) {
+        let cid = aliases.get(key);
+        if (!cid) {
+          cid = `r${aliases.size + 1}`;
+          aliases.set(key, cid);
+        }
         out.push({
+          key,
           cid,
           bearing: Math.round(norm360(bearingTo(ship.x, ship.y, x, y))) % 360, // 359.6 rounds to 360 -> wrap to 000
           loud: Math.min(1, sig / 150),
@@ -1348,7 +1566,7 @@ export class Sim {
     const state = this.rumbleState.get(ship.id)!;
     for (const st of state.values()) st.cooldown = Math.max(0, st.cooldown - 1 / C.TICK_RATE_HZ);
     const current = this.rumblesFor(ship);
-    const liveIds = new Set(current.map((r) => r.cid));
+    const liveIds = new Set(current.map((r) => r.key)); // real keys internally
 
     // Spoken bearings quantize to 10° — a rumble is vague by nature, and
     // exact bearings made every announcement a UNIQUE string, each one a
@@ -1357,9 +1575,9 @@ export class Sim {
     // Internal drift tracking stays exact; the chevron shows the true bearing.
     const spoken = (b: number) => fmtBearing((Math.round(b / 10) * 10) % 360);
     for (const r of current) {
-      const st = state.get(r.cid);
+      const st = state.get(r.key);
       if (!st || (!st.live && st.cooldown <= 0)) {
-        state.set(r.cid, { bearing: r.bearing, cooldown: C.RUMBLE_ANNOUNCE_COOLDOWN_S, live: true });
+        state.set(r.key, { bearing: r.bearing, cooldown: C.RUMBLE_ANNOUNCE_COOLDOWN_S, live: true });
         events.push({
           kind: "notice",
           ship: ship.id,
@@ -1385,18 +1603,18 @@ export class Sim {
       }
     }
 
-    for (const [cid, st] of state) {
-      if (liveIds.has(cid)) continue;
+    for (const [key, st] of state) {
+      if (liveIds.has(key)) continue;
       if (!st.live) {
-        if (st.cooldown <= 0) state.delete(cid); // expired ghost entry
+        if (st.cooldown <= 0) state.delete(key); // expired ghost entry
         continue;
       }
       st.live = false;
       // silent when it hardened into a contact (rumble -> faint handoff)
-      const becameContact = cid.startsWith("s")
-        ? this.contactOn(ship.id, cid.slice(1)).tier >= 1
+      const becameContact = key.startsWith("s")
+        ? this.contactOn(ship.id, key.slice(1)).tier >= 1
         : this.decoys.some(
-            (d) => `d${d.id}` === cid && this.decoyTierFor(ship, d) >= 1
+            (d) => `d${d.id}` === key && this.decoyTierFor(ship, d) >= 1
           );
       if (!becameContact) {
         st.cooldown = C.RUMBLE_ANNOUNCE_COOLDOWN_S;
@@ -1512,6 +1730,13 @@ export class Sim {
           live: true,
         };
       }
+      default: {
+        // v5 §3: a contact ref — designation letter or identified callsign,
+        // resolved against this captain's own book
+        const key = this.resolveContactRef(ship.id, target);
+        if (!key) return null;
+        return this.recordPos(ship, key);
+      }
     }
   }
 
@@ -1528,7 +1753,11 @@ export class Sim {
     const pos = this.resolveTargetPos(ship, g.target);
     if (pos) g.degrees = bearingTo(ship.x, ship.y, pos.x, pos.y);
     const live = pos !== null && pos.live;
-    if (g.target === "enemy_ship" || g.target === "nearest_contact") {
+    const bearingOnly =
+      g.target === "nearest_missile" ||
+      g.target === "nearest_decoy" ||
+      g.target === "nearest_rumble";
+    if (!bearingOnly) {
       if (!live && !g.lost) {
         g.lost = true;
         if (!ship.isDrone) {
@@ -1636,8 +1865,9 @@ export class Sim {
     // notices; then ship-to-ship missile locks (needs fresh visibility) and
     // painted warnings (needs both locks updated)
     for (const ship of this.ships.values()) {
-      this.updateSensors(ship, events);
+      this.updateSensors(ship);
       this.updateDecoyContacts(ship);
+      this.updateDesignations(ship, events); // after tiers + decoy fixes refresh
       this.updateRumbles(ship, events); // after tiers refresh: handoff needs fresh contactTier
       this.announceInboundMissiles(ship, events);
       this.updateCollisionWarning(ship, events);
@@ -1826,10 +2056,26 @@ export class Sim {
       L.progress = 0;
       L.grace = 0;
       L.target = null;
+      if (ship.lockDesignation?.startsWith("s")) ship.lockDesignation = null;
     }
 
-    // idle (nothing accrued): (re)designate the nearest eligible hostile
-    if (!L.has && L.progress === 0) {
+    // v5 §3: an explicit designation stands until replaced or its object
+    // leaves the board; a designated decoy contact keeps L.target null —
+    // the seeker never gets a hard return, so nothing accrues (fog-safe)
+    if (ship.lockDesignation) {
+      const key = ship.lockDesignation;
+      const gone = key.startsWith("s")
+        ? !this.ships.has(key.slice(1))
+        : !this.decoys.some((d) => `d${d.id}` === key);
+      if (gone) {
+        ship.lockDesignation = null; // book already announced the fade
+      } else if (key.startsWith("s")) {
+        L.target = key.slice(1);
+      }
+    }
+
+    // idle (nothing accrued) and undesignated: auto-pick nearest eligible
+    if (!L.has && L.progress === 0 && !ship.lockDesignation) {
       const pick = this.nearestOf(ship, this.hostilesOf(ship).filter(eligible));
       if (pick) L.target = pick.id;
     }
@@ -1884,15 +2130,34 @@ export class Sim {
     const was = ship.prevPainted;
     ship.prevPainted = now;
     if (now === was) return;
+    // v5 §3: with several hostiles the source is ambiguous — the RWR names
+    // the emitter's bearing ("We're being painted — bearing 190"). In a
+    // 1v1 the classic lines stand (and the TTS cache keeps its stock hits).
+    const painter = this.hostilesOf(ship)
+      .filter((h) => h.lock.target === ship.id && (h.lock.has || h.lock.progress > 0))
+      .sort((a, b) => Number(b.lock.has) - Number(a.lock.has))[0];
+    const ambiguous = this.hostilesOf(ship).length > 1 && painter;
+    const brgDeg = painter ? bearingTo(ship.x, ship.y, painter.x, painter.y) : 0;
     if (now === "acquiring" && was === "none") {
       events.push({
         kind: "notice",
         ship: ship.id,
-        text: "Captain, we're being painted — missile lock in progress!",
+        text: ambiguous
+          ? `Captain, we're being painted — bearing ${fmtBearing(brgDeg)}!`
+          : "Captain, we're being painted — missile lock in progress!",
+        ...(ambiguous
+          ? { speak: `Captain, we're being painted — bearing ${spokenBearing(brgDeg)}!` }
+          : {}),
         alert: true,
       });
     } else if (now === "locked") {
-      events.push({ kind: "notice", ship: ship.id, text: "They have lock!", alert: true });
+      events.push({
+        kind: "notice",
+        ship: ship.id,
+        text: ambiguous ? `They have lock — bearing ${fmtBearing(brgDeg)}!` : "They have lock!",
+        ...(ambiguous ? { speak: `They have lock — bearing ${spokenBearing(brgDeg)}!` } : {}),
+        alert: true,
+      });
     } else if (now === "none") {
       events.push({ kind: "notice", ship: ship.id, text: "Enemy lock is off us." });
     }
@@ -2171,13 +2436,12 @@ export class Sim {
   }
 
 
-  // Re-evaluate this viewer's contact tier on every hostile: refresh the
-  // faint caches and last-known ghosts, and speak the tier transitions
-  // (v5 §2: one pass per hostile; §3 will name them by designation).
-  private updateSensors(ship: Ship, events: SimEvent[]): void {
+  // Re-evaluate this viewer's contact tier on every hostile and refresh
+  // the faint caches and last-known ghosts. Announcements moved to
+  // updateDesignations (v5 §3): the XO speaks in designation letters.
+  private updateSensors(ship: Ship): void {
     for (const enemy of this.hostilesOf(ship)) {
       const st = this.contactOn(ship.id, enemy.id);
-      const was = st.tier;
       const tier = this.contactTierFor(ship, enemy);
       st.tier = tier;
 
@@ -2207,61 +2471,209 @@ export class Sim {
           st.lastKnown = { x: enemy.x, y: enemy.y, facing: enemy.facing, t: this.tickCount };
         }
       }
+    }
+  }
 
-      if (tier === was || ship.isDrone) continue;
-      const brgDeg = bearingTo(ship.x, ship.y, enemy.x, enemy.y);
+  // v5 §3: the designation pass. Hostile SHIPS and unresolved enemy DECOYS
+  // share one book per observer — same letters, same XO ceremony (anything
+  // less unmasks decoys by silence). Handles acquisition (new letter or
+  // correlated return), tier-transition lines, the identification event,
+  // and loss (last-known ghost under the letter).
+  private updateDesignations(ship: Ship, events: SimEvent[]): void {
+    const book = this.bookOf(ship.id);
+    const say = (text: string, speak?: string, alert = false) => {
+      if (!ship.isDrone) {
+        events.push({ kind: "notice", ship: ship.id, text, ...(speak ? { speak } : {}), alert });
+      }
+    };
+
+    // one trackable object per pass entry: current tier + a live position
+    // for bearings/ranges + identity data for the ID event
+    type Entry = {
+      key: string;
+      tier: 0 | 1 | 2 | 3;
+      x: number;
+      y: number;
+      lastKnown: ContactRecord["lastKnown"];
+      idLine: (letter: string) => { text: string; speak: string };
+    };
+    const entries: Entry[] = [];
+    for (const h of this.hostilesOf(ship)) {
+      const st = this.contactOn(ship.id, h.id);
+      entries.push({
+        key: `s${h.id}`,
+        tier: st.tier,
+        x: h.x,
+        y: h.y,
+        lastKnown: st.lastKnown,
+        idLine: (letter) => ({
+          text: `Close-range ID on Contact ${letter}: it's ${h.callsign}.`,
+          speak: `Contact identified — it's ${h.callsign}.`,
+        }),
+      });
+    }
+    const faintFixes = this.decoyFaint.get(ship.id);
+    for (const d of this.decoys) {
+      if (d.owner === ship.id) continue;
+      const tier = this.decoyTierFor(ship, d);
+      const fix = faintFixes?.get(d.id);
+      const px = tier === 1 && fix ? fix.x : d.x;
+      const py = tier === 1 && fix ? fix.y : d.y;
+      entries.push({
+        key: `d${d.id}`,
+        tier,
+        x: px,
+        y: py,
+        lastKnown:
+          tier >= 1
+            ? { x: px, y: py, facing: 0, t: this.tickCount }
+            : null,
+        idLine: (letter) => ({
+          text: `Close-range ID on Contact ${letter}: it's a decoy.`,
+          speak: `Contact identified — it's a decoy.`,
+        }),
+      });
+    }
+
+    const seen = new Set<string>();
+    for (const e of entries) {
+      seen.add(e.key);
+      let rec = book.records.get(e.key);
+      const brgDeg = bearingTo(ship.x, ship.y, e.x, e.y);
       const brg = fmtBearing(brgDeg);
-      const rangeKm = Math.round(dist(ship.x, ship.y, enemy.x, enemy.y) / 1000);
-      // spoken variants: bearing only, digit words — ranges and "km" garble
-      // in TTS and multiply the cache (bearing is the speakable currency,
-      // v4.3 §3; the exact numbers stay in the transcript text)
-      if (tier === 0) {
-        const lk = st.lastKnown;
-        const lkDeg = lk ? bearingTo(ship.x, ship.y, lk.x, lk.y) : brgDeg;
-        const lkBrg = fmtBearing(lkDeg);
-        events.push({
-          kind: "notice",
-          ship: ship.id,
-          text:
+      const rangeKm = Math.round(dist(ship.x, ship.y, e.x, e.y) / 1000);
+
+      if (e.tier >= 1 && !rec) {
+        // first acquisition ever
+        rec = { letter: this.nextLetter(book), identified: false, prevTier: 0, lostAt: null, lastKnown: null };
+        book.records.set(e.key, rec);
+        say(
+          e.tier === 1
+            ? `New contact — designating ${rec.letter}. Faint, bearing ${brg}, range approximately ${rangeKm} km.`
+            : `New contact — designating ${rec.letter}. I have a track — bearing ${brg}, range ${rangeKm} km.`,
+          `New contact — designating ${rec.letter}. Bearing ${spokenBearing(brgDeg)}.`
+        );
+      } else if (e.tier >= 1 && rec && rec.lostAt !== null) {
+        // reacquisition: keep the letter only if the XO can plausibly
+        // correlate — recent loss AND within max-speed reach of the last
+        // known fix (plus faint noise slack). Otherwise the old fix stays
+        // on the map as a tombstone ghost and a NEW letter opens
+        // (identification resets with it).
+        const elapsedS = (this.tickCount - rec.lostAt) / C.TICK_RATE_HZ;
+        const reach = C.MAX_SPEED_MPS * elapsedS + C.FAINT_POS_NOISE_M * 2;
+        const plausible =
+          elapsedS <= C.CONTACT_CORRELATE_S &&
+          (!rec.lastKnown || dist(e.x, e.y, rec.lastKnown.x, rec.lastKnown.y) <= reach);
+        if (plausible) {
+          rec.lostAt = null;
+          const label = rec.identified ? this.callsigns.get(e.key.slice(1)) ?? `Contact ${rec.letter}` : `Contact ${rec.letter}`;
+          say(
+            `${label} is back — bearing ${brg}, range approximately ${rangeKm} km.`,
+            `${label} is back — bearing ${spokenBearing(brgDeg)}.`
+          );
+          rec.prevTier = 1; // transition lines below take it from faint
+        } else {
+          if (rec.lastKnown) book.tombstones.push({ letter: rec.letter, lastKnown: rec.lastKnown });
+          rec.letter = this.nextLetter(book);
+          rec.identified = false;
+          rec.lostAt = null;
+          rec.lastKnown = null;
+          rec.prevTier = 0;
+          say(
+            e.tier === 1
+              ? `New contact — designating ${rec.letter}. Faint, bearing ${brg}, range approximately ${rangeKm} km.`
+              : `New contact — designating ${rec.letter}. I have a track — bearing ${brg}, range ${rangeKm} km.`,
+            `New contact — designating ${rec.letter}. Bearing ${spokenBearing(brgDeg)}.`
+          );
+        }
+      }
+      if (!rec) continue;
+
+      // resolved decoys leave the contact world (they render as decoys);
+      // no further ceremony
+      const isDecoy = e.key.startsWith("d");
+      if (isDecoy && rec.identified) {
+        rec.prevTier = e.tier;
+        rec.lastKnown = null;
+        continue;
+      }
+
+      const was = rec.prevTier;
+      const label = rec.identified
+        ? this.callsigns.get(e.key.slice(1)) ?? `Contact ${rec.letter}`
+        : `Contact ${rec.letter}`;
+
+      if (e.tier >= 1) rec.lastKnown = e.lastKnown ?? rec.lastKnown;
+
+      if (e.tier !== was) {
+        if (e.tier === 0) {
+          const lk = rec.lastKnown;
+          const lkDeg = lk ? bearingTo(ship.x, ship.y, lk.x, lk.y) : brgDeg;
+          rec.lostAt = this.tickCount;
+          say(
             was >= 2
-              ? `Track lost — last known bearing ${lkBrg}.`
-              : `Contact faded — last known bearing ${lkBrg}.`,
-          speak:
+              ? `Track lost on ${label} — last known bearing ${fmtBearing(lkDeg)}.`
+              : `${label} faded — last known bearing ${fmtBearing(lkDeg)}.`,
             was >= 2
-              ? `Track lost — last known bearing ${spokenBearing(lkDeg)}.`
-              : `Contact faded — last known bearing ${spokenBearing(lkDeg)}.`,
-          alert: was >= 2,
-        });
-      } else if (tier === 1) {
-        events.push({
-          kind: "notice",
-          ship: ship.id,
-          text:
-            was === 0
-              ? `Faint contact — bearing ${brg}, range approximately ${rangeKm} km.`
-              : "Losing resolution — contact's gone faint.",
-          ...(was === 0
-            ? { speak: `Faint contact — bearing ${spokenBearing(brgDeg)}.` }
-            : {}),
-        });
-      } else if (tier === 2) {
-        events.push({
-          kind: "notice",
-          ship: ship.id,
-          text:
-            was < 2
-              ? `Contact firming up — I have a track. Bearing ${brg}, range ${rangeKm} km.`
-              : "Lost the detail readout — still holding the track.",
-          ...(was < 2
-            ? { speak: `Contact firming up — I have a track. Bearing ${spokenBearing(brgDeg)}.` }
-            : {}),
-        });
-      } else {
-        events.push({
-          kind: "notice",
-          ship: ship.id,
-          text: "Close-range ID, Captain — full readout on the contact.",
-        });
+              ? `Track lost on ${label} — last known bearing ${spokenBearing(lkDeg)}.`
+              : `${label} faded — last known bearing ${spokenBearing(lkDeg)}.`,
+            was >= 2
+          );
+        } else if (e.tier === 1 && was >= 2) {
+          say(`Losing resolution — ${label}'s gone faint.`);
+        } else if (e.tier === 2) {
+          if (was < 2 && was > 0) {
+            say(
+              `${label} firming up — I have a track. Bearing ${brg}, range ${rangeKm} km.`,
+              `${label} firming up — I have a track. Bearing ${spokenBearing(brgDeg)}.`
+            );
+          } else if (was === 3) {
+            say(`Lost the detail readout on ${label} — still holding the track.`);
+          }
+        } else if (e.tier === 3) {
+          if (!rec.identified) {
+            rec.identified = true;
+            const line = e.idLine(rec.letter);
+            say(line.text, line.speak);
+          } else if (!isDecoy) {
+            say(`Close-range ID — full readout on ${this.callsigns.get(e.key.slice(1)) ?? label}.`);
+          }
+        }
+        rec.prevTier = e.tier;
+      }
+    }
+
+    // objects gone from the board entirely (decoy expired, ship destroyed
+    // or scuttled UNOBSERVED — destroyShip already purged the records of
+    // everyone who watched it die): close the record as a loss so the
+    // ghost lingers — a lie outliving its decoy is the deception working,
+    // and an unseen death is just a track that went dark
+    for (const [key, rec] of book.records) {
+      if (seen.has(key) || rec.lostAt !== null) continue;
+      const isDecoyKey = key.startsWith("d");
+      if (isDecoyKey && rec.identified) {
+        // a RESOLVED decoy leaving the board: nothing to mourn
+        book.records.delete(key);
+        continue;
+      }
+      if (rec.prevTier >= 1) {
+        rec.lostAt = this.tickCount;
+        const label =
+          rec.identified && !isDecoyKey
+            ? this.callsigns.get(key.slice(1)) ?? `Contact ${rec.letter}`
+            : `Contact ${rec.letter}`;
+        const lk = rec.lastKnown;
+        const lkDeg = lk ? bearingTo(ship.x, ship.y, lk.x, lk.y) : 0;
+        say(
+          rec.prevTier >= 2
+            ? `Track lost on ${label} — last known bearing ${fmtBearing(lkDeg)}.`
+            : `${label} faded — last known bearing ${fmtBearing(lkDeg)}.`,
+          rec.prevTier >= 2
+            ? `Track lost on ${label} — last known bearing ${spokenBearing(lkDeg)}.`
+            : `${label} faded — last known bearing ${spokenBearing(lkDeg)}.`,
+          rec.prevTier >= 2
+        );
+        rec.prevTier = 0;
       }
     }
   }
@@ -2515,11 +2927,21 @@ export class Sim {
   // position only; track = true position + vector; id = + status detail.
   private intelOn(ship: Ship, enemy: Ship): Record<string, unknown> {
     const st = this.contactOn(ship.id, enemy.id);
+    const rec = this.recordOn(ship.id, `s${enemy.id}`);
+    // designation joins every intel shape (v5 §3): the letter is how the
+    // captain names this track; the callsign appears ONLY once identified
+    const naming = rec
+      ? {
+          designation: rec.letter,
+          ...(rec.identified ? { callsign: enemy.callsign } : {}),
+        }
+      : {};
     const tier = st.tier;
     if (tier >= 2) {
       const range = dist(ship.x, ship.y, enemy.x, enemy.y);
       const brg = bearingTo(ship.x, ship.y, enemy.x, enemy.y);
       return {
+        ...naming,
         contact_tier: tier === 3 ? "id" : "track",
         bearing: Math.round(brg),
         bearing_off_nose: Math.round(Math.abs(angDiff(ship.facing, brg))),
@@ -2534,6 +2956,7 @@ export class Sim {
     if (tier === 1 && st.faint) {
       const brg = bearingTo(ship.x, ship.y, st.faint.x, st.faint.y);
       return {
+        ...naming,
         contact_tier: "faint",
         approx_bearing: Math.round(brg),
         approx_range_m: Math.round(dist(ship.x, ship.y, st.faint.x, st.faint.y)),
@@ -2543,6 +2966,7 @@ export class Sim {
     if (st.lastKnown) {
       const lk = st.lastKnown;
       return {
+        ...naming,
         contact_tier: "none",
         last_seen_seconds_ago: this.tickCount - lk.t,
         last_known_bearing: Math.round(bearingTo(ship.x, ship.y, lk.x, lk.y)),
@@ -2626,6 +3050,40 @@ export class Sim {
       lines.push(
         `Enemy: NO contact. Last seen ${intel.last_seen_seconds_ago}s ago, bearing ${fmtBearing(intel.last_known_bearing as number)}, range ${(((intel.last_known_range_m as number) / 1000)).toFixed(1)} km.`
       );
+    }
+    // v5 §3: the per-observer CONTACT TABLE — the names the captain may use
+    // as targets ("point at Bravo", "lock Kestrel"). Unresolved decoy
+    // contacts appear exactly like ship contacts (fog law).
+    const book = this.contactBooks.get(ship.id);
+    if (book && (book.records.size > 0 || book.tombstones.length > 0)) {
+      const rows: string[] = [];
+      for (const [key, rec] of book.records) {
+        if (key.startsWith("d") && rec.identified) continue; // resolved decoys aren't contacts
+        const name =
+          rec.identified && key.startsWith("s")
+            ? `${this.callsigns.get(key.slice(1))} (identified, was ${rec.letter})`
+            : `Contact ${rec.letter}`;
+        const pos = this.recordPos(ship, key);
+        if (rec.lostAt === null && pos && pos.live) {
+          const tierWord = rec.prevTier >= 3 ? "ID" : rec.prevTier === 2 ? "TRACK" : "FAINT";
+          const approx = rec.prevTier === 1 ? "~" : "";
+          rows.push(
+            `${name}: ${tierWord}, bearing ${fmtBearing(bearingTo(ship.x, ship.y, pos.x, pos.y))}, range ${approx}${(dist(ship.x, ship.y, pos.x, pos.y) / 1000).toFixed(1)} km`
+          );
+        } else if (rec.lastKnown) {
+          rows.push(
+            `${name}: LOST ${Math.round((this.tickCount - (rec.lostAt ?? this.tickCount)) / C.TICK_RATE_HZ)}s ago, last known bearing ${fmtBearing(bearingTo(ship.x, ship.y, rec.lastKnown.x, rec.lastKnown.y))}`
+          );
+        }
+      }
+      for (const t of book.tombstones) {
+        rows.push(
+          `Contact ${t.letter}: uncorrelated old track, last known bearing ${fmtBearing(bearingTo(ship.x, ship.y, t.lastKnown.x, t.lastKnown.y))}`
+        );
+      }
+      if (rows.length > 0) {
+        lines.push(`Contact table (these names are valid targets): ${rows.join(". ")}.`);
+      }
     }
     const rumbles = this.rumblesFor(ship);
     if (rumbles.length > 0) {
@@ -2847,13 +3305,21 @@ export class Sim {
 
     // contacts[]: the fog-of-war invariant lives here — never send data
     // above the earned tier. One entry per hostile ship the sensors hold
-    // (v5 §2); decoy contacts interleave below.
+    // (v5 §2); decoy contacts interleave below. The cid IS the designation
+    // letter (v5 §3): stable for the client exactly as long as the XO can
+    // correlate — the old object-keyed cids leaked linkage the fiction
+    // denies (and told ships from decoys by prefix). `label` carries the
+    // callsign once identified.
     const contacts: Record<string, unknown>[] = [];
     for (const enemy of this.hostilesOf(ship)) {
       const st = this.contactOn(id, enemy.id);
+      const rec = this.recordOn(id, `s${enemy.id}`);
+      if (!rec) continue; // designated on the next sensor pass
+      const label = rec.identified ? enemy.callsign : rec.letter;
       if (st.tier === 1 && st.faint) {
         contacts.push({
-          cid: `s${enemy.id}`, // stable per-object contact id for client interpolation
+          cid: rec.letter,
+          label,
           tier: 1,
           x: st.faint.x,
           y: st.faint.y,
@@ -2861,7 +3327,8 @@ export class Sim {
         });
       } else if (st.tier >= 2) {
         contacts.push({
-          cid: `s${enemy.id}`,
+          cid: rec.letter,
+          label,
           tier: st.tier,
           x: enemy.x,
           y: enemy.y,
@@ -2877,18 +3344,22 @@ export class Sim {
     }
     // Enemy decoys at faint/track read as ordinary unresolved contacts —
     // deliberately indistinguishable from a quiet ship (a fake facing is
-    // derived from drift so the sprite renders like any track). They only
-    // resolve as decoys at ID tier (the decoys[] list below).
+    // derived from drift so the sprite renders like any track; same
+    // designation letters, same label field). They only resolve as decoys
+    // at ID tier (the decoys[] list below).
     const faintFixes = this.decoyFaint.get(id)!;
     for (const d of this.decoys) {
       if (d.owner === id) continue;
       const tier = this.decoyTierFor(ship, d);
+      const rec = this.recordOn(id, `d${d.id}`);
+      if (!rec || rec.identified) continue; // resolved decoys render in decoys[]
       if (tier === 1) {
         const fix = faintFixes.get(d.id);
-        if (fix) contacts.push({ cid: `d${d.id}`, tier: 1, x: fix.x, y: fix.y });
+        if (fix) contacts.push({ cid: rec.letter, label: rec.letter, tier: 1, x: fix.x, y: fix.y });
       } else if (tier === 2) {
         contacts.push({
-          cid: `d${d.id}`,
+          cid: rec.letter,
+          label: rec.letter,
           tier: 2,
           x: d.x,
           y: d.y,
@@ -2898,24 +3369,41 @@ export class Sim {
         });
       }
     }
-    // last-known ghosts, one per hostile we hold NO live contact on
-    // (v5 §2). `ghost` keeps the legacy single-ghost shape (freshest) for
-    // the current client; the array is the contract going forward.
-    const ghosts: { x: number; y: number; facing: number; t: number }[] = [];
-    for (const enemy of this.hostilesOf(ship)) {
-      const st = this.contactOn(id, enemy.id);
-      if (st.tier === 0 && st.lastKnown) ghosts.push(st.lastKnown);
+    // last-known ghosts (v5 §3): one per LOST record — ships and decoy
+    // contacts alike, labeled by designation — plus the tombstones of
+    // letters the XO could not correlate. `ghost` keeps the legacy
+    // single-ghost shape (freshest) for the current client.
+    const ghosts: { x: number; y: number; facing: number; t: number; label?: string }[] = [];
+    const book = this.contactBooks.get(id);
+    if (book) {
+      for (const [key, rec] of book.records) {
+        if (rec.lostAt === null || !rec.lastKnown) continue;
+        const label =
+          rec.identified && key.startsWith("s")
+            ? this.callsigns.get(key.slice(1)) ?? rec.letter
+            : rec.letter;
+        ghosts.push({ ...rec.lastKnown, label });
+      }
+      for (const t of book.tombstones) {
+        ghosts.push({ ...t.lastKnown, label: t.letter });
+      }
     }
     ghosts.sort((a, b) => b.t - a.t);
     const ghost = ghosts[0] ?? null;
 
     // v4.5 hearing: bearing-only rumbles (below faint). Strictly {cid,
-    // bearing, loud} — the fog invariant forbids anything positional here.
-    const rumbles = this.rumblesFor(ship);
+    // bearing, loud} with per-viewer opaque cids — the fog invariant
+    // forbids anything positional or identity-linked here.
+    const rumbles = this.rumblesFor(ship).map((r) => ({
+      cid: r.cid,
+      bearing: r.bearing,
+      loud: r.loud,
+    }));
 
     return {
       tick: this.tickCount,
       you: {
+        callsign: ship.callsign, // own callsign (v5 §3): HUD badge
         x: ship.x,
         y: ship.y,
         vx: ship.vx,
@@ -3007,6 +3495,7 @@ export class Sim {
       spectator: true,
       ships: [...this.ships.values()].map((s) => ({
         id: s.id,
+        callsign: s.callsign,
         team: s.team,
         x: s.x,
         y: s.y,
