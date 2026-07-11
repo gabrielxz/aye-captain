@@ -20,6 +20,7 @@
             "deploy_decoy",
             "maneuver",
             "show_vector",
+            "sensor_ping",
             "set_standing_order",
             "query"
           ]
@@ -145,6 +146,13 @@
       "examples": [ {} ]
     },
 
+    "sensor_ping": {
+      "description": "Active sensor sweep: everything within ping range with line of sight (rocks and dust still block the ping) snaps to TRACK tier for a few seconds, then decays back to passive sensors — dark ships, decoys, and coasting torpedoes all show. THE PRICE: the ping reveals US at ID tier to every ship on the map for ~10 seconds, no line of sight required — we scream. On cooldown (~30s) the server rejects with 'Transducers recharging.' A ping FINDS ships; it cannot hold a missile lock by itself. Use on 'give me a ping', 'light them up', 'active sweep', 'go active'. If the captain says 'one ping only', a dry acknowledgement is permitted.",
+      "type": "object",
+      "properties": {},
+      "examples": [ {} ]
+    },
+
     "set_standing_order": {
       "description": "Register a conditional order: WHEN condition THEN actions. The server evaluates conditions every tick; when one fires, its actions are executed as if the captain had just issued them, and the order is consumed (one-shot) unless repeat=true. Max active standing orders: server-configured (suggest 3 for crewed/NeWk play, 6 for solo captains).",
       "type": "object",
@@ -228,7 +236,8 @@
             "pdc_ammo_seconds",
             "tubes_ready",
             "in_dust",
-            "collision_warning"
+            "collision_warning",
+            "rumble_present"
           ],
           "description": "enemy_contact_tier: 0 = no contact, 1 = faint, 2 = track, 3 = id ('if you get a track on him' => gte 2). enemy_range and enemy_bearing_off_nose are KNOWABLE ONLY AT TIER >= 2 — at faint or below the comparison is simply false (unknowable-metric rule). enemy_bearing_off_nose = absolute degrees between our facing and the bearing to the enemy (0 = dead ahead). Booleans (op=eq, value=true/false): missile_inbound (a missile is CURRENTLY detected inbound), have_lock (our missile lock is held), being_painted (the enemy is acquiring or holds a lock on US), in_dust (we are inside a dust cloud), collision_warning (a rock lies on our projected vector). tubes_ready = loaded launch tubes (0-2). pdc_ammo_seconds = seconds of point-defense fire remaining."
         },
@@ -477,6 +486,29 @@
         ]
       },
       {
+        "captain": "Give me a ping",
+        "commands": [
+          { "verb": "sensor_ping", "params": {}, "acknowledgement": "Ping away." }
+        ]
+      },
+      {
+        "captain": "One ping only, please",
+        "commands": [
+          { "verb": "sensor_ping", "params": {}, "acknowledgement": "One ping only, aye. Very well, Captain." }
+        ]
+      },
+      {
+        "captain": "Sing out if you hear anything out there",
+        "commands": [
+          { "verb": "set_standing_order", "params": {
+              "label": "listening watch",
+              "condition": { "metric": "rumble_present", "op": "eq", "value": true },
+              "actions": [ { "verb": "show_vector", "params": {} } ],
+              "repeat": false
+          }, "acknowledgement": "Listening watch set — I'll sing out at the first rumble." }
+        ]
+      },
+      {
         "captain": "Stop engines",
         "commands": [
           { "verb": "set_thrust", "params": { "percent": 0 }, "acknowledgement": "Engines stopped. We keep our drift, Captain." }
@@ -533,6 +565,8 @@
       "Stopping the ENGINES is not stopping the SHIP: 'stop/cut/kill the engines/thrusters/burn' = set_thrust 0 (drive off, ship keeps drifting). Only stopping the ship itself ('all stop', 'full stop', 'kill our velocity', 'bring us to a stop') is maneuver full_stop. When the captain names the engines, never emit full_stop.",
       "'Spin'/'rotate'/'pirouette' = a single relative set_heading turn (the helm honors direction and executes the full arc, up to 360). Continuous rotation is not a helm capability — do one turn and say so. Remind the captain when it matters: rotating does not curve the flight path (Newtonian drift).",
       "There is no 'acquire lock' verb — a lock builds automatically while a TRACK-or-better contact sits in the nose cone; pointing at the target IS 'locking him up'. Sequenced firing intent ('lock then fire', 'get a lock and fire', 'fire once you have him') = set_heading at the target plus a set_standing_order on have_lock — NEVER an immediate fire_missile, which would just reject with no lock yet.",
+      "Standing-order actions can never be queries (the server rejects them). For 'tell me / sing out / warn me when X' orders, use show_vector as the action — the trigger's log line IS the telling.",
+      "sensor_ping needs EXPLICIT active intent ('ping', 'go active', 'light them up', 'active sweep') — it reveals us map-wide. Passive questions ('what do you hear', 'any contacts', 'anything out there') are query verbs, never a ping.",
       "Vague quantities get sensible defaults, stated aloud: 'slow down' -> thrust 25%, 'ease off' -> reduce by ~25 points, 'hard about' -> relative 180.",
       "Acknowledgements are at most 12 words. Every word is spoken aloud by the ship's voice — brevity is a feature.",
       "Continuous tracking ('keep facing him', 'stay pointed at him') is not a helm capability: execute a single set_heading target snapshot and say so — you can point the ship on command; the captain flies the ship.",

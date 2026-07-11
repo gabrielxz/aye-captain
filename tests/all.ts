@@ -16,3 +16,5 @@ import "./orders.test.js";
 import "./zone.test.js";
 import "./spectator.test.js";
 import "./welcome.test.js";
+import "./hearing.test.js";
+import "./ping.test.js";

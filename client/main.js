@@ -155,6 +155,8 @@ function soundFromSnapshot(snap) {
 
   audio.setThrust(you.thrustOut ?? you.thrust);
   audio.setWarning(you.painted ?? "none");
+  // hearing: the loudest rumble drives the low ambience (0 = silence)
+  audio.setRumble(Math.max(0, ...(snap.rumbles ?? []).map((r) => r.loud ?? 0)));
 
   // nearest visible inbound missile drives the proximity ticker
   let nearest = null;
@@ -245,6 +247,11 @@ function updateHUDFromSnapshot(snap) {
       label: "PDC",
       value: `${(you.pdc?.posture ?? "free").toUpperCase()} ${you.pdc?.ammoS ?? 0}s`,
       cls: (you.pdc?.ammoS ?? 0) <= 6 ? "alert" : (you.pdc?.ammoS ?? 0) <= 15 ? "warn" : you.pdc?.posture === "free" ? "good" : "",
+    },
+    {
+      label: "PING",
+      value: you.ping?.ready ? "READY" : `${you.ping?.cooldownS ?? 0}s`,
+      cls: you.ping?.ready ? "good" : "",
     },
     {
       label: "ZONE",

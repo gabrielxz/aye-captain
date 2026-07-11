@@ -15,12 +15,18 @@ export const SNAPSHOT_RATE_HZ = 4;
 // the shroud's mass. No ship can be stranded — the pull always eventually
 // returns a derelict.
 export const REGION_RADIUS_M = 250000; // 250 km; crossing time ~2.8 min at flank. LINKED: SPAWN_DIST_FROM_CENTER_M sits at 60% of it
-export const EDGE_PULL_MPS2_PER_50KM = 5; // grows linearly with distance beyond the edge
-export const EDGE_PULL_CAP_MPS2 = 50;
+// LINKED to MAX_SPEED_MPS: tuned so a full-speed (3 km/s) exit turns
+// around in ~24s with ~42 km max excursion, not minutes (the old 5/50
+// values dated from 600 m/s ships and were never revisited when speeds
+// quintupled; the v4.5 handoff's 15/150 was measured at 91 s and retuned
+// with sign-off to meet its own ~20-25 s intent). Retune if MAX_SPEED
+// changes again.
+export const EDGE_PULL_MPS2_PER_50KM = 300; // grows linearly with distance beyond the edge
+export const EDGE_PULL_CAP_MPS2 = 150;
 
 // Ship. Full tank = 100 s of hard burn = 6000 m/s of delta-v: propellant is
 // a delta-v budget — enough to reach flank speed and kill it once.
-export const MAX_SPEED_MPS = 3000; // LINKED to MISSILE_MAX_SPEED_MPS & region size
+export const MAX_SPEED_MPS = 3000; // LINKED to region size + EDGE_PULL tuning (the missile-speed link was broken deliberately in v4.5)
 export const ACCEL_FULL_THRUST_MPS2 = 60; // ~6g hard burn; top speed in ~50 s
 export const TURN_RATE_DEG_PER_SEC = 20;
 export const HULL_POINTS = 100;
@@ -41,6 +47,28 @@ export const MISSILE_SIG_COASTING = 8; // a ballistic torpedo is nearly invisibl
 // detection_range = SENSOR_BASE_M x (signature / 100), LOS permitting
 // -> full burn (130) seen at ~234 km; 50% cruise (80) at ~144 km; dark drift (30) at ~54 km
 export const SENSOR_BASE_M = 180000;
+// v4.5 hearing channel: a second, concentric information ring driven by the
+// SAME signature. Beyond detection but within hearing, an emitter produces a
+// RUMBLE: bearing only — no range, no vector, no tier. Rocks/dust do NOT
+// block hearing (the shroud carries drive rumble like water carries sound);
+// only distance vs signature matters. DESIGN LAW: this system is continuous
+// end to end — NO thresholds anywhere (a threshold instantly becomes a
+// throttle policy). Stealth is a speed tax, not an off-switch: silent, or
+// going somewhere — not both.
+export const HEARING_RANGE_MULT = 2.5; // hearing = detection x 2.5: dark ~135 km, cruise ~360 km, flank map-wide
+export const RUMBLE_SHIFT_ANNOUNCE_DEG = 15; // XO re-announces a rumble when its bearing drifts this far
+export const RUMBLE_ANNOUNCE_COOLDOWN_S = 10; // per-emitter rate limit on rumble announcements
+
+// v4.5 active ping — the information ladder's second rung (HEARING bearing
+// -> aimed PING -> passive TIERS -> LOCK). A ping FINDS ships; it does not
+// shoot them: PING_TRACK_S deliberately cannot complete a LOCK_TIME_S lock
+// on a target passive sensors can't sustain. Do not extend without design
+// signoff.
+export const PING_RANGE_M = 150000; // everything within, LOS permitting (rocks/dust block)
+export const PING_TRACK_S = 5; // granted TRACK tier duration, then decay to passive
+export const PING_REVEAL_S = 10; // the pinger reads ID tier to ALL ships, map-wide, no LOS — you screamed
+export const PING_COOLDOWN_S = 30;
+
 // Contact tiers, as fractions of the computed detection range:
 export const TIER_FAINT_FRAC = 1.0; // approximate position only, no vector
 export const TIER_TRACK_FRAC = 0.6; // true position + velocity, continuous
@@ -63,7 +91,7 @@ export const LOCK_GRACE_S = 2; // integer: honest at 1 Hz tick; favors lock stab
 
 // Launch tubes
 export const TUBE_COUNT = 2;
-export const TUBE_RELOAD_S = 20; // per tube, tubes reload in parallel
+export const TUBE_RELOAD_S = 30; // per tube, tubes reload in parallel (v4.5: a full salvo is FELT — staggered fire is doctrine)
 export const AUTO_RELOAD = true; // reload_tubes verb is a no-op while true
 
 // PDCs (point-defense cannons; replaced the laser in v4 §6). Automated,
@@ -82,8 +110,14 @@ export const PDC_AMMO_S = 60; // seconds of cumulative fire; no regeneration
 // drains propellant at 1/s. Dry = BALLISTIC: no accel, no turning, flies its
 // line until lifetime, impact, or PDC kill — still detonates on prox.
 export const MISSILE_MAGAZINE = 6;
-export const MISSILE_MAX_SPEED_MPS = 6000; // LINKED: 2x MAX_SPEED_MPS
-export const MISSILE_ACCEL_MPS2 = 400; // ~40g
+// v4.5 retune: engagements actually start 20-50 km (post sensor rebase),
+// which was inside the old 6 km/s missile's no-counterplay zone. 2400 m/s
+// is deliberately BELOW MAX_SPEED_MPS (0.8x): outrunning the burn is a
+// real play, PDC bubble transit ~triples, cover inside ~10 km is reachable.
+// (The old value was the 2x-ship-max link; that link is intentionally
+// broken — flag any future retune against actual engagement ranges.)
+export const MISSILE_MAX_SPEED_MPS = 2400;
+export const MISSILE_ACCEL_MPS2 = 150; // top speed in ~16 s
 export const MISSILE_PROPELLANT_S = 25; // engine-on seconds
 export const MISSILE_TURN_RATE_DPS = 45; // ONLY while the engine is on
 // false = guidance steers the velocity vector directly, speed ramps from
@@ -93,13 +127,14 @@ export const MISSILE_TURN_RATE_DPS = 45; // ONLY while the engine is on
 export const NEWTONIAN_MISSILES = false;
 export const MISSILE_LIFETIME_S = 120; // absolute self-destruct
 export const MISSILE_LAUNCH_DELAY_TICKS = 2; // flies straight, no seeking, during delay
-export const MISSILE_ACQ_CONE_DEG = 60; // half-angle of seeker cone
+export const MISSILE_ACQ_CONE_DEG = 30; // half-angle of the AUTONOMOUS seeker cone (v4.5: blind fire needs a good bearing, not a gesture; uplinked steering unaffected)
 // Seekers use the standard detection formula with their own (weak) base:
 // seeker detection = MISSILE_SEEKER_BASE_M x target signature / 100, LOS
 // required -> full-burn ship (130) at ~52 km; dark drifter (30) at ~12 km.
 // Blind fire is a flushing tool, not a sniper rifle.
 export const MISSILE_SEEKER_BASE_M = 40000;
 export const MISSILE_PROX_FUSE_M = 200;
+export const MISSILE_ARMING_DIST_M = 3000; // fuse inert until the bird is this far from its launch point — point-blank launches dud past the target
 export const MISSILE_DAMAGE = 35;
 
 // Decoys. Signature sits BETWEEN cruise and full burn (LINKED to SIG_BASE:
@@ -111,7 +146,7 @@ export const MISSILE_DAMAGE = 35;
 // it resolves as a decoy only at ID tier. (v4.3 retune 90 -> 100 with the
 // SIG_BASE rebase.)
 export const DECOY_SUPPLY = 4;
-export const DECOY_LIFETIME_S = 20;
+export const DECOY_LIFETIME_S = 60; // v4.5: matches longer missile flights; a decoy drifts convincingly for a full minute as a fake contact
 export const DECOY_SIGNATURE = 100;
 export const DECOY_DRIFT_MPS = 10; // small random drift added on ejection
 

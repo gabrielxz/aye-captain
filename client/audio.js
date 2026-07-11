@@ -208,6 +208,28 @@ export function setThrust(pct) {
   thrustNodes.f.frequency.linearRampToValueAtTime(90 + lvl * 220, t + 0.3);
 }
 
+// v4.5 hearing: a distant drive rumble — deeper and softer than own
+// thrust; level follows the loudest rumble's signature-derived loudness.
+let rumbleNodes = null;
+export function setRumble(level) {
+  if (!ctx) return;
+  if (!rumbleNodes) {
+    const src = ctx.createBufferSource();
+    src.buffer = noiseBuffer();
+    src.loop = true;
+    const f = ctx.createBiquadFilter();
+    f.type = "lowpass";
+    f.frequency.value = 46; // sub-rumble: felt more than heard
+    const g = ctx.createGain();
+    g.gain.value = 0;
+    src.connect(f).connect(g).connect(sfxBus);
+    src.start();
+    rumbleNodes = { f, g };
+  }
+  const lvl = Math.max(0, Math.min(1, level));
+  rumbleNodes.g.gain.linearRampToValueAtTime(lvl * 0.11, ctx.currentTime + 0.6);
+}
+
 // Lock warning (RWR): "acquiring" = rising two-tone; "locked" = continuous
 // urgent pulse. The single most important sound in the game.
 let warnState = "none";
@@ -263,6 +285,7 @@ export function stopContinuous() {
   setWarning("none");
   proxDist = null;
   if (thrustNodes && ctx) thrustNodes.g.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.4);
+  if (rumbleNodes && ctx) rumbleNodes.g.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.4);
 }
 
 // ---------- ship-AI speech queue ----------

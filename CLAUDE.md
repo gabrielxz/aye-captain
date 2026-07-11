@@ -26,6 +26,9 @@ v4.2 (spectator presence), v4.3 (`HANDOFF-v4.3.md`: standing-order
 threshold fix, XO welcomes, bearing-only readout, single 50 km ring,
 sensor rebase SIG_BASE 30 / SENSOR_BASE 180 km) and v4.4 (real relative
 turns; stop-engines / lock-then-fire translator doctrine) are deployed.
+v4.5 "Tempo" (`HANDOFF-v4.5.md`: missile retune to real engagement ranges
++ 3 km arming distance, 30 s reload, 60 s decoys, steeper edge pull, the
+HEARING channel, the active PING) is built.
 
 ## Commands
 
@@ -126,9 +129,20 @@ Note: on this machine's rootless Docker, `-p` port publishing doesn't route
 11. Decoys (sig 90, between cruise and full burn) read as ORDINARY
     unresolved contacts to enemy ships at faint/track tier — the snapshot
     must never label them as decoys until ID tier resolves them.
-12. Any behavior change updates `/how-to-play` (client/how-to-play.html) in
-    the same commit — the handbook's numbers are rounded gameplay values
-    that must stay true.
+12. Any behavior change updates `/how-to-play` (client/how-to-play.html)
+    AND README.md's gameplay description in the same commit — both carry
+    rounded gameplay values that must stay true (README added v4.5 §0).
+13. The hearing channel is CONTINUOUS end to end — no thresholds anywhere
+    in it (v4.5 design law: a threshold instantly becomes a throttle
+    policy). Rumbles are a contact class BELOW faint carrying bearing (+ a
+    signature-derived loudness for client audio) — never range, position,
+    vector, or tier. Terrain never blocks hearing. The XO never
+    triangulates rumbles — crossing bearings is deliberately human skill
+    (v5 probes are the tooling answer).
+14. The information ladder is HEARING bearing -> aimed PING -> passive
+    TIERS -> LOCK. A ping FINDS ships, it cannot shoot them:
+    PING_TRACK_S must never be extended to where a ping grant alone
+    completes a LOCK_TIME_S lock (pinned in tests/ping.test.ts).
 
 ## Judgment calls already made (user-visible, flagged in check-ins)
 

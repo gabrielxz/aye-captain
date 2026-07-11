@@ -152,6 +152,11 @@ const STOCK_LINES = [
   // v4.3: match-start welcomes
   "Enemy ship is out there somewhere. Good hunting, Captain.",
   "Practice range is hot, Captain. Drone's out there somewhere.",
+  // v4.5: hearing + ping
+  "Lost the rumble.",
+  "Ping away.",
+  "One ping only, aye. Very well, Captain.",
+  "Transducers recharging, Captain.",
 ];
 
 // Sequential on purpose: ElevenLabs free/low tiers have tight concurrency

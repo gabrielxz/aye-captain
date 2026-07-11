@@ -96,6 +96,7 @@ const METRICS = [
   "tubes_ready",
   "in_dust",
   "collision_warning",
+  "rumble_present",
 ];
 const OPS = ["lt", "lte", "gt", "gte", "eq"];
 const TOPICS = [
@@ -201,6 +202,8 @@ export function validateCommand(raw: unknown, nested = false): Command | null {
       return out({ type: p.type });
     }
     case "show_vector":
+      return out({});
+    case "sensor_ping":
       return out({});
     case "fire_missile": {
       const clean: Record<string, unknown> = {};

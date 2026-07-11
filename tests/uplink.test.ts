@@ -141,6 +141,7 @@ const grantLock = (ship: Ship) => {
   sim.terrain.dust.push({ x: 0, y: 2000, rx: 1500, ry: 800, rot: 0 }); // shadow between
   const mkMissile = () => ({
     id: 9100, owner: "B" as const, x: 0, y: 4000, prevX: 0, prevY: 4000,
+    launchX: 0, launchY: 200000, // armed: launched far away
     course: 0, speed: 0, vx: 0, vy: 0, age: 10, fuel: 0, burning: false,
     guidance: "autonomous" as const, cmdBearing: null, lock: null,
   });
@@ -158,6 +159,7 @@ const grantLock = (ship: Ship) => {
   a.pdcPosture = "hold"; // isolate the bark from the engagement
   (sim as any).missiles.push({
     id: 9200, owner: "B", x: 0, y: 5000, prevX: 0, prevY: 5000,
+    launchX: 0, launchY: 200000, // armed: launched far away
     course: 180, speed: 0, vx: 0, vy: 0, age: 10, fuel: 0, burning: false,
     guidance: "autonomous", cmdBearing: null, lock: null,
   });

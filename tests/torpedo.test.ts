@@ -62,9 +62,9 @@ const grantLock = (ship: Ship) => {
   sim.enqueue("A", [{ verb: "fire_missile", params: {} }]);
   sim.tick();
   const m = (sim as any).missiles[0];
-  m.fuel = 0; // dry immediately: pure ballistic run at ~400 m/s
+  m.fuel = 0; // dry immediately: pure ballistic run at ~150 m/s (one tick of burn)
   let hit = false;
-  for (let i = 0; i < 60 && !hit; i++) {
+  for (let i = 0; i < C.MISSILE_LIFETIME_S && !hit; i++) {
     const ev = sim.tick();
     hit = ev.some((e) => e.kind === "notice" && /Missile strike/.test((e as any).text));
   }
@@ -111,10 +111,75 @@ const grantLock = (ship: Ship) => {
   const m = (sim as any).missiles[0];
   assert(m.burning === false, "coasting at max on a straight line");
   const fuelBefore = m.fuel;
-  b.x = 8000; // target sidesteps (stays inside the 60-deg seeker cone)
+  const courseBefore = m.course;
+  b.x = 8000; // target sidesteps
   sim.tick();
-  assert(m.burning === true, "turning to track relights the engine");
-  assert(m.fuel < fuelBefore, "terminal maneuvers cost fuel");
+  // the 45 deg/s turn can complete WITHIN one tick (burning reads false
+  // again at tick end) — the durable evidence of the relight is the course
+  // change plus the fuel it burned to make it
+  assert(Math.abs(m.course - courseBefore) > 5, `turned to track the sidestep (course ${m.course.toFixed(1)})`);
+  assert(m.fuel < fuelBefore, "terminal maneuvers relight the engine and cost fuel");
+}
+
+// 6. v4.5 arming distance: a point-blank locked launch NEVER fuses on the
+// target it was fired at — the bird duds straight past. XO warns at launch.
+{
+  const sim = new Sim();
+  const a = sim.addShip("A", 0, 0, 0);
+  const b = sim.addShip("B", 0, C.MISSILE_ARMING_DIST_M - 1000, 180, false); // 2 km: inside arming
+  a.pdcPosture = "hold"; b.pdcPosture = "hold";
+  grantLock(a);
+  sim.enqueue("A", [{ verb: "fire_missile", params: {} }]);
+  const ev0 = sim.tick();
+  assert(
+    ev0.some((e) => e.kind === "notice" && /inside arming distance/.test((e as any).text)),
+    "XO warns: locked target inside arming distance"
+  );
+  let hit = false;
+  for (let i = 0; i < 20 && !hit; i++) {
+    hit = sim.tick().some((e) => e.kind === "notice" && /Missile strike/.test((e as any).text));
+  }
+  assert(!hit && b.hull === C.HULL_POINTS, `point-blank launch duds past the target (hull ${b.hull})`);
+
+  // blind fire at the same range gets NO warning (no known target)
+  const sim2 = new Sim();
+  const a2 = sim2.addShip("A", 0, 0, 0);
+  const b2 = sim2.addShip("B", 0, C.MISSILE_ARMING_DIST_M - 1000, 180, false);
+  a2.pdcPosture = "hold"; b2.pdcPosture = "hold";
+  sim2.enqueue("A", [{ verb: "fire_missile", params: { guidance: "bearing", bearing_degrees: 0 } }]);
+  const ev2 = sim2.tick();
+  assert(
+    !ev2.some((e) => e.kind === "notice" && /inside arming distance/.test((e as any).text)),
+    "blind fire gets no arming warning"
+  );
+}
+
+// 7. v4.5 autonomous seeker cone is 30 deg: a loud target 40 deg off-course
+// is not acquired; brought inside the cone, it is. (Uplinked steering is
+// unaffected — covered by uplink.test.ts.)
+{
+  const sim = new Sim();
+  const a = sim.addShip("A", 0, 0, 0);
+  const b = sim.addShip("B", 0, 200000, 180, false); // parked far away for now
+  a.pdcPosture = "hold"; b.pdcPosture = "hold";
+  sim.enqueue("A", [{ verb: "fire_missile", params: { guidance: "bearing", bearing_degrees: 0 } }]);
+  for (let i = 0; i < C.MISSILE_LAUNCH_DELAY_TICKS + 1; i++) sim.tick();
+  const m = (sim as any).missiles[0];
+  b.thrust = 100; // loud: seeker range ~52 km
+  b.propellant = C.PROPELLANT_MAX;
+  // place the target 20 km out at 40 deg off the missile's course
+  const off1 = ((40 * Math.PI) / 180);
+  b.x = m.x + Math.sin(off1) * 20000;
+  b.y = m.y + Math.cos(off1) * 20000;
+  b.vx = 0; b.vy = 0;
+  sim.tick();
+  assert(m.lock === null, `40 deg off-course: outside the ${C.MISSILE_ACQ_CONE_DEG} deg cone, no acquisition`);
+  // now 20 deg off the CURRENT course: inside the cone
+  const off2 = (((m.course + 20) * Math.PI) / 180);
+  b.x = m.x + Math.sin(off2) * 20000;
+  b.y = m.y + Math.cos(off2) * 20000;
+  sim.tick();
+  assert(m.lock?.type === "ship", "20 deg off-course: inside the cone, acquired");
 }
 
 console.log("done");

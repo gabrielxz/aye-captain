@@ -6,11 +6,16 @@ ship's AI translates your words into structured commands; an authoritative
 server executes them. The fun is turning intent into well-communicated
 orders — and living with the occasional misinterpretation.
 
-v4 "The Big Dark": **detection is the game**. A 250 km region, 3 km/s
-ships, and sensors that see drive plumes — who sees whom first, at what
-quality, decides engagements. Going dark is the only stealth.
+v4 "The Big Dark" through v4.5 "Tempo": **detection is the game**. A
+250 km region, 3 km/s ships, and sensors that see drive plumes — who sees
+whom first, at what quality, decides engagements. Information comes on a
+ladder: you HEAR ships (bearing only, huge range), you SEE ships (tiered
+contacts, closer), you LOCK ships (closest). You can be silent, or you can
+be going somewhere — not both.
 
 - **Multiplayer**: 1v1 via 4-letter room codes. No accounts, no persistence.
+  Friends can WATCH with the same code — spectators get an omniscient
+  referee view and a callsign (Ghost, Echo, ...); players see who's watching.
 - **Practice**: solo mode against a drone that patrols the rocks — and
   shoots back.
 - **Input**: voice push-to-talk (hold Space) or typed text.
@@ -24,21 +29,33 @@ quality, decides engagements. Going dark is the only stealth.
   Ships drift (Newtonian): turning doesn't change your velocity. "Show me
   our vector" (or V) draws where you're going and where you could stop.
 - **Detection**: your drive plume is your signature. A hard-burning ship is
-  visible ~181 km out; a dark drifter ~16 km. Contacts have **tiers**:
-  FAINT (a smudge — approximate position, no vector), TRACK (true position
-  + velocity, **lockable**), ID (full readout). Rocks and dust block
-  line of sight — inside a dust cloud you're blind and unseen.
+  visible ~234 km out; a dark drifter ~54 km (and unlockable until ~32).
+  Contacts have **tiers**: FAINT (a smudge — approximate position, no
+  vector), TRACK (true position + velocity, **lockable**), ID (full
+  readout). Rocks and dust block line of sight — inside a dust cloud you're
+  blind and unseen.
+- **Hearing**: beyond sensor range every drive **rumbles** — a bearing-only
+  chevron and a low ambience, out to 2.5× detection range (a cruising ship
+  is heard across most of the map). Terrain doesn't block it. Bearings
+  only: cross-referencing them over time is captain's work.
+- **Active ping**: "give me a ping" snaps everything within 150 km (LOS
+  permitting) to TRACK for 5 s — dark ships, decoys, coasting torpedoes.
+  The price: you're revealed at ID to everyone, map-wide, for 10 s. 30 s
+  cooldown. A ping finds ships; it can't hold a lock by itself.
 - **Weapons**: 6 torpedoes in 2 auto-reloading tubes. A locked shot needs
   a **lock**: a TRACK-or-better contact within 30° of your nose, inside
   80 km, held 5 s. The target FEELS your lock ("we're being painted!") and
   launching spikes your signature hugely. **A lock buys guidance**: while
   you hold it, your bird flies UPLINKED — intercept geometry off your
   track, immune to decoys. Lose the lock and it goes autonomous on its own
-  weak seeker. You can also **fire blind** down a bearing with no lock at
-  all ("put a torpedo down bearing 220") — a flushing tool for dust clouds
-  and rock shadows. Torpedoes burn hard (~40g to 6 km/s, 25 s of fuel)
-  then coast ballistic — nearly invisible, blind to maneuver, still lethal
-  on their line.
+  weak seeker (30° cone — blind fire needs a good bearing, not a gesture).
+  You can also **fire blind** down a bearing with no lock at all ("put a
+  torpedo down bearing 220") — a flushing tool for dust clouds and rock
+  shadows. Torpedoes accelerate to 2.4 km/s over ~16 s (25 s of fuel) then
+  coast ballistic — nearly invisible, blind to maneuver, still lethal on
+  their line. The fuse arms 3 km from the launch point: inside that,
+  standoff is part of the weapon and your bird duds past. Tubes reload in
+  30 s — a full salvo is FELT; staggered fire is doctrine.
 - **Point defense**: automated PDCs engage inbound missiles (8 km) and
   enemy ships at knife range (3 km) while "guns free"; "hold fire" keeps
   you dark. 60 s of ammo, no resupply. Mutual PDC range is a mutual
@@ -49,8 +66,9 @@ quality, decides engagements. Going dark is the only stealth.
   hard burn, so the doctrine is **break the lock, throttle down, decoy**
   (an uplinked bird ignores decoys; you must orphan it first via rocks,
   dust, or going dark). A drifting decoy also reads as an ordinary contact
-  on enemy sensors until they close — fake contacts are a strategy. Plus:
-  outrun the torpedo's burn, or dodge late to waste its fuel.
+  (and rumbles like a real drive) for a full minute — fake contacts are a
+  strategy. Plus: burning away at range genuinely outruns a torpedo's tank
+  now, or dodge late to waste its fuel.
 - **Propellant is delta-v**: a full tank is 100 s of hard burn — enough to
   reach flank speed and kill it once. It regenerates only inside the region
   with throttle ≤ 20%. Dry tanks = you drift. Turning is free.
@@ -67,9 +85,9 @@ quality, decides engagements. Going dark is the only stealth.
 - **Questions**: "how far out is he?", "any rocks nearby we could hide
   behind?", "pdc status?", "full report".
 - **Map**: wheel zoom, drag/WASD pan, F follows your ship, M toggles the
-  region overview, V toggles your velocity vector. The cursor always shows
-  bearing and range from your ship — your plotting table for callouts and
-  blind fire.
+  region overview, V toggles your velocity vector. The cursor shows the
+  bearing from your ship (your plotting table for callouts and blind
+  fire); the single dashed ring is a 50 km ruler.
 - Win by reducing the enemy hull to zero. Rematch from the banner.
 
 Debug/dev harness: any input starting with `{` or `[` is parsed as raw
@@ -96,7 +114,7 @@ Two-player on a LAN: both browsers hit `http://<your-ip>:8080`, one creates a
 match, the other joins with the room code.
 
 ```sh
-npm test            # headless sim/translator test suites (~250 assertions)
+npm test            # headless sim/translator test suites (400+ assertions)
 npm run typecheck   # tsc --noEmit
 npm run build       # compile server to dist/
 npm start           # run the compiled server
@@ -104,7 +122,7 @@ npm start           # run the compiled server
 
 For contributors/AI agents: `CLAUDE.md` has architecture invariants and
 conventions; `TODO.md` tracks next steps; `HANDOFF.md` is the original spec
-and `HANDOFF-v4.md` the v4 overhaul spec.
+and `HANDOFF-v4.md` the v4 overhaul spec (addenda: v4.1, v4.3, v4.5).
 
 ## Deploy to Fly.io
 
@@ -126,7 +144,7 @@ One Node process (TypeScript). Static vanilla-JS client + WebSocket endpoint
 
 Timing: commands, standing orders, and LLM interaction run on a 1 Hz tick;
 physics runs 10 substeps per tick (10 Hz) with swept-segment collision so
-6 km/s torpedoes can't tunnel through proximity fuses or rocks; snapshots
+fast torpedoes can't tunnel through proximity fuses or rocks; snapshots
 broadcast at 4 Hz and the client interpolates.
 
 ```

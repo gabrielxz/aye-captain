@@ -109,10 +109,11 @@ const grantLock = (ship: Ship) => {
 }
 
 // 5. prox fuse via segment check: fast head-on crossing detonates
+// (target starts OUTSIDE arming distance — the fuse must be live at the merge)
 {
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 0);
-  const b = sim.addShip("B", 0, 3000, 180, false);
+  const b = sim.addShip("B", 0, 8000, 180, false);
   b.vx = 0; b.vy = -280; b.thrust = 100; // charging at us fast, head-on
   a.pdcPosture = "hold"; b.pdcPosture = "hold";
   grantLock(a);

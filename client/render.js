@@ -654,6 +654,7 @@ function draw() {
   }
 
   drawContacts();
+  drawRumbles(you);
   drawVectorOverlay(you);
   drawCursorReadout(you);
   drawInset(you);
@@ -682,6 +683,51 @@ function drawCursorReadout(you) {
   ctx.fillRect(tx - 4, ty - 11, w + 8, 15);
   ctx.fillStyle = "#8fa8bf";
   ctx.fillText(label, tx, ty);
+}
+
+// v4.5 hearing: rumbles are bearing-only — a soft chevron at the edge of
+// the view along the bearing from own ship, alpha scaled by loudness. It
+// deliberately has NO distance information to give.
+function drawRumbles(you) {
+  const rumbles = state.lastSnap?.rumbles ?? [];
+  if (!you || rumbles.length === 0) return;
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  const [ox, oy] = worldToScreen(you.x, you.y);
+  const pad = 26; // chevron sits just inside the view edge
+  for (const r of rumbles) {
+    const rad = ((r.bearing ?? 0) * Math.PI) / 180;
+    const dx = Math.sin(rad);
+    const dy = -Math.cos(rad); // screen y is down
+    // march from own ship to the view edge along the bearing
+    let t = Infinity;
+    if (dx > 0) t = Math.min(t, (w - pad - ox) / dx);
+    if (dx < 0) t = Math.min(t, (pad - ox) / dx);
+    if (dy > 0) t = Math.min(t, (h - pad - oy) / dy);
+    if (dy < 0) t = Math.min(t, (pad - oy) / dy);
+    if (!Number.isFinite(t) || t < 40) continue; // own ship at/off the edge
+    const cx = ox + dx * t;
+    const cy = oy + dy * t;
+    const pulse = 0.45 + 0.25 * Math.sin(performance.now() / 400);
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(Math.atan2(dy, dx) + Math.PI / 2);
+    ctx.beginPath(); // double chevron pointing outward, along the bearing
+    ctx.moveTo(-9, 4); ctx.lineTo(0, -6); ctx.lineTo(9, 4);
+    ctx.moveTo(-9, 12); ctx.lineTo(0, 2); ctx.lineTo(9, 12);
+    ctx.strokeStyle = "#8fa8bf";
+    ctx.lineWidth = 1.6;
+    ctx.globalAlpha = pulse * Math.max(0.35, Math.min(1, r.loud ?? 0.5));
+    ctx.stroke();
+    ctx.globalAlpha = Math.min(0.9, (r.loud ?? 0.5) + 0.3);
+    ctx.font = "9px monospace";
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#8fa8bf";
+    ctx.fillText(`${String(Math.round(r.bearing)).padStart(3, "0")}`, 0, 24);
+    ctx.textAlign = "left";
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
 }
 
 // Spectator (v4.2): both ships in full detail — A in own-tint, B in enemy

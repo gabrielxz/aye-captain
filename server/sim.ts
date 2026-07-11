@@ -34,6 +34,7 @@ export interface Command {
     | "deploy_decoy"
     | "maneuver"
     | "show_vector"
+    | "sensor_ping"
     | "set_standing_order"
     | "query";
   params: Record<string, unknown>;
@@ -132,6 +133,17 @@ export interface Ship {
   // the last announced countdown tier (re-armed when the vector clears)
   collisionWarnS: number | null;
   collisionTier: number | null;
+  // v4.5 active ping. Cooldown gates re-pinging; reveal marks THIS ship as
+  // lit up (ID tier to everyone, map-wide, no LOS — you screamed); the
+  // grant is what THIS ship's ping bought it: a snapshot of object ids
+  // that read TRACK-or-better while pingGrantS runs. A ping FINDS ships,
+  // it does not shoot them — the grant deliberately cannot complete a lock.
+  pingCooldownS: number;
+  pingRevealS: number;
+  pingGrantS: number;
+  pingGrantShips: Set<ShipId>;
+  pingGrantDecoys: Set<number>;
+  pingGrantMissiles: Set<number>;
   // Fog of war, per viewer: what MY sensors currently make of the enemy.
   // 0 = no contact, 1 = faint (approximate position, no vector),
   // 2 = track (true position + velocity), 3 = id (+ ship status detail).
@@ -167,6 +179,8 @@ export interface Missile {
   course: number; // compass deg; guidance steers this, velocity follows it
   speed: number; // ramps from inherited launch speed to MISSILE_MAX_SPEED_MPS
   age: number; // seconds since launch
+  launchX: number; // v4.5 arming: the fuse stays inert until the bird is
+  launchY: number; // MISSILE_ARMING_DIST_M from this point — point-blank duds
   fuel: number; // engine-on seconds remaining; dry = ballistic (no accel, no turning)
   burning: boolean; // engine state last substep (drives signature)
   // UPLINKED: the launching ship holds lock and feeds the track — the bird
@@ -277,6 +291,12 @@ export class Sim {
   // per-viewer noisy faint fixes for enemy decoys read as unresolved
   // contacts (strategic deception, HANDOFF-v4.1 §7)
   private decoyFaint = new Map<ShipId, Map<number, { x: number; y: number; t: number }>>();
+  // v4.5 hearing: per-listener rumble bookkeeping for XO announcements.
+  // `live:false` entries linger so a boundary-flapping rumble can't spam
+  // new/lost lines faster than the cooldown. Keyed per emitter cid — the
+  // data model stays open to multiple listeners hearing one emitter (v5
+  // probes as remote ears).
+  private rumbleState = new Map<ShipId, Map<string, { bearing: number; cooldown: number; live: boolean }>>();
 
   // No seed = empty terrain (headless tests build exact fields by hand);
   // matches always pass one.
@@ -315,6 +335,12 @@ export class Sim {
       lock: { progress: 0, has: false, grace: 0 },
       prevPainted: "none",
       sigSpikeLaunch: 0,
+      pingCooldownS: 0,
+      pingRevealS: 0,
+      pingGrantS: 0,
+      pingGrantShips: new Set(),
+      pingGrantDecoys: new Set(),
+      pingGrantMissiles: new Set(),
       droneCooldown: 0,
       droneWaypoint: 0,
       droneDodge: 0,
@@ -333,6 +359,7 @@ export class Sim {
     this.ships.set(id, ship);
     this.queues.set(id, []);
     this.announcedMissiles.set(id, new Set());
+    this.rumbleState.set(id, new Map());
     this.prevVisibleMissiles.set(id, new Set());
     this.decoyFaint.set(id, new Map());
     return ship;
@@ -361,17 +388,22 @@ export class Sim {
   // Contact tier this viewer earns on the enemy ship right now. Every
   // detection path requires an unobstructed ray. Outside the region a ship
   // is treated as signature-max: fully detectable at any range, tier ID.
+  // v4.5 overlays: a pinger is revealed at ID to EVERYONE (no LOS — the
+  // scream carries); a viewer's ping grant holds its targets at TRACK.
   contactTierFor(viewer: Ship, enemy: Ship): 0 | 1 | 2 | 3 {
-    if (!this.losClear(viewer.x, viewer.y, enemy.x, enemy.y)) return 0;
+    if (enemy.pingRevealS > 0) return 3;
+    const granted =
+      viewer.pingGrantS > 0 && viewer.pingGrantShips.has(enemy.id) ? 2 : 0;
+    if (!this.losClear(viewer.x, viewer.y, enemy.x, enemy.y)) return granted as 0 | 2;
     if (!this.insideZone(enemy)) return 3;
     const range = dist(viewer.x, viewer.y, enemy.x, enemy.y);
     const detect = this.detectionRange(this.signatureOf(enemy));
-    if (detect <= 0) return 0;
+    if (detect <= 0) return granted as 0 | 2;
     const frac = range / detect;
     if (frac <= C.TIER_ID_FRAC) return 3;
     if (frac <= C.TIER_TRACK_FRAC) return 2;
-    if (frac <= C.TIER_FAINT_FRAC) return 1;
-    return 0;
+    if (frac <= C.TIER_FAINT_FRAC) return Math.max(1, granted) as 1 | 2;
+    return granted as 0 | 2;
   }
 
   enemyOf(id: ShipId): Ship | undefined {
@@ -438,6 +470,40 @@ export class Sim {
         events.push({ kind: "ui", ship: ship.id, what: "show_vector" });
         return null;
       }
+      case "sensor_ping": {
+        // v4.5: everything with LOS inside PING_RANGE_M snaps to TRACK for
+        // PING_TRACK_S; the price is a map-wide, no-LOS ID reveal of the
+        // pinger for PING_REVEAL_S. A ping finds ships; it can't shoot them.
+        if (ship.pingCooldownS > 0) {
+          return "Transducers recharging, Captain.";
+        }
+        ship.pingCooldownS = C.PING_COOLDOWN_S;
+        ship.pingRevealS = C.PING_REVEAL_S;
+        ship.pingGrantS = C.PING_TRACK_S;
+        ship.pingGrantShips = new Set();
+        ship.pingGrantDecoys = new Set();
+        ship.pingGrantMissiles = new Set();
+        const insonified = (x: number, y: number) =>
+          dist(ship.x, ship.y, x, y) <= C.PING_RANGE_M && this.losClear(ship.x, ship.y, x, y);
+        const enemy = this.enemyOf(ship.id);
+        if (enemy && insonified(enemy.x, enemy.y)) ship.pingGrantShips.add(enemy.id);
+        for (const d of this.decoys) {
+          if (d.owner !== ship.id && insonified(d.x, d.y)) ship.pingGrantDecoys.add(d.id);
+        }
+        for (const m of this.missiles) {
+          if (m.owner !== ship.id && insonified(m.x, m.y)) ship.pingGrantMissiles.add(m.id);
+        }
+        // the scream is heard by everyone, terrain or not
+        if (enemy && !enemy.isDrone) {
+          events.push({
+            kind: "notice",
+            ship: enemy.id,
+            text: `Active ping — he's lit himself up. Bearing ${fmtBearing(bearingTo(enemy.x, enemy.y, ship.x, ship.y))}.`,
+            alert: true,
+          });
+        }
+        return null;
+      }
       case "fire_missile": {
         // guidance: "locked" (default; needs a held lock -> UPLINKED bird)
         // or "bearing" (blind fire, no lock -> AUTONOMOUS from birth)
@@ -493,6 +559,20 @@ export class Sim {
           return ship.tubes.some((t) => t.reload > 0)
             ? "Tubes are still loading, Captain."
             : "Magazine dry, Captain.";
+        }
+        // v4.5: a locked target inside arming distance means these birds
+        // never fuse on the first pass — warn, once per salvo. Blind fire
+        // gets no warning (no known target).
+        if (!blind && !ship.isDrone) {
+          const tgt = this.enemyOf(ship.id);
+          if (tgt && dist(ship.x, ship.y, tgt.x, tgt.y) < C.MISSILE_ARMING_DIST_M) {
+            events.push({
+              kind: "notice",
+              ship: ship.id,
+              text: "He's inside arming distance, Captain.",
+              alert: true,
+            });
+          }
         }
         return null;
       }
@@ -602,6 +682,8 @@ export class Sim {
       y: ship.y,
       prevX: ship.x,
       prevY: ship.y,
+      launchX: ship.x,
+      launchY: ship.y,
       course: ship.facing,
       speed: inherited,
       vx: fx * inherited,
@@ -662,6 +744,8 @@ export class Sim {
         return ship.contactTier;
       case "in_dust":
         return this.inDust(ship);
+      case "rumble_present":
+        return this.rumblesFor(ship).length > 0;
       case "collision_warning":
         return ship.collisionWarnS !== null;
       case "missile_inbound":
@@ -895,8 +979,9 @@ export class Sim {
     return this.missiles.filter(
       (m) =>
         m.owner !== ship.id &&
-        dist(ship.x, ship.y, m.x, m.y) <= this.detectionRange(this.missileSignature(m)) &&
-        this.losClear(ship.x, ship.y, m.x, m.y)
+        ((ship.pingGrantS > 0 && ship.pingGrantMissiles.has(m.id)) || // pinged: a coasting bird shows for the window
+          (dist(ship.x, ship.y, m.x, m.y) <= this.detectionRange(this.missileSignature(m)) &&
+            this.losClear(ship.x, ship.y, m.x, m.y)))
     );
   }
 
@@ -904,12 +989,108 @@ export class Sim {
   // decoy is an ordinary unresolved contact — indistinguishable from a
   // quietly cruising ship; only at ID does it resolve as a decoy.
   decoyTierFor(viewer: Ship, d: Decoy): 0 | 1 | 2 | 3 {
-    if (!this.losClear(viewer.x, viewer.y, d.x, d.y)) return 0;
+    // a ping grant holds decoys at TRACK too — where they still read as
+    // ordinary contacts (a ping never resolves a decoy; that stays ID-only)
+    const granted =
+      viewer.pingGrantS > 0 && viewer.pingGrantDecoys.has(d.id) ? 2 : 0;
+    if (!this.losClear(viewer.x, viewer.y, d.x, d.y)) return granted as 0 | 2;
     const frac = dist(viewer.x, viewer.y, d.x, d.y) / this.detectionRange(C.DECOY_SIGNATURE);
     if (frac <= C.TIER_ID_FRAC) return 3;
     if (frac <= C.TIER_TRACK_FRAC) return 2;
-    if (frac <= C.TIER_FAINT_FRAC) return 1;
-    return 0;
+    if (frac <= C.TIER_FAINT_FRAC) return Math.max(1, granted) as 1 | 2;
+    return granted as 0 | 2;
+  }
+
+  // v4.5 hearing channel: emitters this ship HEARS but cannot see — beyond
+  // detection (or LOS-blocked) yet inside hearing_range = detection x
+  // HEARING_RANGE_MULT. Terrain does NOT block hearing (the shroud carries
+  // drive rumble the way water carries sound); only distance vs signature
+  // matters, and the system is CONTINUOUS — no thresholds anywhere (design
+  // law: a threshold becomes a throttle policy). Fog invariant, strictly:
+  // a rumble carries bearing (+ a loudness scalar for the client's audio,
+  // which is signature-derived, never range-derived) — NO position, NO
+  // range, NO vector, NO tier. Decoys rumble exactly like ships (invariant
+  // 11: nothing may unmask a decoy below ID tier — a silent "contact"
+  // would).
+  rumblesFor(ship: Ship): { cid: string; bearing: number; loud: number }[] {
+    const out: { cid: string; bearing: number; loud: number }[] = [];
+    const hear = (x: number, y: number, sig: number, cid: string) => {
+      if (dist(ship.x, ship.y, x, y) <= this.detectionRange(sig) * C.HEARING_RANGE_MULT) {
+        out.push({
+          cid,
+          bearing: Math.round(norm360(bearingTo(ship.x, ship.y, x, y))) % 360, // 359.6 rounds to 360 -> wrap to 000
+          loud: Math.min(1, sig / 150),
+        });
+      }
+    };
+    const enemy = this.enemyOf(ship.id);
+    if (enemy && ship.contactTier === 0) {
+      hear(enemy.x, enemy.y, this.signatureOf(enemy), "s1");
+    }
+    for (const d of this.decoys) {
+      if (d.owner === ship.id) continue;
+      if (this.decoyTierFor(ship, d) === 0) hear(d.x, d.y, C.DECOY_SIGNATURE, `d${d.id}`);
+    }
+    return out;
+  }
+
+  // XO rumble announcements: new rumbles, bearing drifts past
+  // RUMBLE_SHIFT_ANNOUNCE_DEG, and fades — rate-limited per emitter. A
+  // rumble that hardens into a CONTACT fades silently (the tier notice is
+  // the announcement — seamless handoff, never a double contact).
+  private updateRumbles(ship: Ship, events: SimEvent[]): void {
+    if (ship.isDrone) return;
+    const state = this.rumbleState.get(ship.id)!;
+    for (const st of state.values()) st.cooldown = Math.max(0, st.cooldown - 1 / C.TICK_RATE_HZ);
+    const current = this.rumblesFor(ship);
+    const liveIds = new Set(current.map((r) => r.cid));
+
+    for (const r of current) {
+      const st = state.get(r.cid);
+      if (!st || (!st.live && st.cooldown <= 0)) {
+        state.set(r.cid, { bearing: r.bearing, cooldown: C.RUMBLE_ANNOUNCE_COOLDOWN_S, live: true });
+        events.push({
+          kind: "notice",
+          ship: ship.id,
+          text: `Drive rumble, bearing ${fmtBearing(r.bearing)}.`,
+        });
+      } else if (
+        st.live &&
+        st.cooldown <= 0 &&
+        Math.abs(angDiff(st.bearing, r.bearing)) > C.RUMBLE_SHIFT_ANNOUNCE_DEG
+      ) {
+        st.bearing = r.bearing;
+        st.cooldown = C.RUMBLE_ANNOUNCE_COOLDOWN_S;
+        events.push({
+          kind: "notice",
+          ship: ship.id,
+          text: `That rumble's drifted to ${fmtBearing(r.bearing)}.`,
+        });
+      } else if (!st.live) {
+        st.live = true; // back within cooldown: resume silently
+        st.bearing = r.bearing;
+      }
+    }
+
+    for (const [cid, st] of state) {
+      if (liveIds.has(cid)) continue;
+      if (!st.live) {
+        if (st.cooldown <= 0) state.delete(cid); // expired ghost entry
+        continue;
+      }
+      st.live = false;
+      // silent when it hardened into a contact (rumble -> faint handoff)
+      const becameContact =
+        cid === "s1"
+          ? ship.contactTier >= 1
+          : this.decoys.some(
+              (d) => `d${d.id}` === cid && this.decoyTierFor(ship, d) >= 1
+            );
+      if (!becameContact) {
+        st.cooldown = C.RUMBLE_ANNOUNCE_COOLDOWN_S;
+        events.push({ kind: "notice", ship: ship.id, text: "Lost the rumble." });
+      }
+    }
   }
 
   // Enemy decoys RESOLVED as decoys (ID tier) — what the helm may point at
@@ -1068,6 +1249,7 @@ export class Sim {
     for (const ship of this.ships.values()) {
       this.updateSensors(ship, events);
       this.updateDecoyContacts(ship);
+      this.updateRumbles(ship, events); // after tiers refresh: handoff needs fresh contactTier
       this.announceInboundMissiles(ship, events);
       this.updateCollisionWarning(ship, events);
       this.announceDust(ship, events);
@@ -1339,6 +1521,10 @@ export class Sim {
     for (const m of this.missiles) {
       if (deadMissiles.has(m.id)) continue;
       if (m.age < C.MISSILE_LAUNCH_DELAY_TICKS / C.TICK_RATE_HZ) continue; // still in launch delay
+      // v4.5 arming distance: the fuse is inert until the bird has traveled
+      // MISSILE_ARMING_DIST_M from its launch point — a point-blank launch
+      // duds straight past the target (standoff is part of the weapon)
+      if (dist(m.x, m.y, m.launchX, m.launchY) < C.MISSILE_ARMING_DIST_M) continue;
       const enemy = this.ships.get(m.owner === "A" ? "B" : "A");
 
       // enemy ship
@@ -1636,6 +1822,13 @@ export class Sim {
     // tube reloads.
     ship.sigSpikeLaunch = Math.max(0, ship.sigSpikeLaunch - dt);
     ship.sigSpikePdc = Math.max(0, ship.sigSpikePdc - dt);
+    // ping timers snap to zero below float dust: 0.1-substep decrements
+    // leave ~1e-14 residues, and a residue on pingGrantS would buy a fifth
+    // track-tick — exactly enough to complete the lock the design forbids
+    const tickDown = (v: number) => (v - dt < 1e-9 ? 0 : v - dt);
+    ship.pingCooldownS = tickDown(ship.pingCooldownS);
+    ship.pingRevealS = tickDown(ship.pingRevealS);
+    ship.pingGrantS = tickDown(ship.pingGrantS);
     for (let i = 0; i < ship.tubes.length; i++) {
       const t = ship.tubes[i];
       if (!t.loaded && t.reload > 0) {
@@ -1928,7 +2121,7 @@ export class Sim {
       );
     }
     lines.push(
-      `Weapons: PDC posture ${ship.pdcPosture.toUpperCase()} (ammo ${Math.round(ship.pdcAmmoS)}s of fire left), ${this.tubeSummary(ship)}, missiles aboard ${missilesAboard(ship)}/${C.MISSILE_MAGAZINE}, decoys ${ship.decoys}/${C.DECOY_SUPPLY}.`
+      `Weapons: PDC posture ${ship.pdcPosture.toUpperCase()} (ammo ${Math.round(ship.pdcAmmoS)}s of fire left), ${this.tubeSummary(ship)}, missiles aboard ${missilesAboard(ship)}/${C.MISSILE_MAGAZINE}, decoys ${ship.decoys}/${C.DECOY_SUPPLY}. Active ping: ${ship.pingCooldownS <= 0 ? "READY (reveals us map-wide for " + C.PING_REVEAL_S + "s)" : `recharging (${Math.ceil(ship.pingCooldownS)}s)`}.`
     );
     const painted = this.paintedState(ship);
     lines.push(
@@ -1954,6 +2147,14 @@ export class Sim {
     } else {
       lines.push(
         `Enemy: NO contact. Last seen ${intel.last_seen_seconds_ago}s ago, bearing ${fmtBearing(intel.last_known_bearing as number)}, range ${(((intel.last_known_range_m as number) / 1000)).toFixed(1)} km.`
+      );
+    }
+    const rumbles = this.rumblesFor(ship);
+    if (rumbles.length > 0) {
+      lines.push(
+        `Hearing: drive rumble${rumbles.length > 1 ? "s" : ""} bearing ${rumbles
+          .map((r) => fmtBearing(r.bearing))
+          .join(", ")} — bearing ONLY, no range or position (something is running its drive out there).`
       );
     }
     const inbound = this.visibleEnemyMissiles(ship);
@@ -2103,7 +2304,14 @@ export class Sim {
           range_m: Math.round(dist(ship.x, ship.y, m.x, m.y)),
           engine: m.burning ? "burning" : "coasting",
         }));
-        return { ship_contact: intel, ordnance_contacts: inboundList };
+        return {
+          ship_contact: intel,
+          ordnance_contacts: inboundList,
+          rumbles: this.rumblesFor(ship).map((r) => ({
+            bearing: r.bearing,
+            note: "hearing only — no range, no position",
+          })),
+        };
       }
       case "terrain": {
         const near = this.terrain.rocks
@@ -2210,6 +2418,10 @@ export class Sim {
     const ghost =
       !contacts.some((c) => c.cid === "s1") && ship.lastKnownEnemy ? ship.lastKnownEnemy : null;
 
+    // v4.5 hearing: bearing-only rumbles (below faint). Strictly {cid,
+    // bearing, loud} — the fog invariant forbids anything positional here.
+    const rumbles = this.rumblesFor(ship);
+
     return {
       tick: this.tickCount,
       you: {
@@ -2235,6 +2447,7 @@ export class Sim {
         painted: this.paintedState(ship),
         decoys: ship.decoys,
         pdc: { posture: ship.pdcPosture, ammoS: Math.round(ship.pdcAmmoS) },
+        ping: { ready: ship.pingCooldownS <= 0, cooldownS: Math.ceil(ship.pingCooldownS) },
         insideZone: this.insideZone(ship),
         inDust: this.inDust(ship),
         collisionWarning: ship.collisionWarnS === null ? null : Math.round(ship.collisionWarnS),
@@ -2246,6 +2459,7 @@ export class Sim {
         })),
       },
       contacts,
+      rumbles,
       ghost,
       // own ordnance always; enemy ordnance only within detect range
       missiles: [

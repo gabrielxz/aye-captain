@@ -25,12 +25,14 @@ const assert = (cond: boolean, msg: string) => {
 // 2. edge gravity: no wall — a restoring pull grows with distance, capped,
 // and always brings a derelict home
 {
-  // pull magnitude: 50 km beyond => 5 m/s^2 toward center
+  // pull magnitude at 50 km beyond: the linear ramp, capped (v4.5's steep
+  // slope reaches EDGE_PULL_CAP_MPS2 well inside 50 km)
+  const expected = Math.min(C.EDGE_PULL_CAP_MPS2, C.EDGE_PULL_MPS2_PER_50KM);
   const sim = new Sim();
   const a = sim.addShip("A", 0, C.REGION_RADIUS_M + 50000, 0); // 50 km beyond, due north of center
   sim.addShip("B", 0, -14000, 0, true);
   sim.tick();
-  assert(Math.abs(a.vy + C.EDGE_PULL_MPS2_PER_50KM) < 0.2, `pull ~5 m/s^2 at 50 km beyond (vy ${a.vy.toFixed(2)})`);
+  assert(Math.abs(a.vy + expected) < 0.2, `pull ~${expected} m/s^2 at 50 km beyond (vy ${a.vy.toFixed(2)})`);
 
   // pull caps at EDGE_PULL_CAP_MPS2
   const sim2 = new Sim();
@@ -68,5 +70,21 @@ const assert = (cond: boolean, msg: string) => {
   sim.tick();
   const ev = sim.tick();
   assert(ev.some(e => e.kind === "notice" && /'come home' triggered/.test((e as any).text)), "zone-distance standing order fires");
+}
+
+// v4.5 §4: a full-speed (MAX_SPEED) exit is turned around in ~24s — the
+// edge is a firm current, not a suggestion (retuned from the handoff's
+// 15/50km after measuring 91s; 300/50km cap 150 signed off)
+{
+  const sim = new Sim();
+  const a = sim.addShip("A", 0, C.REGION_RADIUS_M, 0); // at the edge, heading out
+  sim.addShip("B", 0, -14000, 0, true);
+  a.vy = C.MAX_SPEED_MPS;
+  let turn = -1;
+  for (let t = 1; t <= 60 && turn < 0; t++) {
+    sim.tick();
+    if (a.vy <= 0) turn = t;
+  }
+  assert(turn > 0 && turn <= 30, `full-speed exit turned around in ~24s (measured ${turn}s)`);
 }
 console.log("done");

@@ -15,6 +15,7 @@ const grantLock = (ship: Ship) => {
 function injectSlowMissile(sim: Sim, owner: "A" | "B", x: number, y: number): Missile {
   const m: Missile = {
     id: 9000, owner, x, y, prevX: x, prevY: y,
+    launchX: x, launchY: y + 200000, // armed: launched far away
     course: 0, speed: 0, vx: 0, vy: 0,
     age: 10, fuel: 0, burning: false,
     guidance: "autonomous", cmdBearing: null, lock: null,
@@ -103,8 +104,10 @@ function injectSlowMissile(sim: Sim, owner: "A" | "B", x: number, y: number): Mi
   assert(a.pdcAmmoS === C.PDC_AMMO_S, "no ammo wasted on a shadowed target");
 }
 
-// 5. saturation leaks by design: a full-speed torpedo crossing the envelope
-// survives more often than it dies (~28% kill over a 1.3s crossing)
+// 5. saturation leaks by design. v4.5 kinematics: a full-speed (2400 m/s)
+// torpedo spends ~3.3s crossing the envelope — single-missile kill is now
+// ~55-60% (the spec's intent), so leaks drop but never vanish. The assert
+// brackets the binomial spread; don't tighten it to "always dies".
 {
   let leaked = 0;
   const trials = 30;
@@ -125,8 +128,8 @@ function injectSlowMissile(sim: Sim, owner: "A" | "B", x: number, y: number): Mi
     if (struck) leaked++;
   }
   assert(
-    leaked >= trials * 0.4,
-    `full-speed torpedoes usually leak through (${leaked}/${trials} got through)`
+    leaked >= trials * 0.15 && leaked <= trials * 0.7,
+    `torpedoes still leak, but die more often than not (${leaked}/${trials} got through)`
   );
 }
 

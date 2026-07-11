@@ -1,5 +1,40 @@
 # TODO — next steps
 
+## v4.5 "Tempo" (HANDOFF-v4.5.md) — BUILT, not yet deployed
+
+Missile retune to real engagement ranges (2400 m/s / 150 m/s² / 3 km
+arming / 30° autonomous cone), 60 s decoys, 30 s reload, steeper edge pull
+(300/50km — the handoff's 15 measured at 91 s turnaround vs its own ~20-25 s
+intent; retuned with sign-off, ~24 s), the HEARING channel (bearing-only
+rumbles at 2.5× detection, chevrons + low audio, rumble_present metric),
+and the active PING (sensor_ping verb, 150 km / 5 s track / 10 s map-wide
+reveal / 30 s cooldown, ping-cannot-lock pinned). 400+ assertions.
+
+- [ ] Deploy, then playtest: does the hunt phase now converge? Do throttles
+  come up? Is the ping cost honest?
+
+## Escalation ladder (held in RESERVE — do not build unprompted)
+
+If playtests show the mutual-drift stalemate (both ships dark forever),
+the pre-agreed order is: (1) match timer with declared draw, then
+(2) slow shroud contraction. Nothing else.
+
+## Rejected (design calls — do NOT resurface)
+
+- **Speed-scaled ramscoop regen** — REJECTED v4.5 §0.
+- **Periodic free intel sweeps** — REJECTED v4.5 §5: free intel eats the
+  niche player-launched sensors (probes) should own, and flattens
+  archetype signature differences at the strategic layer.
+- **XO rumble triangulation** — crossing bearings is deliberately human
+  skill; v5 probes are the tooling answer.
+
+## Deferred candidates (revisit AFTER v4.5 playtests)
+
+- [ ] **Rock belts / clustered terrain** — map-structure lever, deliberately
+  held pending observation of v4.5's effects.
+- [ ] **Resupply depots** — same.
+- [ ] **Active sensor ping** — SHIPPED in v4.5 (was deferred here by v4.3).
+
 ## v4.4 fix patch — three playtest reports, all reproduced live then fixed
 
 - **"Stop engines" flipped the ship** (translator read it as full_stop):
@@ -35,15 +70,6 @@
   rebase (SENSOR_BASE 180 km, SIG_BASE 30, decoy 100), §6 handbook
   (Reading the Map box, softened stealth copy, FIG-1 rescale). 328
   assertions green.
-
-## Deferred by v4.3 (designed, NOT built — burn-hot incentives)
-
-- [ ] **Speed-scaled ramscoop regen** — propellant regeneration scales with
-  velocity, rewarding hot running. Positive incentive to burn; pairs with
-  the v4.3 stealth-tax rebase.
-- [ ] **Active sensor ping** — a loud, deliberate emission that lights up
-  the pinger and paints everyone else. Burn-hot counterpart to passive
-  stealth; gives a dark ship a reason to speak.
 
 ## v4.2 delta — spectator presence — DEPLOYED 2026-07-11 with v4.3
 
