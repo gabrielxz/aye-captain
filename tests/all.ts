@@ -22,3 +22,4 @@ import "./overlay.test.js";
 import "./pingfx.test.js";
 import "./ordnance-fog.test.js";
 import "./multiship.test.js";
+import "./matchflow.test.js";
