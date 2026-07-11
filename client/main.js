@@ -54,6 +54,8 @@ function handleMessage(msg) {
       state.fxBuffer = [];
       state.gameOver = false;
       resetOverlays();
+      prevTiers = null;
+      pingListen = null;
       updateWatching([]); // fresh roster arrives right behind the start
       setSpectator(msg.role === "spectator" ? msg.callsign : null);
       if (msg.role === "spectator") {
@@ -89,6 +91,14 @@ function handleMessage(msg) {
       for (const fx of msg.fx ?? []) {
         state.fxBuffer.push({ fx, at: now });
         if (fx.type === "pdc") audio.sfxPdc(fx.owner === state.role); // internally rate-limited
+        else if (fx.type === "ping") {
+          // whose ping? it rings out from a hull — ours if it's ours
+          const own = !!msg.you && Math.hypot(fx.x - msg.you.x, fx.y - msg.you.y) < 1000;
+          audio.sfxPing(own);
+          // open the return-listen window (grant lasts ~5 s server-side);
+          // the first new-or-promoted contact schedules the echo blip
+          if (own) pingListen = { until: now + 5000, rangeM: fx.r, done: false };
+        }
       }
       soundFromSnapshot(msg);
       updateHUDFromSnapshot(msg);
@@ -151,9 +161,30 @@ function handleMessage(msg) {
 // State-diff sound triggers: compare consecutive snapshots so the server
 // protocol stays unchanged (fx events cover the rest).
 let prevAudio = null;
+let prevTiers = null; // cid -> tier from the previous snapshot
+let pingListen = null; // {until, rangeM, done} — set when OUR ping fires
 function soundFromSnapshot(snap) {
   const you = snap.you;
   if (!you || state.gameOver) return;
+
+  // v4.7 §3b: sonar return. During the grant window after our own ping,
+  // the nearest NEW or PROMOTED contact schedules a range-delayed blip.
+  // No new contact = the outgoing ping, a long silence, and nothing.
+  const tiers = new Map((snap.contacts ?? []).map((c) => [c.cid, c.tier]));
+  if (pingListen && !pingListen.done && performance.now() < pingListen.until && prevTiers) {
+    let nearest = null;
+    for (const c of snap.contacts ?? []) {
+      if (c.tier > (prevTiers.get(c.cid) ?? 0)) {
+        const d = Math.hypot(c.x - you.x, c.y - you.y);
+        if (nearest === null || d < nearest) nearest = d;
+      }
+    }
+    if (nearest !== null) {
+      pingListen.done = true;
+      audio.sfxPingReturn(audio.PING_RETURN_MS_AT_MAX_RANGE * Math.min(1, nearest / pingListen.rangeM));
+    }
+  }
+  prevTiers = tiers;
 
   audio.setThrust(you.thrustOut ?? you.thrust);
   audio.setWarning(you.painted ?? "none");
@@ -252,8 +283,15 @@ function updateHUDFromSnapshot(snap) {
     },
     {
       label: "PING",
-      value: you.ping?.ready ? "READY" : `${you.ping?.cooldownS ?? 0}s`,
-      cls: you.ping?.ready ? "good" : "",
+      // LIT = the reveal window: everyone on the map reads us at ID tier.
+      // A countdown, not a voice line — dread for exactly as long as earned.
+      value:
+        (you.ping?.revealS ?? 0) > 0
+          ? `◤ LIT ${you.ping.revealS}s ◥`
+          : you.ping?.ready
+            ? "READY"
+            : `${you.ping?.cooldownS ?? 0}s`,
+      cls: (you.ping?.revealS ?? 0) > 0 ? "alert" : you.ping?.ready ? "good" : "",
     },
     {
       label: "ZONE",

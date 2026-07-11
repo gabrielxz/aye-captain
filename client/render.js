@@ -1041,11 +1041,16 @@ function drawOrdnance() {
 const PDC_FX_MS = 260;
 const BOOM_FX_MS = 700;
 const BIG_BOOM_FX_MS = 1600;
+const PING_RING_MS = 1200; // expanding ring reaches full range in this long
+const PING_FLASH_MS = 120; // flashbulb on the hull at ping-out
 
 function drawFx() {
   const now = performance.now();
   state.fxBuffer = state.fxBuffer.filter(({ fx, at }) => {
-    const ttl = fx.type === "pdc" ? PDC_FX_MS : fx.big ? BIG_BOOM_FX_MS : BOOM_FX_MS;
+    const ttl =
+      fx.type === "pdc" ? PDC_FX_MS :
+      fx.type === "ping" ? PING_RING_MS :
+      fx.big ? BIG_BOOM_FX_MS : BOOM_FX_MS;
     return now - at < ttl;
   });
   for (const entry of state.fxBuffer) {
@@ -1067,6 +1072,46 @@ function drawFx() {
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.globalAlpha = 1;
+    } else if (fx.type === "ping") {
+      // the expanding ring, torn open by terrain: each 2° arc stops being
+      // drawn once the animated radius passes that bearing's mask value —
+      // the gaps ARE where rocks/dust ate the ping (the map's most
+      // explanatory graphic; the shadow explains the empty ping)
+      const t = age / PING_RING_MS;
+      const [ox, oy] = worldToScreen(fx.x, fx.y);
+      const animR = t * fx.r; // meters
+      const rpx = animR * camera.zoom;
+      const n = fx.mask.length;
+      const step = (Math.PI * 2) / n;
+      if (rpx > 1) {
+        ctx.beginPath();
+        for (let i = 0; i < n; i++) {
+          if (animR > fx.mask[i]) continue; // this bearing's arc died on terrain
+          const a0 = i * step - Math.PI / 2; // compass 0=N -> canvas angle
+          ctx.moveTo(ox + Math.cos(a0) * rpx, oy + Math.sin(a0) * rpx);
+          ctx.arc(ox, oy, rpx, a0, a0 + step);
+        }
+        ctx.strokeStyle = "#a8ecff";
+        ctx.lineWidth = 1.6;
+        ctx.globalAlpha = (1 - t) * 0.85;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      // flashbulb: brief white/cyan bloom at the emitting hull
+      if (age < PING_FLASH_MS) {
+        const ft = age / PING_FLASH_MS;
+        const fr = 14 + 22 * ft;
+        const grad = ctx.createRadialGradient(ox, oy, 0, ox, oy, fr);
+        grad.addColorStop(0, "rgba(240, 253, 255, 0.9)");
+        grad.addColorStop(0.4, "rgba(168, 236, 255, 0.5)");
+        grad.addColorStop(1, "rgba(168, 236, 255, 0)");
+        ctx.fillStyle = grad;
+        ctx.globalAlpha = 1 - ft;
+        ctx.beginPath();
+        ctx.arc(ox, oy, fr, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
     } else if (fx.type === "boom") {
       const ttl = fx.big ? BIG_BOOM_FX_MS : BOOM_FX_MS;
       const t = age / ttl;

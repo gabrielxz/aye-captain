@@ -183,6 +183,43 @@ export function sfxClick() {
   osc("square", 1800, ctx.currentTime, 0.015, 0.08);
 }
 
+// v4.7 ping. own = we screamed: bright ~1.2 kHz sine, fast pitch drop,
+// long exponential tail — the "one ping only" sound. Enemy pings arrive
+// through the hull: lowpassed hard, quieter, stretched. You should be able
+// to tell whose ping it was with your eyes shut.
+export const PING_RETURN_MS_AT_MAX_RANGE = 900;
+export function sfxPing(own) {
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  if (own) {
+    osc("sine", 1250, t, 1.5, 0.4, 850);
+    osc("sine", 2500, t, 0.2, 0.1, 1700); // glassy transient on top
+  } else {
+    const o = ctx.createOscillator();
+    const f = ctx.createBiquadFilter();
+    const g = ctx.createGain();
+    o.type = "sine";
+    o.frequency.setValueAtTime(1150, t);
+    o.frequency.exponentialRampToValueAtTime(650, t + 2.4);
+    f.type = "lowpass";
+    f.frequency.value = 480;
+    env(g, t, 0.15, 0.04, 2.4);
+    o.connect(f).connect(g).connect(sfxBus);
+    o.start(t);
+    o.stop(t + 2.5);
+  }
+}
+
+// The diegetic return after OUR ping, scheduled by contact range. An empty
+// ping is the outgoing ping, a long silence, and nothing — that silence is
+// the feedback. Never fired for the enemy's ping.
+export function sfxPingReturn(delayMs) {
+  if (!ctx) return;
+  const t = ctx.currentTime + Math.max(0, delayMs) / 1000;
+  osc("sine", 1180, t, 0.25, 0.22, 1100);
+  osc("sine", 1770, t, 0.07, 0.05);
+}
+
 // ---------- continuous states ----------
 
 // Thrust rumble: filtered noise loop, level/pitch follow effective thrust %.

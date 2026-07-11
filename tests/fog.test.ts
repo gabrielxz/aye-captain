@@ -208,4 +208,23 @@ const quietDetect = C.SENSOR_BASE_M * (C.SIG_BASE / 100); // ~54 km at v4.3 valu
   assert(Math.abs(b.facing - (f0 + C.DRONE_TURN_RATE_DPS)) < 1e-6, "drone gentle turn 3 deg/s");
   assert(b.thrust === C.DRONE_THRUST_PERCENT, "drone signature thrust 50");
 }
+// 11. v4.7 ping fx: no leak — the payload is exactly {type, x, y, r, mask}.
+// The mask derives from terrain (public) + pinger position (public for
+// PING_REVEAL_S as the ping's price). Assert the KEY SET, not a happy path:
+// any new field is a fog review, not a merge.
+{
+  const sim = new Sim();
+  sim.addShip("A", 0, 0, 0);
+  sim.addShip("B", 0, 100000, 180, false);
+  sim.enqueue("A", [{ verb: "sensor_ping", params: {} }]);
+  sim.tick();
+  for (const viewer of ["A", "B"] as const) {
+    const p = (sim.snapshotFor(viewer).fx as any[]).find((f) => f.type === "ping");
+    assert(!!p, `ping fx present in ${viewer}'s snapshot`);
+    const keys = Object.keys(p).sort().join(",");
+    assert(keys === "mask,r,type,x,y", `ping fx keys are exactly {type,x,y,r,mask} for ${viewer} (got ${keys})`);
+    assert(p.mask.every((v: unknown) => typeof v === "number"), `mask is pure numbers for ${viewer}`);
+  }
+}
+
 console.log("done");
