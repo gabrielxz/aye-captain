@@ -312,7 +312,7 @@
             "collision_warning",
             "rumble_present"
           ],
-          "description": "enemy_contact_tier: 0 = no contact, 1 = faint, 2 = track, 3 = id ('if you get a track on him' => gte 2). enemy_range and enemy_bearing_off_nose are KNOWABLE ONLY AT TIER >= 2 — at faint or below the comparison is simply false (unknowable-metric rule). enemy_bearing_off_nose = absolute degrees between our facing and the bearing to the enemy (0 = dead ahead). Booleans (op=eq, value=true/false): missile_inbound (a missile is CURRENTLY detected inbound), have_lock (our missile lock is held), being_painted (the enemy is acquiring or holds a lock on US), in_dust (we are inside a dust cloud), collision_warning (a rock lies on our projected vector). tubes_ready = loaded launch tubes (0-2). pdc_ammo_seconds = seconds of point-defense fire remaining."
+          "description": "v5 MULTI-ENEMY SEMANTICS: enemy_range and enemy_bearing_off_nose refer to the NEAREST TRACKED hostile; enemy_contact_tier is the best tier held on ANY hostile; missile_inbound and being_painted are ANY-source. enemy_contact_tier: 0 = no contact, 1 = faint, 2 = track, 3 = id ('if you get a track on him' => gte 2). enemy_range and enemy_bearing_off_nose are KNOWABLE ONLY with a tracked hostile — otherwise the comparison is simply false (unknowable-metric rule). enemy_bearing_off_nose = absolute degrees between our facing and the bearing to that hostile (0 = dead ahead). Booleans (op=eq, value=true/false): missile_inbound (a hostile missile is CURRENTLY detected inbound), have_lock (our missile lock is held), being_painted (a hostile is acquiring or holds a lock on US), in_dust (we are inside a dust cloud), collision_warning (a rock lies on our projected vector). tubes_ready = loaded launch tubes (0 up to this hull's tube count). pdc_ammo_seconds = seconds of point-defense fire remaining."
         },
         "op": { "enum": ["lt", "lte", "gt", "gte", "eq"] },
         "value": {
@@ -358,24 +358,25 @@
   },
 
   "server_constants_suggested": {
-    "description": "v4 'The Big Dark' tunables. These live server-side (constants.ts is the source of truth), documented here so the LLM prompt and sim agree on the world's shape. All units abstract: distance in meters, speed in m/s, angles in degrees.",
+    "description": "v5 'The Fleet' tunables, refreshed by the §9 audit. These live server-side (constants.ts is the SOURCE OF TRUTH; where docs disagree, constants.ts wins). Units: meters, m/s, degrees, seconds.",
     "tick_rate_hz": 1,
     "physics": { "substeps": 10, "snapshot_rate_hz": 4 },
     "map": {
       "region_radius_m": 250000,
-      "outside_region_effect": "treated as signature-max (tier ID at any range); NO propellant regen; a restoring current (5 m/s^2 per 50 km beyond, cap 50) pulls back toward center — gravity, not walls"
+      "spawn_ring_radius_m": 150000,
+      "outside_region_effect": "treated as signature-max (tier ID at any range); NO propellant regen; a restoring current (300 m/s^2 per 50 km beyond, cap 150) pulls back toward center — gravity, not walls"
     },
-    "ship": {
-      "max_speed_mps": 3000,
-      "accel_at_full_thrust_mps2": 60,
-      "turn_rate_deg_per_sec": 20,
-      "hull_points": 100
+    "archetypes": {
+      "note": "v5: three hulls, NUMBERS ONLY (max speed 3000 m/s shared). CURRENT SHIP STATE names this hull's archetype and live loadout.",
+      "corvette": { "hull": 60, "accel_mps2": 85, "turn_dps": 28, "sig_base": 20, "sensor_base_m": 210000, "tubes": 1, "missiles": 4, "tube_reload_s": 20, "decoys": 6, "pdc_ammo_s": 40, "railguns": 0, "probes": 4 },
+      "frigate": { "hull": 100, "accel_mps2": 60, "turn_dps": 20, "sig_base": 30, "sensor_base_m": 180000, "tubes": 2, "missiles": 6, "tube_reload_s": 30, "decoys": 4, "pdc_ammo_s": 60, "railguns": 1, "rail_slugs": 20, "probes": 2 },
+      "cruiser": { "hull": 160, "accel_mps2": 40, "turn_dps": 14, "sig_base": 45, "sensor_base_m": 160000, "tubes": 3, "missiles": 9, "tube_reload_s": 30, "decoys": 4, "pdc_ammo_s": 90, "railguns": 1, "rail_slugs": 30, "probes": 1 }
     },
     "detection": {
-      "sensor_base_m": 165000,
-      "formula": "detection_range = sensor_base x target_signature / 100, line of sight permitting",
-      "ship_signature": "10 base + effective thrust percent, +150 for 5s after a missile launch, +50 for 3s while PDCs fire",
+      "formula": "detection_range = VIEWER sensor_base x target_signature / 100, line of sight permitting",
+      "ship_signature": "archetype sig base + effective thrust percent, +150 for 5s after a missile launch, +50 for 3s while PDCs fire, +80 for 3s after rail fire",
       "tiers": "id <= 30% of detection range, track <= 60%, faint <= 100%; faint = approximate position only (2 km noise, 5 s refresh), no vector, no lock",
+      "hearing": "beyond detection to 2.5x detection an emitter RUMBLES: bearing only, no range/vector/tier; terrain never blocks hearing",
       "terrain": "rocks block LOS (sensors, locks, seekers, PDC); dust blocks sensors both ways — inside a cloud you are blind and unseen"
     },
     "propellant": {
@@ -391,35 +392,60 @@
       "kill_prob_per_s": 0.25,
       "ship_range_m": 3000,
       "ship_dps": 5,
-      "ammo_seconds_of_fire": 60,
-      "notes": "automated by posture (free/hold); never targets decoys or terrain; firing spikes signature"
+      "notes": "automated by posture (free/hold); sensor-slaved; engages hostile missiles, probes, and knife-range ships; NEVER decoys, terrain, rail slugs, or friendlies (IFF); firing spikes signature; ammo per archetype, no regeneration"
     },
     "missile": {
-      "magazine_total_aboard": 6,
-      "launch_tubes": 2,
-      "tube_reload_seconds": 20,
-      "max_speed_mps": 6000,
-      "acceleration_mps2": 400,
+      "max_speed_mps": 2400,
+      "acceleration_mps2": 150,
       "engine_seconds": 25,
       "flight_model": "burn-and-coast: engine on while below max speed or turning; dry = ballistic (no turns), still detonates on proximity",
       "signature": "80 burning / 8 coasting",
       "launch_delay_ticks": 2,
-      "acquisition_cone_degrees": 60,
+      "seeker_base_m": 40000,
+      "acquisition_cone_degrees": 30,
       "proximity_fuse_m": 200,
+      "arming_distance_m": 3000,
       "lifetime_s": 120,
-      "damage": 35
+      "damage": 35,
+      "iff": "seekers and prox fuses ignore friendly ships/decoys/probes (teams)"
     },
     "missile_lock": {
       "cone_half_angle_degrees": 30,
       "range_m": 80000,
       "time_to_acquire_s": 5,
       "grace_s": 2,
-      "notes": "LOCK REQUIRES TIER_TRACK OR BETTER — a faint contact cannot be locked; the target always feels being painted (RWR)"
+      "notes": "LOCK REQUIRES TIER_TRACK OR BETTER ON YOUR OWN SENSORS — probe-relayed tracks and faint contacts cannot be locked; the designated target always feels being painted (RWR); set_lock_target picks WHO, else nearest eligible"
+    },
+    "railgun": {
+      "slug_speed_mps": 6000,
+      "damage": 25,
+      "cooldown_s": 6,
+      "hit_radius_m": 100,
+      "sig_spike": "+80 for 3 s — rail fire is HEARD with a bearing",
+      "notes": "frigate/cruiser only; solution mode needs a TRACK and misses any target that thrusts during flight; slugs check NO IFF, are stopped by rocks and hulls, obliterate ordnance en route, and cannot be engaged by PDCs"
+    },
+    "probe": {
+      "burn_s": 20,
+      "accel_mps2": 150,
+      "lifetime_s": 180,
+      "sensor_base_m": 60000,
+      "signature": 25,
+      "notes": "relays contacts + rumbles from ITS position, marked 'via probe'; full hearing; relayed tracks never feed locks; killable (PDCs, slugs, seekers); no reloads"
+    },
+    "comms": {
+      "spike_s": 5,
+      "cooldown_s_per_channel": 10,
+      "message_max_chars": 140,
+      "notes": "broadcast = everyone + a bearing chevron with the sender's CALLSIGN (voiceprint); tightbeam = private, needs a current track (teammates exempt)"
     },
     "decoy": {
-      "supply": 4,
-      "lifetime_seconds": 20,
-      "signature": 150
+      "supply": "per archetype",
+      "lifetime_seconds": 60,
+      "signature": 100
+    },
+    "teams": {
+      "transponders": "teammates always at ID on each other's maps, full state; NOTHING else shared — no fused contacts/rumbles/probe feeds",
+      "iff": "guided weapons ignore friendlies; RAIL SLUGS AND COLLISIONS CHECK NOTHING"
     },
     "terrain": {
       "rocks": "30 x 1-8 km radius + one ~15 km centerpiece; solid (collision damage above 50 m/s, lethal ~1500 m/s)",
