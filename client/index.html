@@ -132,6 +132,10 @@
       font: inherit; padding: 8px 22px; cursor: pointer; letter-spacing: 2px;
     }
     #banner button:hover { border-color: var(--accent); color: var(--accent); }
+    #banner-howto {
+      color: var(--dim); text-decoration: none; font-size: 12px; letter-spacing: 2px;
+    }
+    #banner-howto:hover { color: var(--accent); }
   </style>
 </head>
 <body>
@@ -144,6 +148,7 @@
       <button id="btn-join">JOIN</button>
     </div>
     <button id="btn-practice">PRACTICE</button>
+    <button id="btn-howto">HOW TO PLAY</button>
     <div id="lobby-status"></div>
   </div>
 
@@ -157,6 +162,7 @@
           <button id="btn-rematch">REMATCH — SAME FIELD</button>
           <button id="btn-rematch-new">REMATCH — NEW FIELD</button>
         </div>
+        <a id="banner-howto" href="/how-to-play" target="_blank" rel="noopener">HOW TO PLAY &nearr;</a>
       </div>
     </div>
     <div id="side">

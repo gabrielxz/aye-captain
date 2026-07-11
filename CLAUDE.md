@@ -120,6 +120,9 @@ Note: on this machine's rootless Docker, `-p` port publishing doesn't route
 11. Decoys (sig 90, between cruise and full burn) read as ORDINARY
     unresolved contacts to enemy ships at faint/track tier — the snapshot
     must never label them as decoys until ID tier resolves them.
+12. Any behavior change updates `/how-to-play` (client/how-to-play.html) in
+    the same commit — the handbook's numbers are rounded gameplay values
+    that must stay true.
 
 ## Judgment calls already made (user-visible, flagged in check-ins)
 

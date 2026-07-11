@@ -34,6 +34,9 @@ export function initUI() {
   document.getElementById("btn-practice").addEventListener("click", () => {
     send({ type: "practice" });
   });
+  document.getElementById("btn-howto").addEventListener("click", () => {
+    location.href = "/how-to-play";
+  });
   document.getElementById("btn-rematch").addEventListener("click", () => {
     send({ type: "rematch" });
   });

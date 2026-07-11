@@ -21,6 +21,11 @@ const clientDir = path.join(import.meta.dirname, "..", "client");
 const app = express();
 app.use(express.static(clientDir));
 
+// clean URL for the captain's handbook (deep-linkable anchors inside)
+app.get("/how-to-play", (_req, res) => {
+  res.sendFile(path.join(clientDir, "how-to-play.html"));
+});
+
 // Push-to-talk audio comes here as a raw body; reply is {text}.
 app.post(
   "/stt",

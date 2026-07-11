@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>AYE CAPTAIN — Captain's Handbook</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --bg: #06090d;
+      --panel: #0b1118;
+      --line: #1c2a38;
+      --fg: #c8d6e5;
+      --dim: #5c7185;
+      --accent: #4fd1c5;
+      --warn: #f6ad55;
+      --danger: #fc8181;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+      font-size: 14px;
+      line-height: 1.65;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 24px 20px 80px; }
+
+    .topbar {
+      display: flex; align-items: baseline; justify-content: space-between;
+      gap: 16px; padding-bottom: 14px; border-bottom: 1px solid var(--line);
+      margin-bottom: 28px;
+    }
+    h1 { font-size: 20px; letter-spacing: 5px; color: var(--accent); font-weight: normal; }
+    .sub { color: var(--dim); font-size: 12px; }
+    a.btn {
+      display: inline-block; background: none; border: 1px solid var(--line);
+      color: var(--fg); text-decoration: none; padding: 7px 18px;
+      letter-spacing: 2px; font-size: 12px; white-space: nowrap;
+    }
+    a.btn:hover { border-color: var(--accent); color: var(--accent); }
+
+    h2 {
+      font-size: 15px; letter-spacing: 3px; color: var(--accent);
+      font-weight: normal; margin: 44px 0 12px; padding-top: 18px;
+      border-top: 1px solid var(--line);
+    }
+    h2:first-of-type { border-top: none; padding-top: 0; margin-top: 24px; }
+    p { margin: 10px 0; }
+    em { color: var(--fg); font-style: italic; }
+    strong { color: var(--accent); font-weight: bold; }
+    .danger strong { color: var(--danger); }
+    ul, ol { margin: 10px 0 10px 24px; }
+    li { margin: 7px 0; }
+    blockquote {
+      margin: 14px 0; padding: 10px 16px; border-left: 2px solid var(--warn);
+      color: var(--warn); background: var(--panel); font-style: italic;
+    }
+    .lead { color: var(--dim); }
+    .signoff { color: var(--dim); font-style: italic; text-align: center; margin-top: 30px; }
+
+    figure {
+      margin: 20px 0; background: var(--panel);
+      border: 1px solid var(--line); padding: 14px;
+    }
+    figure svg { display: block; width: 100%; height: auto; }
+    figcaption {
+      color: var(--dim); font-size: 11.5px; letter-spacing: 1px;
+      margin-top: 10px; text-align: center;
+    }
+
+    table { border-collapse: collapse; width: 100%; margin: 14px 0; font-size: 13px; }
+    th, td { border: 1px solid var(--line); padding: 7px 12px; text-align: left; vertical-align: top; }
+    th { color: var(--dim); letter-spacing: 1px; font-weight: normal; }
+    td:first-child { color: var(--dim); white-space: nowrap; }
+    td .alt { color: var(--dim); }
+
+    /* figure text defaults */
+    svg text { font-family: "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace; }
+
+    /* FIG-1: the full-burn plume gently flickers */
+    @keyframes plume-flicker { 0%, 100% { opacity: 0.95; } 40% { opacity: 0.55; } 70% { opacity: 0.8; } }
+    .flicker { animation: plume-flicker 0.9s ease-in-out infinite; }
+
+    /* FIG-2: the faint blob slowly pulses */
+    @keyframes faint-pulse { 0%, 100% { opacity: 0.75; transform: scale(1); } 50% { opacity: 0.35; transform: scale(1.18); } }
+    .pulse { animation: faint-pulse 2.6s ease-in-out infinite; transform-origin: center; transform-box: fill-box; }
+
+    .footer-back { text-align: center; margin-top: 44px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div>
+        <h1>CAPTAIN'S HANDBOOK</h1>
+        <div class="sub">AYE, CAPTAIN — doctrine for commanding a warship with your voice</div>
+      </div>
+      <a class="btn" href="/">&larr; BACK</a>
+    </div>
+
+    <p>You command a warship with your voice. Your ship's AI — your XO — translates your
+    orders, runs your systems, and tells you what it sees. It is capable, literal, and
+    unfailingly calm. It does exactly what you say, which is not always what you meant.</p>
+    <p class="lead">This handbook teaches you doctrine. The XO handles the rest. When in
+    doubt about anything — ranges, fuel, what that contact is doing — just ask it.</p>
+
+    <h2 id="first-five-minutes">YOUR FIRST FIVE MINUTES</h2>
+    <p>Start a Practice match and say these, in order. Hold SPACE to talk (or press Enter and type).</p>
+    <ol>
+      <li><strong>"Flank speed."</strong> — You start accelerating. Note the propellant gauge draining.</li>
+      <li><strong>"Show me my vector."</strong> — A line appears: where you're actually going. Watch it NOT change when you turn. That's space.</li>
+      <li><strong>"Come to a full stop."</strong> — The XO flips the ship and burns until you're still. This is how braking works here. It costs fuel and time.</li>
+      <li><strong>"Throttle to twenty percent."</strong> — Your propellant starts regenerating (only inside the zone, only at low throttle). This is how you refuel: by being patient.</li>
+      <li><strong>"Any contacts?"</strong> — The XO reports what the sensors hold. Somewhere out there is a practice drone.</li>
+      <li><strong>"Point us at the contact."</strong> — The helm answers. Now go hunting — the rest of this handbook is how.</li>
+    </ol>
+
+    <h2 id="seeing">DOCTRINE I: SEE WITHOUT BEING SEEN</h2>
+    <p><strong>Detection is the game.</strong> Battles are usually decided before the first
+    shot: by who sees whom, first, and how well.</p>
+    <p>Your ship glows. Not with light — with <em>signature</em>: drive plume, heat,
+    emissions. <strong>Your throttle is your signature.</strong> At full burn you can be
+    seen from most of the map away. Cruising, from perhaps a hundred kilometers. Engines
+    cold, drifting silent — you're a hole in the sky until someone gets close. Firing
+    weapons spikes your signature: a torpedo launch is a flashbulb; even your defensive
+    guns give you away.</p>
+
+    <figure>
+      <svg viewBox="0 0 880 250" aria-label="Three ships at increasing throttle with increasingly huge detection circles">
+        <!-- FIG-1: THE THROTTLE IS THE SIGNATURE (circles to scale ~1:6:11) -->
+        <!-- dark -->
+        <g>
+          <circle cx="120" cy="110" r="16" fill="none" stroke="#5c7185" stroke-width="1" stroke-dasharray="3 4" opacity="0.9"/>
+          <path d="M120 102 L126 118 L120 114 L114 118 Z" fill="#0e3f3a" stroke="#4fd1c5" stroke-width="1"/>
+          <text x="120" y="218" fill="#c8d6e5" font-size="12" text-anchor="middle">DARK</text>
+          <text x="120" y="234" fill="#5c7185" font-size="10.5" text-anchor="middle">seen only up close</text>
+        </g>
+        <!-- cruise -->
+        <g>
+          <circle cx="420" cy="110" r="96" fill="none" stroke="#5c7185" stroke-width="1" stroke-dasharray="3 4" opacity="0.9"/>
+          <path d="M420 102 L426 118 L420 114 L414 118 Z" fill="#0e3f3a" stroke="#4fd1c5" stroke-width="1"/>
+          <path d="M417 117 L420 130 L423 117 Z" fill="#f6ad55" opacity="0.7"/>
+          <text x="420" y="218" fill="#c8d6e5" font-size="12" text-anchor="middle">CRUISE</text>
+          <text x="420" y="234" fill="#5c7185" font-size="10.5" text-anchor="middle">seen at range</text>
+        </g>
+        <!-- flank: circle bleeds off the panel edge -->
+        <g>
+          <circle cx="760" cy="110" r="176" fill="none" stroke="#5c7185" stroke-width="1" stroke-dasharray="3 4" opacity="0.9"/>
+          <path d="M760 100 L767 119 L760 114 L753 119 Z" fill="#0e3f3a" stroke="#4fd1c5" stroke-width="1.2"/>
+          <g class="flicker">
+            <path d="M755 118 L760 148 L765 118 Z" fill="#cfe8ff"/>
+            <path d="M757 118 L760 136 L763 118 Z" fill="#f6ad55"/>
+          </g>
+          <text x="760" y="218" fill="#c8d6e5" font-size="12" text-anchor="middle">FLANK</text>
+          <text x="760" y="234" fill="#5c7185" font-size="10.5" text-anchor="middle">seen across the map</text>
+        </g>
+      </svg>
+      <figcaption>FIG-1 — THE THROTTLE IS THE SIGNATURE. Detection circles to scale: roughly 1 : 6 : 11.</figcaption>
+    </figure>
+
+    <p>What you see of the enemy comes in three grades:</p>
+    <ul>
+      <li><strong>FAINT</strong> — something's out there. Approximate position, updated occasionally. No vector. You cannot shoot at a faint.</li>
+      <li><strong>TRACK</strong> — position and velocity, live. <strong>You can get missile lock on a track.</strong></li>
+      <li><strong>ID</strong> — close enough to resolve everything, including whether that "ship" was ever a ship at all.</li>
+    </ul>
+
+    <figure>
+      <svg viewBox="0 0 880 210" aria-label="Faint, track, and id contact grades">
+        <!-- FIG-2: FAINT -> TRACK -> ID -->
+        <!-- panel frames -->
+        <rect x="10" y="10" width="272" height="150" fill="none" stroke="#1c2a38"/>
+        <rect x="304" y="10" width="272" height="150" fill="none" stroke="#1c2a38"/>
+        <rect x="598" y="10" width="272" height="150" fill="none" stroke="#1c2a38"/>
+        <!-- panel 1: fuzzy pulsing blob -->
+        <g class="pulse">
+          <circle cx="146" cy="78" r="22" fill="#fc8181" opacity="0.18"/>
+          <circle cx="146" cy="78" r="12" fill="#fc8181" opacity="0.25"/>
+          <circle cx="146" cy="78" r="13" fill="none" stroke="#fc8181" stroke-width="1" stroke-dasharray="3 5" opacity="0.8"/>
+        </g>
+        <text x="146" y="84" fill="#fc8181" font-size="15" text-anchor="middle">?</text>
+        <text x="146" y="126" fill="#5c7185" font-size="10" text-anchor="middle">last fix: 5s ago · &plusmn;2 km</text>
+        <text x="146" y="182" fill="#c8d6e5" font-size="11.5" text-anchor="middle">FAINT: something's there.</text>
+        <text x="146" y="198" fill="#5c7185" font-size="10.5" text-anchor="middle">Can't shoot it.</text>
+        <!-- panel 2: crisp contact + velocity arrow -->
+        <g>
+          <path d="M410 78 L398 92 L410 87 L422 92 Z" fill="#3f1518" stroke="#fc8181" stroke-width="1.2" transform="rotate(62 410 84)"/>
+          <line x1="424" y1="72" x2="492" y2="52" stroke="#fc8181" stroke-width="1.4"/>
+          <path d="M492 52 L479 53.5 L484 62 Z" fill="#fc8181"/>
+          <text x="452" y="92" fill="#5c7185" font-size="10">1,840 m/s</text>
+        </g>
+        <text x="440" y="182" fill="#c8d6e5" font-size="11.5" text-anchor="middle">TRACK: position + vector.</text>
+        <text x="440" y="198" fill="#4fd1c5" font-size="10.5" text-anchor="middle">Lock is possible.</text>
+        <!-- panel 3: full ship + readout -->
+        <g>
+          <path d="M672 60 L686 96 L672 86 L658 96 Z" fill="#3f1518" stroke="#fc8181" stroke-width="1.4"/>
+          <text x="712" y="62" fill="#5c7185" font-size="10">TYPE  warship</text>
+          <text x="712" y="78" fill="#5c7185" font-size="10">HULL  72/100</text>
+          <text x="712" y="94" fill="#5c7185" font-size="10">VEL   882 m/s @ 214</text>
+          <text x="712" y="110" fill="#5c7185" font-size="10">SIG   64</text>
+        </g>
+        <text x="734" y="182" fill="#c8d6e5" font-size="11.5" text-anchor="middle">ID: everything —</text>
+        <text x="734" y="198" fill="#5c7185" font-size="10.5" text-anchor="middle">including whether it's really a ship.</text>
+      </svg>
+      <figcaption>FIG-2 — Contacts harden as range closes (or as their throttle rises).</figcaption>
+    </figure>
+
+    <p>Contacts harden as you close in — or as <em>they</em> burn harder. A patient captain
+    closes dark and quiet; an impatient one lights the sky and hands the enemy a track for free.</p>
+    <p><strong>Terrain is sensor cover.</strong> Rocks block line of sight completely —
+    sensors, locks, missile seekers, everything. Dust clouds blind everyone inside and
+    everything looking through them. The dark behind a rock is the best armor in the game.</p>
+    <p><strong>One more thing about decoys</strong> (fully covered in Doctrine IV): a
+    drifting decoy looks exactly like a distant cruising ship. That faint contact you've
+    been stalking for three minutes may be a lie.</p>
+
+    <h2 id="moving">DOCTRINE II: MOVE LIKE A NEWTONIAN</h2>
+    <p>Your ship is not an airplane. <strong>Turning does not change where you're going</strong>
+    — it changes where you're pointing. Velocity only changes when you burn.</p>
+    <p>Consequences you must internalize:</p>
+    <ul>
+      <li>To stop, you must <strong>flip and burn</strong>: face backwards along your vector and thrust. "Come to a full stop" makes the XO do the math.</li>
+      <li>Speed is a purchase you must also pay to return. Every m/s you gain, you'll spend fuel to shed.</li>
+      <li>At high speed your turn radius is enormous and rocks are lethal. A gentle bump scratches paint. Hitting rock at speed is a funeral.</li>
+    </ul>
+
+    <figure>
+      <svg viewBox="0 0 880 190" aria-label="Flip and burn sequence in four beats">
+        <!-- FIG-3: FLIP AND BURN -->
+        <line x1="40" y1="95" x2="840" y2="95" stroke="#1c2a38" stroke-width="1" stroke-dasharray="2 6"/>
+        <!-- beat 1: burning forward -->
+        <g>
+          <path d="M118 95 L96 87 L102 95 L96 103 Z" fill="#0e3f3a" stroke="#4fd1c5" stroke-width="1.2"/>
+          <path d="M95 91 L74 95 L95 99 Z" fill="#f6ad55" opacity="0.85"/>
+          <line x1="124" y1="95" x2="180" y2="95" stroke="#4fd1c5" stroke-width="1.2"/>
+          <path d="M182 95 L171 90 L171 100 Z" fill="#4fd1c5"/>
+          <text x="120" y="140" fill="#5c7185" font-size="10.5" text-anchor="middle">1 · burn</text>
+        </g>
+        <!-- beat 2: coasting -->
+        <g>
+          <path d="M328 95 L306 87 L312 95 L306 103 Z" fill="#0e3f3a" stroke="#4fd1c5" stroke-width="1.2"/>
+          <line x1="334" y1="95" x2="390" y2="95" stroke="#4fd1c5" stroke-width="1.2"/>
+          <path d="M392 95 L381 90 L381 100 Z" fill="#4fd1c5"/>
+          <text x="340" y="140" fill="#5c7185" font-size="10.5" text-anchor="middle">2 · coast — vector persists</text>
+        </g>
+        <!-- beat 3: flipped, still moving the same way -->
+        <g>
+          <path d="M516 95 L538 87 L532 95 L538 103 Z" fill="#0e3f3a" stroke="#4fd1c5" stroke-width="1.2"/>
+          <line x1="544" y1="95" x2="600" y2="95" stroke="#4fd1c5" stroke-width="1.2"/>
+          <path d="M602 95 L591 90 L591 100 Z" fill="#4fd1c5"/>
+          <text x="550" y="140" fill="#5c7185" font-size="10.5" text-anchor="middle">3 · flip — nose back, path same</text>
+        </g>
+        <!-- beat 4: burning against the arrow, arrow shrunk to a dot -->
+        <g>
+          <path d="M756 95 L778 87 L772 95 L778 103 Z" fill="#0e3f3a" stroke="#4fd1c5" stroke-width="1.2"/>
+          <path d="M779 91 L800 95 L779 99 Z" fill="#f6ad55" opacity="0.85"/>
+          <circle cx="744" cy="95" r="2.6" fill="#4fd1c5"/>
+          <text x="770" y="140" fill="#5c7185" font-size="10.5" text-anchor="middle">4 · burn against it — stopped</text>
+        </g>
+      </svg>
+      <figcaption>FIG-3 — FLIP AND BURN. Turning changes your nose. Only burning changes your path.</figcaption>
+    </figure>
+
+    <p><strong>Propellant is a budget, not a fuel gauge.</strong> A full tank is roughly:
+    accelerate to flank speed once, and kill that speed once. That's it. The tank refills
+    only inside the zone, only while your throttle is at 20% or less — refueling is a
+    posture, and a quiet one (low throttle = low signature; the thrifty ship is also the
+    hidden ship).</p>
+    <p>Run the tank dry and you drift — you can still turn and shoot, but your vector is
+    no longer yours to choose until the scoop trickles something back.</p>
+    <p><strong>The edge.</strong> Outside the zone ring: everyone can see you, nothing
+    refuels you, and a current pushes you back toward the middle. You can't get stranded
+    out there. You also can't hide, can't stay, and can't win.</p>
+
+    <figure>
+      <svg viewBox="0 0 880 250" aria-label="Map schematic of the zone with a ship outside the ring">
+        <!-- FIG-6: THE ZONE (placed in Doctrine II per spec) -->
+        <circle cx="360" cy="128" r="105" fill="none" stroke="#2a4a5a" stroke-width="1.4"/>
+        <!-- rocks -->
+        <path d="M318 90 L328 84 L336 92 L331 101 L320 99 Z" fill="#171d26" stroke="#2c3846"/>
+        <path d="M396 160 L409 154 L416 165 L407 174 L395 170 Z" fill="#171d26" stroke="#2c3846"/>
+        <path d="M300 152 L309 148 L313 156 L306 161 L299 158 Z" fill="#171d26" stroke="#2c3846"/>
+        <path d="M382 74 L390 70 L395 77 L389 83 L381 80 Z" fill="#171d26" stroke="#2c3846"/>
+        <!-- dust blotch -->
+        <ellipse cx="410" cy="112" rx="34" ry="18" fill="#607e9e" opacity="0.14" transform="rotate(-18 410 112)"/>
+        <ellipse cx="410" cy="112" rx="22" ry="11" fill="#607e9e" opacity="0.12" transform="rotate(-18 410 112)"/>
+        <!-- ship outside the ring -->
+        <path d="M583 68 L597 96 L583 88 L569 96 Z" fill="#0e3f3a" stroke="#4fd1c5" stroke-width="1.3" transform="rotate(215 583 84)"/>
+        <!-- gentle arrow toward center -->
+        <path d="M566 98 C 520 128, 480 132, 448 128" fill="none" stroke="#4fd1c5" stroke-width="1.1" stroke-dasharray="4 5" opacity="0.8"/>
+        <path d="M444 128 L456 123 L455 133 Z" fill="#4fd1c5" opacity="0.8"/>
+        <!-- annotations -->
+        <text x="640" y="52" fill="#fc8181" font-size="10.5">&laquo; visible to everyone</text>
+        <text x="640" y="72" fill="#f6ad55" font-size="10.5">&laquo; no refueling</text>
+        <text x="640" y="92" fill="#5c7185" font-size="10.5">&laquo; current pushes you home</text>
+        <text x="360" y="242" fill="#5c7185" font-size="10.5" text-anchor="middle">the shroud ring</text>
+      </svg>
+      <figcaption>FIG-6 — THE ZONE. You can't get stuck out there. You also can't stay.</figcaption>
+    </figure>
+
+    <p class="lead">Ask the XO anytime: <em>"show me my vector"</em>, <em>"how's our fuel?"</em>,
+    <em>"what's our speed?"</em></p>
+
+    <h2 id="killing">DOCTRINE III: KILL WITH TORPEDOES</h2>
+    <p>You carry six torpedoes and two launch tubes (they auto-reload; about twenty
+    seconds). Torpedoes <strong>burn hard, then coast</strong>: a short, violent engine
+    phase — faster than any ship, agile, hungry — then the tank runs dry and it's a
+    ballistic round: still deadly on its exact line, blind to your maneuvers, and nearly
+    invisible.</p>
+
+    <figure>
+      <svg viewBox="0 0 880 220" aria-label="Timeline of a torpedo's flight from launch through burn, coast, and detonation">
+        <!-- FIG-4: LIFE OF A TORPEDO -->
+        <!-- launch flash -->
+        <g>
+          <path d="M60 90 L66 78 L70 88 L82 84 L74 94 L84 100 L70 100 L68 112 L62 100 L50 102 L60 94 L48 88 Z" fill="#fff7e0" opacity="0.9"/>
+          <text x="66" y="140" fill="#c8d6e5" font-size="11" text-anchor="middle">LAUNCH</text>
+          <text x="66" y="156" fill="#fc8181" font-size="10" text-anchor="middle">everyone sees this</text>
+        </g>
+        <!-- burn phase: bright curve -->
+        <path d="M86 92 C 190 60, 300 44, 400 62" fill="none" stroke="#f6ad55" stroke-width="2.2"/>
+        <path d="M120 84 L111 92 M180 66 L172 76 M260 52 L254 63 M330 50 L326 61" stroke="#f6ad55" stroke-width="1" opacity="0.55"/>
+        <text x="240" y="30" fill="#f6ad55" font-size="10.5" text-anchor="middle">BURN — fast, agile, hungry · ~25 seconds</text>
+        <!-- coast phase: dead-straight dashed -->
+        <line x1="400" y1="62" x2="740" y2="94" stroke="#5c7185" stroke-width="1.4" stroke-dasharray="7 7"/>
+        <text x="570" y="52" fill="#5c7185" font-size="10.5" text-anchor="middle">COAST — ballistic: deadly on its line, blind, nearly invisible</text>
+        <!-- detonation -->
+        <g>
+          <path d="M778 88 L786 72 L790 86 L806 80 L794 92 L808 100 L790 100 L786 116 L780 100 L764 104 L776 94 L762 86 Z" fill="#fc8181" opacity="0.9"/>
+          <text x="786" y="140" fill="#c8d6e5" font-size="11" text-anchor="middle">DETONATION</text>
+          <text x="786" y="156" fill="#5c7185" font-size="10" text-anchor="middle">(or a quiet self-destruct)</text>
+        </g>
+        <!-- counterplay markers pinned to phases -->
+        <line x1="240" y1="168" x2="240" y2="180" stroke="#1c2a38"/>
+        <line x1="470" y1="168" x2="470" y2="180" stroke="#1c2a38"/>
+        <line x1="660" y1="168" x2="660" y2="180" stroke="#1c2a38"/>
+        <text x="240" y="198" fill="#4fd1c5" font-size="10.5" text-anchor="middle">counter: outlast the burn</text>
+        <text x="470" y="198" fill="#4fd1c5" font-size="10.5" text-anchor="middle">counter: break LOS / spoof</text>
+        <text x="660" y="198" fill="#4fd1c5" font-size="10.5" text-anchor="middle">counter: sidestep it</text>
+      </svg>
+      <figcaption>FIG-4 — LIFE OF A TORPEDO. A different counter beats it at every stage.</figcaption>
+    </figure>
+
+    <p><strong>The lock.</strong> To fire properly you need missile lock: hold the target
+    near your nose, in range, with a TRACK-grade contact, for about five seconds.
+    <strong>The enemy feels your lock</strong> — their XO warns them the moment you start
+    painting. The five seconds between "acquiring" and "lock" is the most honest tension
+    in the game: they know it's coming.</p>
+    <p><strong>Why lock matters — the uplink.</strong> A locked torpedo stays wired to
+    your ship: you feed it live tracking as long as you hold the lock, it steers to an
+    intercept point, and it <strong>ignores decoys completely</strong> — your sensors know
+    a decoy from a hull, and the bird trusts you. Keep the lock, keep the kill.</p>
+    <p>Lose the lock (they break line of sight, go dark, or you die) and the bird goes
+    <strong>autonomous</strong>: it hunts with its own small seeker, grabs the brightest
+    thing it can see, and is fully spoofable. It does not re-uplink. Hold your locks.</p>
+    <p><strong>Blind fire.</strong> You can launch without a lock — <em>"put a torpedo
+    down bearing 220"</em> — and the bird rides that bearing hunting for anything bright.
+    Against a dark target it will usually find nothing, or find a decoy. It's not a sniper
+    rifle; it's a flashlight that explodes: flush a hider out of a dust cloud, force their
+    defensive guns to reveal them, deny an escape vector. Six birds total. Spend like it.</p>
+    <p class="lead">(Hover your mouse anywhere on the map: the HUD reads out bearing and
+    range to that spot. That's your plotting table.)</p>
+
+    <h2 id="surviving">DOCTRINE IV: DON'T DIE</h2>
+    <p>An enemy torpedo is beatable at every stage of its life — with a different tool at
+    each stage.</p>
+    <p><strong>While they're acquiring:</strong> break the geometry. Their lock needs you
+    near their nose, in range, on their sensors as a track. Deny any one of those — turn
+    the engagement, dive behind a rock, go dark before the track hardens.</p>
+    <p class="danger"><strong>Against an uplinked bird:</strong> decoys are useless — the
+    enemy's sensors see through them. <strong>You must break the lock first.</strong>
+    Rocks. Dust. Going cold. The instant their lock dies, the bird is orphaned.</p>
+    <p><strong>Against an autonomous bird:</strong> now the decoy works — with one
+    discipline: <strong>throttle down first.</strong> A decoy is bright, but a full burn
+    is brighter; at high throttle the seeker keeps choosing <em>you</em>. The complete
+    ritual, speakable in one breath:</p>
+    <blockquote>"Break their lock — throttle down — decoy!"</blockquote>
+
+    <figure>
+      <svg viewBox="0 0 880 230" aria-label="Three panel sequence: break the lock, throttle down, spoof the orphan">
+        <!-- FIG-5: BREAK, THROTTLE, SPOOF -->
+        <rect x="10" y="10" width="272" height="160" fill="none" stroke="#1c2a38"/>
+        <rect x="304" y="10" width="272" height="160" fill="none" stroke="#1c2a38"/>
+        <rect x="598" y="10" width="272" height="160" fill="none" stroke="#1c2a38"/>
+        <!-- panel 1: lock line severed by a rock -->
+        <g>
+          <path d="M52 52 L66 84 L52 75 L38 84 Z" fill="#3f1518" stroke="#fc8181" stroke-width="1.2"/>
+          <line x1="62" y1="76" x2="128" y2="104" stroke="#fc8181" stroke-width="1" stroke-dasharray="5 4" opacity="0.85"/>
+          <path d="M132 92 L152 86 L166 96 L162 112 L144 116 L132 106 Z" fill="#171d26" stroke="#2c3846" stroke-width="1.2"/>
+          <line x1="158" y1="94" x2="172" y2="110" stroke="#fc8181" stroke-width="1.6"/>
+          <line x1="172" y1="94" x2="158" y2="110" stroke="#fc8181" stroke-width="1.6"/>
+          <path d="M216 128 L230 146 L216 141 L202 146 Z" fill="#0e3f3a" stroke="#4fd1c5" stroke-width="1.2" transform="rotate(140 216 137)"/>
+          <text x="146" y="192" fill="#c8d6e5" font-size="11.5" text-anchor="middle">1 · BREAK THE LOCK</text>
+          <text x="146" y="208" fill="#5c7185" font-size="10" text-anchor="middle">rock, dust, or go cold</text>
+        </g>
+        <!-- panel 2: plume shrinks to nothing -->
+        <g>
+          <path d="M382 78 L396 110 L382 101 L368 110 Z" fill="#0e3f3a" stroke="#4fd1c5" stroke-width="1.2"/>
+          <path d="M375 108 L382 138 L389 108 Z" fill="#f6ad55" opacity="0.5"/>
+          <text x="382" y="60" fill="#5c7185" font-size="10" text-anchor="middle">before</text>
+          <path d="M494 78 L508 110 L494 101 L480 110 Z" fill="#0e3f3a" stroke="#4fd1c5" stroke-width="1.2"/>
+          <circle cx="494" cy="113" r="2" fill="#f6ad55" opacity="0.45"/>
+          <text x="494" y="60" fill="#5c7185" font-size="10" text-anchor="middle">after</text>
+          <text x="440" y="192" fill="#c8d6e5" font-size="11.5" text-anchor="middle">2 · THROTTLE DOWN</text>
+          <text x="440" y="208" fill="#5c7185" font-size="10" text-anchor="middle">your burn out-shines your decoy</text>
+        </g>
+        <!-- panel 3: decoy takes the orphan -->
+        <g>
+          <path d="M676 44 L686 54 L676 64 L666 54 Z" fill="none" stroke="#fc8181" stroke-width="1.5"/>
+          <circle cx="676" cy="54" r="17" fill="#fc8181" opacity="0.14"/>
+          <text x="676" y="30" fill="#5c7185" font-size="10" text-anchor="middle">decoy, bright</text>
+          <path d="M786 132 C 756 118, 716 84, 692 62" fill="none" stroke="#fc8181" stroke-width="1.4" stroke-dasharray="6 4"/>
+          <path d="M690 60 L703 63 L697 72 Z" fill="#fc8181"/>
+          <circle cx="788" cy="134" r="3" fill="#fc8181"/>
+          <path d="M646 128 L660 146 L646 141 L632 146 Z" fill="#0e3f3a" stroke="#4fd1c5" stroke-width="1.2" transform="rotate(230 646 137)" opacity="0.85"/>
+          <text x="640" y="164" fill="#5c7185" font-size="10" text-anchor="middle">you, dark, leaving</text>
+          <text x="734" y="192" fill="#c8d6e5" font-size="11.5" text-anchor="middle">3 · SPOOF THE ORPHAN</text>
+          <text x="734" y="208" fill="#5c7185" font-size="10" text-anchor="middle">the seeker takes the brighter liar</text>
+        </g>
+      </svg>
+      <figcaption>FIG-5 — BREAK, THROTTLE, SPOOF. The two-step escape, plus the part everyone forgets.</figcaption>
+    </figure>
+
+    <p><strong>Against a ballistic bird:</strong> it cannot turn. It kills only along its
+    line. Any lateral burn beats it — but you may not see it coming, because a coasting
+    torpedo is nearly dark. Sometimes the first you'll hear is the XO: <em>"Ballistic
+    inbound, close!"</em> — and then the guns.</p>
+    <p><strong>The PDCs.</strong> Your point-defense cannons are automatic. Posture
+    <strong>FREE</strong> (the default), they engage any inbound they can <em>see</em>
+    within their bubble — a wall of probability, not a guarantee; salvos leak. Posture
+    <strong>HOLD</strong> silences them. Why would you ever hold? Because firing PDCs
+    lights you up. A hidden ship whose guns swat a stray torpedo has just told everyone
+    exactly where it is. When you're dark and a bird is passing by that isn't tracking
+    you — do you trust the dark, or trust the guns? That decision is yours, Captain, and
+    it's never comfortable. (They also have limited ammunition, and they will happily
+    waste it defending your decoy.)</p>
+    <p><strong>Last resorts:</strong> outrun the burn phase and let the tank die chasing
+    you — expensive, sometimes correct. And at knife range, everyone's PDCs chew
+    everyone's hull. Closing to point blank is a murder-suicide pact; occasionally that's
+    the right play too.</p>
+
+    <h2 id="commanding">DOCTRINE V: COMMAND, DON'T PILOT</h2>
+    <p>You have one voice and a ship full of systems. The XO closes the gap two ways.</p>
+    <p><strong>Ask questions.</strong> <em>"How far out is he?" "Status of my birds?"
+    "Full report."</em> The XO answers from the ship's actual sensor picture — it will not
+    pretend to know what the sensors don't.</p>
+    <p><strong>Issue standing orders.</strong> Conditional doctrine, stated once, executed
+    the instant it triggers — faster than you ever could:</p>
+    <ul>
+      <li><em>"If a missile comes at us, deploy a decoy and turn hard away."</em></li>
+      <li><em>"When you get a track on him, tell me immediately."</em></li>
+      <li><em>"If our fuel drops below twenty-five, warn me."</em></li>
+      <li><em>"The moment he's in range and on our nose, fire tube one — and keep firing."</em></li>
+    </ul>
+    <p>Up to six at once. Cancel by name: <em>"belay missile defense."</em> Cancel
+    everything: <em>"belay all."</em> A good captain's standing orders are half the battle
+    fought in advance.</p>
+    <p><strong>The XO is literal.</strong> It interprets ambiguity and tells you what it
+    decided — it will not stop to ask. If it misheard you, that's part of command too.
+    Speak like you mean it.</p>
+
+    <h2 id="phrasebook">THE PHRASEBOOK</h2>
+    <p>You can phrase things your own way — the XO is flexible. These are known-good patterns.</p>
+    <table>
+      <tr><th>You want to...</th><th>Say something like...</th></tr>
+      <tr><td>Go fast</td><td>"Flank speed" <span class="alt">·</span> "All ahead full" <span class="alt">·</span> "Throttle to sixty"</td></tr>
+      <tr><td>Go quiet</td><td>"Go dark" <span class="alt">·</span> "Cut engines" <span class="alt">·</span> "Throttle to fifteen and drift"</td></tr>
+      <tr><td>Turn</td><td>"Come left forty" <span class="alt">·</span> "Hard starboard" <span class="alt">·</span> "Steer 090" <span class="alt">·</span> "Point us at the contact"</td></tr>
+      <tr><td>Stop</td><td>"Come to a full stop" <span class="alt">·</span> "Kill our velocity"</td></tr>
+      <tr><td>Understand motion</td><td>"Show me my vector" <span class="alt">·</span> "What's our speed?"</td></tr>
+      <tr><td>Fuel</td><td>"How's our propellant?" <span class="alt">·</span> "Warn me at twenty-five percent"</td></tr>
+      <tr><td>Sensors</td><td>"Any contacts?" <span class="alt">·</span> "What's the range to him?" <span class="alt">·</span> "Is that contact real?"</td></tr>
+      <tr><td>Attack</td><td>"Fire tube one" <span class="alt">·</span> "Fire everything" <span class="alt">·</span> "Fire when he's on our nose and in range"</td></tr>
+      <tr><td>Blind fire</td><td>"Put a torpedo down bearing 220" <span class="alt">·</span> "Fire blind into that dust cloud"</td></tr>
+      <tr><td>Defend</td><td>"PDCs free" <span class="alt">·</span> "PDCs hold" <span class="alt">·</span> "Deploy a decoy" <span class="alt">·</span> "If we're painted, decoy and evade"</td></tr>
+      <tr><td>Manage doctrine</td><td>"What are my standing orders?" <span class="alt">·</span> "Belay missile defense" <span class="alt">·</span> "Belay all"</td></tr>
+      <tr><td>Everything else</td><td>"Damage report" <span class="alt">·</span> "Full report" <span class="alt">·</span> "Weapons status"</td></tr>
+    </table>
+
+    <h2 id="when-in-doubt">WHEN IN DOUBT</h2>
+    <p>Ask your XO. It knows the ship, it knows the sky, and it never gets tired of
+    questions. The captains who win aren't the ones who memorized this page — they're the
+    ones in constant conversation with their ship.</p>
+    <p class="signoff">Good hunting, Captain.</p>
+
+    <div class="footer-back">
+      <a class="btn" href="/">&larr; BACK TO THE LOBBY</a>
+    </div>
+  </div>
+</body>
+</html>
