@@ -42,6 +42,11 @@ by the `SHIP_STERN` normalized-offset table in render.js — v5 archetypes
 add one entry each and get plumes free; tier ceremony stings; dust
 shroud + hiss; rock spin; camera shake; hull hum). Zero sim/balance
 changes; ping mechanics untouched (`tests/ping.test.ts` unmodified).
+v4.7.1 + v4.7.2 (same-day playtest patches) are deployed: TTS-safe
+`speak` variants on dynamic notices, own-ordnance fate reports gated on
+`canObserve`, tier vocabulary on the HUD CONTACT row, last-missile
+reload note, 2x rock spin. ALL of v4 through v4.7.2 is LIVE in
+production. NEXT MILESTONE: `HANDOFF-v5.md` "The Fleet" — not started.
 
 ## Commands
 
