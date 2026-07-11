@@ -2,12 +2,13 @@
 
 ## What this is
 
-"AYE CAPTAIN" — a networked 1v1 space combat game commanded in natural
-language. The captain types English; Claude Haiku translates each utterance
+"AYE CAPTAIN" — a networked multiplayer space combat game (up to 8
+captains, FFA or teams) commanded in natural language. The captain types English; Claude Haiku translates each utterance
 into schema-JSON commands; an authoritative Node server executes them.
 `ship_command_schema.json` is the LLM<->server contract. **Where they
 disagree on constants, the handoff specs win (HANDOFF.md, HANDOFF-v4.md,
-newest addendum last: HANDOFF-v4.1.md, HANDOFF-v4.3.md).**
+newest addendum last: HANDOFF-v4.1.md, HANDOFF-v4.3.md, HANDOFF-v5.md);
+constants.ts is the runtime source of truth.**
 
 **Status: v4 + v4.1 DEPLOYED to production 2026-07-11 (specs:
 `HANDOFF-v4.md` + `HANDOFF-v4.1.md`, which WINS where they conflict).**
@@ -46,14 +47,15 @@ v4.7.1 + v4.7.2 (same-day playtest patches) are deployed: TTS-safe
 `speak` variants on dynamic notices, own-ordnance fate reports gated on
 `canObserve`, tier vocabulary on the HUD CONTACT row, last-missile
 reload note, 2x rock spin. ALL of v4 through v4.7.2 is LIVE in
-production. CURRENT MILESTONE: `HANDOFF-v5.md` "The Fleet" — IN PROGRESS,
-shipping as ONE release (multiplayer plumbing desyncs old clients). Build
-order §12; §1 (continuous tracking + nearest_rumble), §2 (N-ship sim,
-8-captain rooms, ghosts, death→spectator) and §3 (callsigns, per-observer
-designations, contact-ref targeting, set_lock_target) are done on branch
-v5-the-fleet. v5 design policy: archetypes differ in NUMBERS ONLY — stat
-blocks, no special abilities (explicitly a v5 policy, not permanent
-doctrine; the railgun loadout row is the first sanctioned asymmetry).
+production. CURRENT MILESTONE: `HANDOFF-v5.md` "The Fleet" — ALL TEN
+build-order steps BUILT on branch v5-the-fleet (§1 continuous tracking,
+§2 N-ship rooms/ghosts/death→spectator, §3 callsigns + designations,
+§4 archetypes, §5 railgun, §6 probes, §7 comms, §8 teams/IFF, §9 schema
+audit, §10 docs) — 659 headless assertions green; shipping as ONE release
+(multiplayer plumbing desyncs old clients). v5 design policy: archetypes
+differ in NUMBERS ONLY — stat blocks, no special abilities (explicitly a
+v5 policy, not permanent doctrine; the railgun loadout row is the first
+sanctioned asymmetry).
 
 ## Commands
 
@@ -135,7 +137,10 @@ Note: on this machine's rootless Docker, `-p` port publishing doesn't route
    `segCircleHitT`) — never point-in-radius alone. The tunneling regression
    test in `tests/subtick.test.ts` is mandatory-green.
 7. A LOCKED fire_missile requires a held lock, and LOCKS REQUIRE
-   TIER_TRACK. What a lock buys: the bird flies UPLINKED (intercept off the
+   TIER_TRACK ON YOUR OWN SENSORS — probe-relayed tracks never feed locks
+   (v5 §6 firewall: probes FIND ships; a fused tier would let you lock
+   through a rock). The lock is per-designated-target (auto-picks nearest
+   eligible; set_lock_target chooses). What a lock buys: the bird flies UPLINKED (intercept off the
    mother ship's track, decoy-immune) until the lock breaks or the launcher
    dies — then AUTONOMOUS, one-way, seeker-only, decoy-susceptible. Blind
    fire (guidance "bearing") skips the lock and is autonomous from birth;
@@ -173,6 +178,22 @@ Note: on this machine's rootless Docker, `-p` port publishing doesn't route
     TIERS -> LOCK. A ping FINDS ships, it cannot shoot them:
     PING_TRACK_S must never be extended to where a ping grant alone
     completes a LOCK_TIME_S lock (pinned in tests/ping.test.ts).
+15. v5 designations: below ID every trackable object (hostile ships AND
+    unresolved decoys) draws a per-observer letter with the IDENTICAL XO
+    ceremony — silence or different treatment unmasks decoys. Wire ids
+    are the letters (contacts) and opaque per-viewer aliases (rumbles:
+    "r1") — never object-keyed ids a JSON reader could correlate.
+    Callsigns cross the wire only at/after ID, with ONE sanctioned
+    exception: the broadcast comms spike's voiceprint.
+16. v5 IFF is for GUIDED systems only (locks, seekers, prox fuses, PDCs
+    — via team stamps on ordnance that outlive their owners). RAIL SLUGS
+    AND COLLISIONS CHECK NOTHING — physics doesn't read transponders; do
+    not soften (tests/rail.test.ts pins the teammate slugging).
+17. v5 transponders: teammates see each other at full state, ALWAYS —
+    and NOTHING else is shared: no fused contact picture, no shared
+    rumbles, no probe feeds. Intel moves by tightbeam; that minigame is
+    load-bearing. (`share contact` is a backlogged concession — do not
+    build unprompted.)
 
 ## Judgment calls already made (user-visible, flagged in check-ins)
 
@@ -246,7 +267,27 @@ Note: on this machine's rootless Docker, `-p` port publishing doesn't route
   to occlude it from a trailing pursuer 15-30% of the time on most seeds
   (v4.1 §7 verification).
 - Explosion fx are shown within SENSOR_BASE_M + LOS regardless of tier
-  (bright events), a deliberate mild softening of fog.
+  (bright events), a deliberate mild softening of fog. (v5: the viewer's
+  own archetype sensor base.)
+- v5 §2: an OBSERVED ship death closes every watcher's book on that track
+  (no ghost); an UNOBSERVED death/scuttle leaves a last-known ghost of a
+  track that simply went dark. Kill lines go to the INVOLVED parties only
+  (killer + victim; §10's global kill feed stays backlogged).
+- v5 §3 correlate rule implementation: a lost track keeps its letter iff
+  reacquired within CONTACT_CORRELATE_S AND within max-speed reach of its
+  last fix; a failed correlation tombstones the old letter's ghost ON THE
+  MAP (deleting it would leak that both letters are one hull).
+- v5 §5: the rail slug exempts only its OWNER (muzzle geometry — it spawns
+  inside the shooter's hit radius and can never be re-caught at 2x max
+  speed); a deliberate rail SOLUTION on a named teammate is refused by the
+  XO — the bearing-mode accident remains possible ("the first teammate
+  slugging will be legend").
+- v5 §7: tightbeaming a track that is secretly a decoy is ACCEPTED and
+  delivered to nobody — rejection would unmask it. Same fog logic lets
+  set_lock_target designate a decoy contact (the lock just never builds).
+- v5 §2 lobby: joining after launch = seat-based reconnect to the first
+  vacant living seat; rematch re-seats dead captains with the same picks
+  (archetype changes between matches need a fresh room for now).
 - v4.2: spectators (lobby WATCH + room code) get the OMNISCIENT referee
   view via `snapshotSpectator()` — fog deliberately does not apply, so a
   second-screen spectator is a wallhack; flagged in the handbook as
@@ -268,10 +309,14 @@ fields by hand. For end-to-end checks, use Claude-in-Chrome: practice mode +
 the dev harness (raw JSON) for fast maneuvers, English utterances for
 translator-path checks. Two tabs for PvP.
 
-## v4 non-goals (HANDOFF-v4.md §10 — do not build)
+## v5 non-goals (HANDOFF-v5.md §14 — do not build)
 
-More than 2 players per room. Ship archetypes. Kinetic weapons/railgun.
-Probes. Player-to-player comms. Contact designations (Alpha/Bravo).
-Terrain gravity. Subsystem damage. Manual PDC aiming. (A spectator client
-WAS a v4 non-goal but was built in v4.2 by explicit request — watch-only,
-no chat, no controls.)
+Spectator polish suite (follow-cam cycling, kill feed, caster overlay —
+BACKLOGGED, wanted later). Per-contact standing-order metrics. Team
+sensor fusion / `share contact` verb (backlogged concession). Archetype
+special abilities. More than 2 teams. Respawns. Depots, belts, shroud
+contraction (unchanged deferrals). Numeric rumble-bearing metrics.
+Auto-triangulation by the XO. (Most v4 non-goals — N players,
+archetypes, railgun, probes, comms, designations — were BUILT in v5 by
+spec; terrain gravity, subsystem damage, and manual PDC aiming remain
+out.)

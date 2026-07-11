@@ -1,6 +1,7 @@
 # AYE CAPTAIN
 
-Networked 1v1 space combat where you command your ship in plain English —
+Networked multiplayer space combat (up to 8 captains, FFA or teams) where
+you command your ship in plain English —
 typed or spoken. Hold Space and say "flank speed, come left forty"; the
 ship's AI translates your words into structured commands; an authoritative
 server executes them. The fun is turning intent into well-communicated
@@ -13,9 +14,13 @@ ladder: you HEAR ships (bearing only, huge range), you SEE ships (tiered
 contacts, closer), you LOCK ships (closest). You can be silent, or you can
 be going somewhere — not both.
 
-- **Multiplayer**: 1v1 via 4-letter room codes. No accounts, no persistence.
-  Friends can WATCH with the same code — spectators get an omniscient
-  referee view and a callsign (Ghost, Echo, ...); players see who's watching.
+- **Multiplayer**: up to 8 captains via 4-letter room codes — FFA or two
+  teams; the room creator picks the mode and hits LAUNCH; everyone picks a
+  hull. No accounts, no persistence. Dead captains flow into the spectator
+  view; disconnected ships drift as silent ghosts until their captain
+  returns (or 120 s pass). Friends can WATCH with the same code —
+  spectators get an omniscient referee view and a callsign (Ghost,
+  Echo, ...); players see who's watching.
 - **Practice**: solo mode against a drone that patrols the rocks — and
   shoots back.
 - **Input**: voice push-to-talk (hold Space) or typed text.

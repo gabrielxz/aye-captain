@@ -1,5 +1,31 @@
 # TODO — next steps
 
+## v5 "The Fleet" (HANDOFF-v5.md) — BUILT on branch v5-the-fleet
+
+All ten build-order steps, one release: §1 continuous target tracking
+(+ nearest_rumble), §2 N-ship sim + 8-captain rooms + ghost disconnects
++ death→spectator, §3 callsigns + per-observer designations (letter cids,
+opaque rumble aliases, correlate window, tombstone ghosts), §4 archetypes
+(numbers only; frigate == v4 baseline, LINKED), §5 railgun (solutions
+punish coasters; no IFF), §6 probes (via-probe relay, two-bearing
+triangulation, lock firewall), §7 comms (broadcast voiceprint spike /
+tightbeam), §8 teams + IFF (transponders only), §9 schema audit, §10
+docs (Doctrine VI). 659 headless assertions.
+
+- [ ] Deploy: merge v5-the-fleet → main, `fly deploy --ha=false`, verify
+  live, confirm boot pre-generates the new stock lines (one-time TTS
+  cost; watch the ElevenLabs quota that day).
+- [ ] Playtest watch-list (do NOT pre-tune): does an 8-player FFA hunt
+  converge or stall? Rail solution hit rate vs alert targets (the
+  190 m dodge margin); is 6 s cooldown / 25 damage the right pressure?
+  Probe supply (4/2/1) — enough for the triangulation game? Comms
+  cooldown 10 s — chatty enough? Do teams actually TALK (the no-datalink
+  bet)? Corvette sig 20 vs cruiser 45 — does the asymmetric-detection
+  dance land? Designation letters — do captains use them or say "the
+  near one"?
+- [ ] The v4.5 playtest questions remain OPEN below (hunt convergence,
+  throttles, ping honesty) — now observable in multiplayer too.
+
 ## v4.7.2 — playtest patch round two (2026-07-11)
 
 - **"Not sure what 'detail readout' / 'full resolution' means"**: the HUD
