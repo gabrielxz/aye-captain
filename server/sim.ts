@@ -6,6 +6,7 @@ import {
   emptyTerrain,
   generateTerrain,
   firstRockHit,
+  firstLosBreakT,
   segCircleHitT,
   losClear,
   insideDust,
@@ -34,6 +35,7 @@ export interface Command {
     | "deploy_decoy"
     | "maneuver"
     | "show_vector"
+    | "set_overlay"
     | "sensor_ping"
     | "set_standing_order"
     | "query";
@@ -204,15 +206,24 @@ export interface Decoy {
 }
 
 // Transient render effects, cleared after each broadcast.
+// ping (v4.7): the expanding ring + terrain shadow. mask[i] = range along
+// bearing i*(360/PING_SHADOW_SAMPLES) where LOS from the origin first
+// breaks (PING_RANGE_M if clear). Derivable entirely from terrain (public)
+// + the pinger's position (public for PING_REVEAL_S as the ping's stated
+// price) — it must NEVER grow contacts, grants, or ship state (fog test).
 export type Fx =
   | { type: "pdc"; owner: ShipId; x1: number; y1: number; x2: number; y2: number }
-  | { type: "boom"; x: number; y: number };
+  | { type: "boom"; x: number; y: number }
+  | { type: "ping"; x: number; y: number; r: number; mask: number[] };
 
 export type SimEvent =
   | { kind: "reject"; ship: ShipId; verb: string; reason: string }
   | { kind: "ack"; ship: ShipId; text: string }
   | { kind: "notice"; ship: ShipId | "all"; text: string; alert?: boolean }
   | { kind: "ui"; ship: ShipId; what: "show_vector" } // client-side overlay triggers
+  // persistent client-side overlay toggles (v4.7): pure ui, no sim state.
+  // v5 adds ELEMENT values (probe markers, designations), not new events.
+  | { kind: "ui"; ship: ShipId; what: "overlay"; element: string; state: "on" | "off" }
   | { kind: "gameover"; winner: ShipId };
 
 // ---------- angle helpers ----------
@@ -470,6 +481,33 @@ export class Sim {
         events.push({ kind: "ui", ship: ship.id, what: "show_vector" });
         return null;
       }
+      case "set_overlay": {
+        // v4.7: toggles a persistent CLIENT overlay. Server-side this is a
+        // ui event and nothing else — no sim state, cannot desync.
+        const element = cmd.params.element;
+        const overlayState = cmd.params.state;
+        if (element !== "drift") return "No such overlay, Captain.";
+        if (overlayState !== "on" && overlayState !== "off") {
+          return "Overlay goes 'on' or 'off', Captain.";
+        }
+        events.push({ kind: "ui", ship: ship.id, what: "overlay", element, state: overlayState });
+        // the ship owns this voice: the stock notice below is the whole
+        // confirmation, so a translator ack would double-speak (and burn a
+        // dynamic TTS synth). Drop it even if the model supplied one.
+        delete cmd.acknowledgement;
+        if (!ship.isDrone) {
+          // state is state: the marker toggles even when there's nothing to
+          // mark yet — the XO just says so instead of parroting "up".
+          const text =
+            overlayState === "off"
+              ? "Drift marker down."
+              : this.speedOf(ship) < 5
+                ? "We're not drifting anywhere, Captain — nothing to mark yet."
+                : "Drift marker up, Captain.";
+          events.push({ kind: "notice", ship: ship.id, text });
+        }
+        return null;
+      }
       case "sensor_ping": {
         // v4.5: everything with LOS inside PING_RANGE_M snaps to TRACK for
         // PING_TRACK_S; the price is a map-wide, no-LOS ID reveal of the
@@ -493,6 +531,19 @@ export class Sim {
         for (const m of this.missiles) {
           if (m.owner !== ship.id && insonified(m.x, m.y)) ship.pingGrantMissiles.add(m.id);
         }
+        // v4.7: the ring the captain sees IS the area of effect — each mask
+        // entry is where this bearing's LOS first breaks (rock or dust)
+        const mask: number[] = [];
+        for (let i = 0; i < C.PING_SHADOW_SAMPLES; i++) {
+          const [dx, dy] = headingVec((i * 360) / C.PING_SHADOW_SAMPLES);
+          const t = firstLosBreakT(
+            ship.x, ship.y,
+            ship.x + dx * C.PING_RANGE_M, ship.y + dy * C.PING_RANGE_M,
+            this.terrain
+          );
+          mask.push(t === null ? C.PING_RANGE_M : t * C.PING_RANGE_M);
+        }
+        this.fx.push({ type: "ping", x: ship.x, y: ship.y, r: C.PING_RANGE_M, mask });
         // the scream is heard by everyone, terrain or not
         if (enemy && !enemy.isDrone) {
           events.push({
@@ -2453,7 +2504,13 @@ export class Sim {
         painted: this.paintedState(ship),
         decoys: ship.decoys,
         pdc: { posture: ship.pdcPosture, ammoS: Math.round(ship.pdcAmmoS) },
-        ping: { ready: ship.pingCooldownS <= 0, cooldownS: Math.ceil(ship.pingCooldownS) },
+        // revealS: OWNER-ONLY (drives the LIT countdown) — the fog tests pin
+        // that it never appears in the enemy's snapshot of this ship
+        ping: {
+          ready: ship.pingCooldownS <= 0,
+          cooldownS: Math.ceil(ship.pingCooldownS),
+          revealS: Math.ceil(ship.pingRevealS),
+        },
         insideZone: this.insideZone(ship),
         inDust: this.inDust(ship),
         collisionWarning: ship.collisionWarnS === null ? null : Math.round(ship.collisionWarnS),
@@ -2489,6 +2546,9 @@ export class Sim {
       ],
       fx: this.fx.filter((f) => {
         if (f.type === "pdc") return f.owner === id || ship.contactTier >= 1;
+        // ping (v4.7): both players always — the scream is map-wide, no
+        // LOS, by design (the reveal is the ping's stated price)
+        if (f.type === "ping") return true;
         // explosions are bright: visible anywhere the sensor base could
         // reach an average target, LOS permitting
         return (

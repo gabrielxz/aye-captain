@@ -1,5 +1,5 @@
 // ws handling + client state store
-import { startRenderLoop, bigBoomAt, showVector, camera } from "./render.js";
+import { startRenderLoop, bigBoomAt, showVector, setOverlay, resetOverlays, kickShake, camera } from "./render.js";
 import { initUI, addTranscript, updateHUD, showLobbyStatus, enterGame, showBanner, hideBanner, updateWatching, setSpectator } from "./ui.js";
 import * as audio from "./audio.js";
 
@@ -53,6 +53,9 @@ function handleMessage(msg) {
       state.lastSnap = null;
       state.fxBuffer = [];
       state.gameOver = false;
+      resetOverlays();
+      prevTiers = null;
+      pingListen = null;
       updateWatching([]); // fresh roster arrives right behind the start
       setSpectator(msg.role === "spectator" ? msg.callsign : null);
       if (msg.role === "spectator") {
@@ -88,6 +91,14 @@ function handleMessage(msg) {
       for (const fx of msg.fx ?? []) {
         state.fxBuffer.push({ fx, at: now });
         if (fx.type === "pdc") audio.sfxPdc(fx.owner === state.role); // internally rate-limited
+        else if (fx.type === "ping") {
+          // whose ping? it rings out from a hull — ours if it's ours
+          const own = !!msg.you && Math.hypot(fx.x - msg.you.x, fx.y - msg.you.y) < 1000;
+          audio.sfxPing(own);
+          // open the return-listen window (grant lasts ~5 s server-side);
+          // the first new-or-promoted contact schedules the echo blip
+          if (own) pingListen = { until: now + 5000, rangeM: fx.r, done: false };
+        }
       }
       soundFromSnapshot(msg);
       updateHUDFromSnapshot(msg);
@@ -112,6 +123,7 @@ function handleMessage(msg) {
         break;
       }
       audio.sfxBoom(true, !msg.youWin);
+      if (!msg.youWin) kickShake(true);
       // terminal explosion on the losing ship
       if (snap) {
         const contact = (snap.contacts ?? [])[0];
@@ -136,6 +148,7 @@ function handleMessage(msg) {
       break;
     case "ui":
       if (msg.what === "show_vector") showVector(5000);
+      else if (msg.what === "overlay") setOverlay(msg.element, msg.state === "on");
       break;
     case "transcript":
       addTranscript(msg.who, msg.text, msg.alert);
@@ -149,12 +162,54 @@ function handleMessage(msg) {
 // State-diff sound triggers: compare consecutive snapshots so the server
 // protocol stays unchanged (fx events cover the rest).
 let prevAudio = null;
+let prevTiers = null; // cid -> tier from the previous snapshot
+let pingListen = null; // {until, rangeM, done} — set when OUR ping fires
 function soundFromSnapshot(snap) {
   const you = snap.you;
   if (!you || state.gameOver) return;
 
+  // v4.7 §3b: sonar return. During the grant window after our own ping,
+  // the nearest NEW or PROMOTED contact schedules a range-delayed blip.
+  // No new contact = the outgoing ping, a long silence, and nothing.
+  const tiers = new Map((snap.contacts ?? []).map((c) => [c.cid, c.tier]));
+  if (pingListen && !pingListen.done && performance.now() < pingListen.until && prevTiers) {
+    let nearest = null;
+    for (const c of snap.contacts ?? []) {
+      if (c.tier > (prevTiers.get(c.cid) ?? 0)) {
+        const d = Math.hypot(c.x - you.x, c.y - you.y);
+        if (nearest === null || d < nearest) nearest = d;
+      }
+    }
+    if (nearest !== null) {
+      pingListen.done = true;
+      audio.sfxPingReturn(audio.PING_RETURN_MS_AT_MAX_RANGE * Math.min(1, nearest / pingListen.rangeM));
+    }
+  }
+
+  // v4.7 §4.2: tier ceremony. One sting per snapshot (the loudest change
+  // wins) so simultaneous shifts don't chord. Suppressed through the ping
+  // grant window and its expiry edge — a ping mass-promotes and then
+  // mass-drops, and the return blip is that event's sound.
+  const pingQuiet = pingListen && performance.now() < pingListen.until + 1500;
+  if (prevTiers && !pingQuiet) {
+    let best = null; // {tier, up}; promotions outrank demotions
+    for (const cid of new Set([...tiers.keys(), ...prevTiers.keys()])) {
+      const now2 = tiers.get(cid) ?? 0;
+      const was = prevTiers.get(cid) ?? 0;
+      if (now2 > was) {
+        if (!best || !best.up || now2 > best.tier) best = { tier: now2, up: true };
+      } else if (now2 < was) {
+        if (!best) best = { tier: was, up: false };
+        else if (!best.up && was > best.tier) best = { tier: was, up: false };
+      }
+    }
+    if (best) audio.sfxTierShift(best.tier, best.up);
+  }
+  prevTiers = tiers;
+
   audio.setThrust(you.thrustOut ?? you.thrust);
   audio.setWarning(you.painted ?? "none");
+  audio.setDustHiss(!!you.inDust);
   // hearing: the loudest rumble drives the low ambience (0 = silence)
   audio.setRumble(Math.max(0, ...(snap.rumbles ?? []).map((r) => r.loud ?? 0)));
 
@@ -182,10 +237,12 @@ function soundFromSnapshot(snap) {
     }
     // decoy deployed (ours)
     if ((you.decoys ?? 0) < prevAudio.decoys) audio.sfxDecoy();
-    // any hull drop we take: rock hits crunch, weapons fire booms
+    // any hull drop we take: rock hits crunch, weapons fire booms — and
+    // either way the camera feels it (v4.7 §4.5)
     if (you.hull < prevAudio.hull) {
       if (prevAudio.collisionWarning !== null) audio.sfxCrunch();
       else audio.sfxBoom(false, true);
+      kickShake(prevAudio.hull - you.hull >= 20);
     }
   }
   // collision klaxon while an impact is projected inside 10 s
@@ -250,8 +307,15 @@ function updateHUDFromSnapshot(snap) {
     },
     {
       label: "PING",
-      value: you.ping?.ready ? "READY" : `${you.ping?.cooldownS ?? 0}s`,
-      cls: you.ping?.ready ? "good" : "",
+      // LIT = the reveal window: everyone on the map reads us at ID tier.
+      // A countdown, not a voice line — dread for exactly as long as earned.
+      value:
+        (you.ping?.revealS ?? 0) > 0
+          ? `◤ LIT ${you.ping.revealS}s ◥`
+          : you.ping?.ready
+            ? "READY"
+            : `${you.ping?.cooldownS ?? 0}s`,
+      cls: (you.ping?.revealS ?? 0) > 0 ? "alert" : you.ping?.ready ? "good" : "",
     },
     {
       label: "ZONE",

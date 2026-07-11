@@ -22,6 +22,21 @@ const SHIP_DESIGN = "interceptor";
 const SHIP_LEN_M = 60; // true hull length; far below one pixel at map scale
 const MIN_SHIP_PX = 22; // legibility clamp: never render smaller than this
 
+// v4.7: every ship design declares its stern in normalized hull units
+// (+y = aft, relative to sprite size). The engine plume anchors here —
+// v5 archetypes add an entry and get plumes for free. Nothing else changes.
+const SHIP_STERN = {
+  interceptor: { x: 0, y: 0.42 },
+  gunship: { x: 0, y: 0.46 },
+  saucer: { x: 0, y: 0.38 },
+};
+const VECTOR_SECONDS = 10; // the vector line = this much travel at current velocity
+const MIN_VECTOR_PX = 34; // legibility floor; clears the 22px hull clamp
+const DRIFT_STUB_PX = 26; // drift marker radius from hull center; just outside MIN_SHIP_PX
+const DRIFT_MIN_SPEED_MPS = 5; // below this: draw nothing (matches full_stop's cutoff)
+const SHAKE_MAX_PX = 7; // camera shake on own-hull hits
+const SHAKE_DECAY_MS = 320;
+
 // ---------- sprite loading (SVG text -> tinted blob -> Image) ----------
 
 const TINTS = {
@@ -224,6 +239,48 @@ export function showVector(ms) {
   vectorUntil = performance.now() + ms;
 }
 
+// Persistent overlays toggled through the XO (set_overlay verb). Session
+// state only; reset on match start. No hotkey — deliberately reachable
+// only by asking the ship.
+const overlays = { drift: false };
+
+export function setOverlay(element, on) {
+  if (element in overlays) overlays[element] = on;
+}
+
+export function resetOverlays() {
+  for (const k of Object.keys(overlays)) overlays[k] = false;
+}
+
+// The drift marker: a hollow chevron at a fixed screen radius from the
+// hull, rotated to the velocity bearing. The sprite shows FACING; this
+// shows GOING — the divergence is the game's whole Newtonian premise.
+function drawDriftMarker(you) {
+  if (!overlays.drift || !you) return;
+  const vx = state.lastSnap?.you?.vx ?? 0;
+  const vy = state.lastSnap?.you?.vy ?? 0;
+  const speed = Math.hypot(vx, vy);
+  if (speed < DRIFT_MIN_SPEED_MPS) return;
+  const [sx, sy] = worldToScreen(you.x, you.y);
+  const dx = vx / speed;
+  const dy = -vy / speed; // screen y is down
+  const cx = sx + dx * DRIFT_STUB_PX;
+  const cy = sy + dy * DRIFT_STUB_PX;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(Math.atan2(dy, dx) + Math.PI / 2); // chevron points along travel
+  ctx.beginPath();
+  ctx.moveTo(-6, 4);
+  ctx.lineTo(0, -4);
+  ctx.lineTo(6, 4);
+  ctx.strokeStyle = COLORS.own;
+  ctx.lineWidth = 1.6;
+  ctx.globalAlpha = 0.85;
+  ctx.stroke();
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
 function drawVectorOverlay(you) {
   if (!you) return;
   if (!vectorLatched && performance.now() > vectorUntil) return;
@@ -233,7 +290,14 @@ function drawVectorOverlay(you) {
   if (speed < 1) return;
 
   const [sx, sy] = worldToScreen(you.x, you.y);
-  const [ex, ey] = worldToScreen(you.x + vx * 10, you.y + vy * 10); // 10 s of travel
+  // screen-space travel direction (world north = screen up)
+  const dx = vx / speed;
+  const dy = -vy / speed;
+  // below the floor the line is a direction indicator, not a projection:
+  // at that speed "where I'll be in 10 s" is approximately right here anyway
+  const lenPx = Math.max(MIN_VECTOR_PX, speed * VECTOR_SECONDS * camera.zoom);
+  const ex = sx + dx * lenPx;
+  const ey = sy + dy * lenPx;
   ctx.beginPath();
   ctx.moveTo(sx, sy);
   ctx.lineTo(ex, ey);
@@ -244,7 +308,7 @@ function drawVectorOverlay(you) {
   ctx.stroke();
   ctx.setLineDash([]);
   // arrowhead
-  const ang = Math.atan2(ey - sy, ex - sx);
+  const ang = Math.atan2(dy, dx);
   ctx.beginPath();
   ctx.moveTo(ex, ey);
   ctx.lineTo(ex - 8 * Math.cos(ang - 0.4), ey - 8 * Math.sin(ang - 0.4));
@@ -253,7 +317,7 @@ function drawVectorOverlay(you) {
   ctx.fillStyle = COLORS.own;
   ctx.fill();
   ctx.font = "10px monospace";
-  ctx.fillText(`${Math.round(speed)} m/s`, ex + 8, ey);
+  ctx.fillText(`+${VECTOR_SECONDS}s · ${Math.round(speed)} m/s`, ex + 8, ey);
   ctx.globalAlpha = 1;
 
   // projected stop point for an immediate full-stop maneuver: coast through
@@ -271,16 +335,25 @@ function drawVectorOverlay(you) {
       you.x + (vx / speed) * stopDist,
       you.y + (vy / speed) * stopDist
     );
+    // stop glyph: a dashed bracket straddling the velocity line, opening
+    // toward the ship — a wall you come to rest against, not a contact
+    const nx = -dy; // perpendicular to travel, screen space
+    const ny = dx;
     ctx.beginPath();
-    ctx.arc(px, py, 5, 0, Math.PI * 2);
+    ctx.moveTo(px + nx * 7 - dx * 4, py + ny * 7 - dy * 4);
+    ctx.lineTo(px + nx * 7, py + ny * 7);
+    ctx.lineTo(px - nx * 7, py - ny * 7);
+    ctx.lineTo(px - nx * 7 - dx * 4, py - ny * 7 - dy * 4);
     ctx.strokeStyle = COLORS.own;
     ctx.globalAlpha = 0.8;
-    ctx.setLineDash([2, 3]);
+    ctx.setLineDash([3, 3]);
     ctx.stroke();
     ctx.setLineDash([]);
+    const km = stopDist / 1000;
+    const kmLabel = km < 10 ? `${km.toFixed(1)} km` : `${Math.round(km)} km`;
     ctx.font = "10px monospace";
     ctx.fillStyle = COLORS.own;
-    ctx.fillText("stop", px + 8, py + 3);
+    ctx.fillText(`all stop · ${kmLabel}`, px + 10, py + 3);
     ctx.globalAlpha = 1;
   }
 }
@@ -352,6 +425,9 @@ function rockShapes() {
   rockShapeSeed = terrain.seed;
   rockShapeCache = terrain.rocks.map((rock, i) => {
     const rand = mulberry32(1000 + i * 7919);
+    // v4.7 §4.4: slow individual spin, seeded per rock, big bodies slower.
+    // Cosmetic only — the collision circle doesn't care.
+    const spinDps = (rand() - 0.5) * 1.2 * Math.min(1, 1500 / rock.r);
     const n = rock.centerpiece ? 22 : 14;
     const points = [];
     for (let k = 0; k < n; k++) {
@@ -367,7 +443,7 @@ function rockShapes() {
         craters.push({ x: (rand() - 0.5) * 1.1, y: (rand() - 0.5) * 1.1, r: 0.1 + rand() * 0.16 });
       }
     }
-    return { points, craters };
+    return { points, craters, spinDps };
   });
   return rockShapeCache;
 }
@@ -408,6 +484,7 @@ function drawTerrain() {
     const shape = shapes[i];
     ctx.save();
     ctx.translate(sx, sy);
+    ctx.rotate(((shape.spinDps * performance.now()) / 1000) * (Math.PI / 180));
     ctx.beginPath();
     shape.points.forEach(([dx, dy], k) => {
       if (k === 0) ctx.moveTo(dx * rpx, dy * rpx);
@@ -552,21 +629,46 @@ function drawShip(ent, kind, { ghost = false, thrust = 0, hull = null, hullMax =
   ctx.translate(sx, sy);
   ctx.rotate(rad); // canvas rotate is clockwise, matching compass headings
 
-  // thrust flare scaled to output %, behind the ship
+  // engine plume anchored at the sprite-declared stern: length, brightness
+  // and flicker follow EFFECTIVE thrust. Only ships whose thrust the viewer
+  // legitimately knows ever pass thrust > 0 here (own ship, spectator view)
+  // — enemy contacts carry no thrust data, so no plume can leak (v4.7 §4.1).
   if (!ghost && thrust > 0) {
-    const flare = r * (0.5 + (thrust / 100) * 1.6);
-    const grad = ctx.createLinearGradient(0, r * 0.8, 0, r * 0.8 + flare);
+    const stern = SHIP_STERN[SHIP_DESIGN] ?? { x: 0, y: 0.4 };
+    const sxp = stern.x * sizePx;
+    const syp = stern.y * sizePx;
+    const now = performance.now();
+    // smooth two-sine flicker, stronger at higher throttle
+    const flicker = 1 + (0.06 + (thrust / 100) * 0.1) * (Math.sin(now / 37) * 0.6 + Math.sin(now / 61) * 0.4);
+    const flare = r * (0.5 + (thrust / 100) * 1.6) * flicker;
+    const grad = ctx.createLinearGradient(sxp, syp, sxp, syp + flare);
     grad.addColorStop(0, flareColor(thrust));
     grad.addColorStop(1, "rgba(0,0,0,0)");
     ctx.beginPath();
-    ctx.moveTo(-r * 0.28, r * 0.8);
-    ctx.lineTo(0, r * 0.8 + flare);
-    ctx.lineTo(r * 0.28, r * 0.8);
+    ctx.moveTo(sxp - r * 0.28, syp);
+    ctx.lineTo(sxp, syp + flare);
+    ctx.lineTo(sxp + r * 0.28, syp);
     ctx.closePath();
     ctx.fillStyle = grad;
-    ctx.globalAlpha = 0.85;
+    ctx.globalAlpha = 0.65 + (thrust / 100) * 0.3;
     ctx.fill();
     ctx.globalAlpha = 1;
+    // exhaust wisps drifting aft (world-space, so they trail properly)
+    if (Math.random() < thrust / 220) {
+      const rad2 = ((ent.facing ?? 0) * Math.PI) / 180;
+      const aftX = Math.sin(rad2 + Math.PI);
+      const aftY = Math.cos(rad2 + Math.PI);
+      const sternM = (syp / camera.zoom) || 30; // stern offset back to meters
+      spawnParticle({
+        x: ent.x + aftX * sternM,
+        y: ent.y + aftY * sternM,
+        vx: aftX * (400 + Math.random() * 500) + (Math.random() - 0.5) * 120,
+        vy: aftY * (400 + Math.random() * 500) + (Math.random() - 0.5) * 120,
+        life: 350 + Math.random() * 350,
+        r0: 1.6 + (thrust / 100) * 1.4,
+        color: flareColor(thrust),
+      });
+    }
   }
 
   const img = sprites[ghost ? "ghost" : kind];
@@ -631,6 +733,13 @@ function draw() {
   ctx.fillRect(0, 0, w, h);
   if (camera.zoom === 0) return; // canvas not sized yet
 
+  const shakeK = Math.exp(-(now - shakeAt) / SHAKE_DECAY_MS);
+  const shaking = shakeK > 0.02;
+  if (shaking) {
+    ctx.save();
+    ctx.translate((Math.random() - 0.5) * 2 * shakeMag * shakeK, (Math.random() - 0.5) * 2 * shakeMag * shakeK);
+  }
+
   drawStars();
   drawGrid();
   if (state.config) {
@@ -655,9 +764,36 @@ function draw() {
 
   drawContacts();
   drawRumbles(you);
+  drawDriftMarker(you);
   drawVectorOverlay(you);
+  drawDustShroud();
+  if (shaking) ctx.restore();
   drawCursorReadout(you);
   drawInset(you);
+}
+
+// v4.7 §4.3: being inside a dust cloud is a STATE, not a voice line —
+// a wash + vignette + light grain over the whole scene while blind.
+function drawDustShroud() {
+  if (!state.lastSnap?.you?.inDust) return;
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  // desaturating wash
+  ctx.fillStyle = "rgba(96, 112, 128, 0.13)";
+  ctx.fillRect(0, 0, w, h);
+  // vignette: clear center, closing in at the edges
+  const vg = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.3, w / 2, h / 2, Math.max(w, h) * 0.72);
+  vg.addColorStop(0, "rgba(20, 26, 34, 0)");
+  vg.addColorStop(1, "rgba(20, 26, 34, 0.55)");
+  ctx.fillStyle = vg;
+  ctx.fillRect(0, 0, w, h);
+  // light grain, redrawn per frame
+  ctx.fillStyle = "rgba(159, 180, 200, 0.35)";
+  for (let i = 0; i < 40; i++) {
+    ctx.globalAlpha = 0.08 + Math.random() * 0.2;
+    ctx.fillRect(Math.random() * w, Math.random() * h, 1, 1);
+  }
+  ctx.globalAlpha = 1;
 }
 
 // The captain's plotting table: bearing from own ship to the cursor. Makes
@@ -756,8 +892,18 @@ function drawContacts() {
 
   for (const c of snap.contacts ?? []) {
     if (c.tier === 1) {
-      // a smudge: pulsing diffuse blob, deliberately imprecise
-      const [sx, sy] = worldToScreen(c.x, c.y);
+      // a smudge: pulsing diffuse blob, deliberately imprecise.
+      // v4.7 §4.2: slow seeded drift (±6px) on top of the server-noised
+      // fix — the eye should read "this is a guess", not a lock. Smooth
+      // sinusoid, NOT per-frame noise (white noise strobes).
+      let seed = 0;
+      for (let k = 0; k < c.cid.length; k++) seed += c.cid.charCodeAt(k) * 31;
+      const jt = performance.now() / 1000;
+      const jx = 6 * Math.sin(jt * 0.7 + seed);
+      const jy = 6 * Math.sin(jt * 0.53 + seed * 1.7);
+      const [sx0, sy0] = worldToScreen(c.x, c.y);
+      const sx = sx0 + jx;
+      const sy = sy0 + jy;
       const pulse = 10 + Math.sin(performance.now() / 300) * 3;
       const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, pulse * 2);
       grad.addColorStop(0, "rgba(252, 129, 129, 0.35)");
@@ -978,11 +1124,16 @@ function drawOrdnance() {
 const PDC_FX_MS = 260;
 const BOOM_FX_MS = 700;
 const BIG_BOOM_FX_MS = 1600;
+const PING_RING_MS = 1200; // expanding ring reaches full range in this long
+const PING_FLASH_MS = 120; // flashbulb on the hull at ping-out
 
 function drawFx() {
   const now = performance.now();
   state.fxBuffer = state.fxBuffer.filter(({ fx, at }) => {
-    const ttl = fx.type === "pdc" ? PDC_FX_MS : fx.big ? BIG_BOOM_FX_MS : BOOM_FX_MS;
+    const ttl =
+      fx.type === "pdc" ? PDC_FX_MS :
+      fx.type === "ping" ? PING_RING_MS :
+      fx.big ? BIG_BOOM_FX_MS : BOOM_FX_MS;
     return now - at < ttl;
   });
   for (const entry of state.fxBuffer) {
@@ -1004,6 +1155,46 @@ function drawFx() {
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.globalAlpha = 1;
+    } else if (fx.type === "ping") {
+      // the expanding ring, torn open by terrain: each 2° arc stops being
+      // drawn once the animated radius passes that bearing's mask value —
+      // the gaps ARE where rocks/dust ate the ping (the map's most
+      // explanatory graphic; the shadow explains the empty ping)
+      const t = age / PING_RING_MS;
+      const [ox, oy] = worldToScreen(fx.x, fx.y);
+      const animR = t * fx.r; // meters
+      const rpx = animR * camera.zoom;
+      const n = fx.mask.length;
+      const step = (Math.PI * 2) / n;
+      if (rpx > 1) {
+        ctx.beginPath();
+        for (let i = 0; i < n; i++) {
+          if (animR > fx.mask[i]) continue; // this bearing's arc died on terrain
+          const a0 = i * step - Math.PI / 2; // compass 0=N -> canvas angle
+          ctx.moveTo(ox + Math.cos(a0) * rpx, oy + Math.sin(a0) * rpx);
+          ctx.arc(ox, oy, rpx, a0, a0 + step);
+        }
+        ctx.strokeStyle = "#a8ecff";
+        ctx.lineWidth = 1.6;
+        ctx.globalAlpha = (1 - t) * 0.85;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      // flashbulb: brief white/cyan bloom at the emitting hull
+      if (age < PING_FLASH_MS) {
+        const ft = age / PING_FLASH_MS;
+        const fr = 14 + 22 * ft;
+        const grad = ctx.createRadialGradient(ox, oy, 0, ox, oy, fr);
+        grad.addColorStop(0, "rgba(240, 253, 255, 0.9)");
+        grad.addColorStop(0.4, "rgba(168, 236, 255, 0.5)");
+        grad.addColorStop(1, "rgba(168, 236, 255, 0)");
+        ctx.fillStyle = grad;
+        ctx.globalAlpha = 1 - ft;
+        ctx.beginPath();
+        ctx.arc(ox, oy, fr, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
     } else if (fx.type === "boom") {
       const ttl = fx.big ? BIG_BOOM_FX_MS : BOOM_FX_MS;
       const t = age / ttl;
@@ -1058,6 +1249,14 @@ function drawFx() {
 // Big terminal explosion at a world position (used on game over).
 export function bigBoomAt(x, y) {
   state.fxBuffer.push({ fx: { type: "boom", big: true, x, y }, at: performance.now() });
+}
+
+// v4.7 §4.5: camera shake on hits WE took. Exponential decay, short.
+let shakeAt = -Infinity;
+let shakeMag = 0;
+export function kickShake(big) {
+  shakeAt = performance.now();
+  shakeMag = big ? SHAKE_MAX_PX : SHAKE_MAX_PX * 0.6;
 }
 
 export function startRenderLoop() {

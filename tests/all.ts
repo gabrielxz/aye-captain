@@ -18,3 +18,5 @@ import "./spectator.test.js";
 import "./welcome.test.js";
 import "./hearing.test.js";
 import "./ping.test.js";
+import "./overlay.test.js";
+import "./pingfx.test.js";

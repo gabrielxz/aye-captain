@@ -26,6 +26,24 @@ export function initAudio() {
   speechBus = ctx.createGain();
   speechBus.gain.value = 1.0;
   speechBus.connect(master);
+  startHum();
+}
+
+// v4.7 §4.6: hull hum — one filtered noise loop at very low gain, always on
+// once audio is unlocked. True digital silence reads as "audio broke"; the
+// hum is the floor that the absence of the thrust rumble lands against, so
+// going dark becomes a felt state instead of a bug report.
+function startHum() {
+  const src = ctx.createBufferSource();
+  src.buffer = noiseBuffer();
+  src.loop = true;
+  const f = ctx.createBiquadFilter();
+  f.type = "lowpass";
+  f.frequency.value = 64;
+  const g = ctx.createGain();
+  g.gain.value = 0.028;
+  src.connect(f).connect(g).connect(sfxBus);
+  src.start();
 }
 
 let ducked = false;
@@ -183,6 +201,60 @@ export function sfxClick() {
   osc("square", 1800, ctx.currentTime, 0.015, 0.08);
 }
 
+// v4.7 ping. own = we screamed: bright ~1.2 kHz sine, fast pitch drop,
+// long exponential tail — the "one ping only" sound. Enemy pings arrive
+// through the hull: lowpassed hard, quieter, stretched. You should be able
+// to tell whose ping it was with your eyes shut.
+export const PING_RETURN_MS_AT_MAX_RANGE = 900;
+export function sfxPing(own) {
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  if (own) {
+    osc("sine", 1250, t, 1.5, 0.4, 850);
+    osc("sine", 2500, t, 0.2, 0.1, 1700); // glassy transient on top
+  } else {
+    const o = ctx.createOscillator();
+    const f = ctx.createBiquadFilter();
+    const g = ctx.createGain();
+    o.type = "sine";
+    o.frequency.setValueAtTime(1150, t);
+    o.frequency.exponentialRampToValueAtTime(650, t + 2.4);
+    f.type = "lowpass";
+    f.frequency.value = 480;
+    env(g, t, 0.15, 0.04, 2.4);
+    o.connect(f).connect(g).connect(sfxBus);
+    o.start(t);
+    o.stop(t + 2.5);
+  }
+}
+
+// v4.7 §4.2: contact tier ceremony. Promotion = ascending motif, one note
+// per tier reached (faint 1, track 2, id 3); demotion = the same motif
+// descending from the lost tier. Suppressed by the caller during a ping
+// grant window — the return blip is that event's sound.
+const TIER_NOTES = [523, 659, 784]; // C5 E5 G5
+export function sfxTierShift(tier, up) {
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  const n = Math.max(1, Math.min(3, tier));
+  const notes = TIER_NOTES.slice(0, n);
+  if (!up) notes.reverse();
+  notes.forEach((f, i) => {
+    osc("sine", f, t + i * 0.11, 0.14, up ? 0.16 : 0.12);
+    osc("triangle", f / 2, t + i * 0.11, 0.14, 0.05);
+  });
+}
+
+// The diegetic return after OUR ping, scheduled by contact range. An empty
+// ping is the outgoing ping, a long silence, and nothing — that silence is
+// the feedback. Never fired for the enemy's ping.
+export function sfxPingReturn(delayMs) {
+  if (!ctx) return;
+  const t = ctx.currentTime + Math.max(0, delayMs) / 1000;
+  osc("sine", 1180, t, 0.25, 0.22, 1100);
+  osc("sine", 1770, t, 0.07, 0.05);
+}
+
 // ---------- continuous states ----------
 
 // Thrust rumble: filtered noise loop, level/pitch follow effective thrust %.
@@ -228,6 +300,28 @@ export function setRumble(level) {
   }
   const lvl = Math.max(0, Math.min(1, level));
   rumbleNodes.g.gain.linearRampToValueAtTime(lvl * 0.11, ctx.currentTime + 0.6);
+}
+
+// v4.7 §4.3: dust immersion — a soft filtered-noise wash while inside a
+// cloud. Low on the SFX bus; the state speaks, not the XO.
+let dustNodes = null;
+export function setDustHiss(on) {
+  if (!ctx) return;
+  if (!dustNodes) {
+    const src = ctx.createBufferSource();
+    src.buffer = noiseBuffer();
+    src.loop = true;
+    const f = ctx.createBiquadFilter();
+    f.type = "bandpass";
+    f.frequency.value = 900;
+    f.Q.value = 0.5;
+    const g = ctx.createGain();
+    g.gain.value = 0;
+    src.connect(f).connect(g).connect(sfxBus);
+    src.start();
+    dustNodes = { g };
+  }
+  dustNodes.g.gain.linearRampToValueAtTime(on ? 0.045 : 0, ctx.currentTime + 0.8);
 }
 
 // Lock warning (RWR): "acquiring" = rising two-tone; "locked" = continuous
@@ -286,6 +380,7 @@ export function stopContinuous() {
   proxDist = null;
   if (thrustNodes && ctx) thrustNodes.g.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.4);
   if (rumbleNodes && ctx) rumbleNodes.g.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.4);
+  if (dustNodes && ctx) dustNodes.g.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.4);
 }
 
 // ---------- ship-AI speech queue ----------

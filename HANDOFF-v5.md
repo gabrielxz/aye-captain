@@ -56,6 +56,17 @@ max speed            3000 (shared) 3000                 3000    // shared cap; i
 - Corvette identity: the ghost — dim, fast-cycling, deception-rich, best eyes, no rail (fiction: a railgun is a spinal mount; the corvette's keel can't take one). Frigate: the baseline everyone already knows — CHANGE NOTHING about current-ship numbers beyond the table. Cruiser: the thunderstorm — audible at map scale perpetually, deep magazines, wins by making you come to it.
 - HUD shows own archetype; enemy archetype is ID-tier information only.
 - Hearing/detection math needs no per-class code — sig base and sensor base flow through existing formulas. That's the point.
+- 
+
+## 4.5
+Silhouette test (the acceptance criterion): each archetype must be distinguishable from the other two as a solid black shape at 22px (the min-clamp). If you can't tell them apart as silhouettes at hull size, the design failed. Detail is free; shape is the deliverable.
+
+Shape = archetype. Tint = player. Don't ask shape to carry both; FFA needs both axes independent.
+Mass reads as bulk. Corvette: small, narrow, high aspect ratio, sharp. Frigate: mid, visible dorsal spine, the railgun as a long forward axis. Cruiser: broad, slab-sided, blocky, visibly heavy.
+The railgun must be an unmistakable forward-facing barrel on the Frigate and Cruiser. It is the bearing-fire affordance, not ornament. A Corvette has no barrel, and its absence should be the fastest way to identify one.
+Every design declares a stern offset (the v4.7 plume convention). Cruiser plume: wide, slow, heavy. Corvette: narrow and hot. Free archetype flavor from a system v4.7 already built.
+
+Existing candidates likely map straight across: interceptor → Corvette, gunship → Frigate, saucer → Cruiser. Start there before authoring from scratch.
 
 ## 5. The railgun (Frigate & Cruiser)
 

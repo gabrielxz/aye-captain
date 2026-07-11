@@ -203,6 +203,11 @@ export function validateCommand(raw: unknown, nested = false): Command | null {
     }
     case "show_vector":
       return out({});
+    case "set_overlay": {
+      if (p.element !== "drift") return null;
+      if (p.state !== "on" && p.state !== "off") return null;
+      return out({ element: p.element, state: p.state });
+    }
     case "sensor_ping":
       return out({});
     case "fire_missile": {

@@ -1,5 +1,22 @@
 # TODO — next steps
 
+## v4.7 "Sensation" (HANDOFF-v4.7.md) — DEPLOYED 2026-07-11
+
+The feel release before v5: §1 vector overlay repair (34px floor, labeled
+arrowhead `+10s · N m/s`, `all stop · N km` bracket glyph), §2 drift
+marker + `set_overlay` verb (pure ui event, XO stock lines, translator
+drift-vs-vector doctrine pinned live), §3 the ping made sensible (ping fx
+with 180-sample LOS occlusion mask computed server-side — the ring tears
+open behind rocks/dust; sfxPing own/enemy + range-delayed return blip,
+silence = empty; red LIT countdown; flashbulb), §4 feel pass (SHIP_STERN
+plume convention for v5, tier ceremony stings + faint wobble, dust
+shroud + hiss, rock spin, camera shake, hull hum). Zero sim/balance
+changes; ping.test.ts untouched; 460+ assertions.
+
+**The v4.5 playtest questions remain OPEN and untuned** (carried forward
+verbatim below): does the hunt phase converge? Do throttles come up? Is
+the ping cost honest? v4.7 exists partly so those become answerable.
+
 ## v4.6 — phantom-ack fix + TTS quota furnace (playtest report 2026-07-11)
 
 "Hold PDCs" was STT-heard as "Hold Pieces"; the translator emitted a

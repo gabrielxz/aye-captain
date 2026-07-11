@@ -40,8 +40,13 @@ be going somewhere — not both.
   only: cross-referencing them over time is captain's work.
 - **Active ping**: "give me a ping" snaps everything within 150 km (LOS
   permitting) to TRACK for 5 s — dark ships, decoys, coasting torpedoes.
-  The price: you're revealed at ID to everyone, map-wide, for 10 s. 30 s
-  cooldown. A ping finds ships; it can't hold a lock by itself.
+  The price: you're revealed at ID to everyone, map-wide, for 10 s (a red
+  **LIT** countdown in your HUD while you pay it). 30 s cooldown. A ping
+  finds ships; it can't hold a lock by itself. The ping is a circle, not a
+  beam: the expanding ring on the map is the true area of effect, and the
+  gaps torn in it are where rocks and dust ate your ping. After your own
+  ping, a return blip = a contact (sooner = closer); silence = nothing in
+  the open.
 - **Weapons**: 6 torpedoes in 2 auto-reloading tubes. A locked shot needs
   a **lock**: a TRACK-or-better contact within 30° of your nose, inside
   80 km, held 5 s. The target FEELS your lock ("we're being painted!") and
@@ -85,9 +90,15 @@ be going somewhere — not both.
 - **Questions**: "how far out is he?", "any rocks nearby we could hide
   behind?", "pdc status?", "full report".
 - **Map**: wheel zoom, drag/WASD pan, F follows your ship, M toggles the
-  region overview, V toggles your velocity vector. The cursor shows the
-  bearing from your ship (your plotting table for callouts and blind
-  fire); the single dashed ring is a 50 km ruler.
+  region overview, V toggles your velocity vector — a labeled line showing
+  10 s of travel plus an "all stop" bracket marking where a full stop
+  ordered now would bring you to rest (with the distance: your can-I-stop-
+  before-that-rock number). The cursor shows the bearing from your ship
+  (your plotting table for callouts and blind fire); the single dashed
+  ring is a 50 km ruler. Ask for the **drift marker** ("show me our
+  drift") and a chevron rides your hull pointing where you're *going* —
+  your hull points where you're *aimed*, and the gap between them is what
+  kills people. No hotkey; it's asked for, like everything on this boat.
 - Win by reducing the enemy hull to zero. Rematch from the banner.
 
 Debug/dev harness: any input starting with `{` or `[` is parsed as raw

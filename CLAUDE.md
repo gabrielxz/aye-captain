@@ -30,7 +30,18 @@ v4.5 "Tempo" (`HANDOFF-v4.5.md`: missile retune to real engagement ranges
 + 3 km arming distance, 30 s reload, 60 s decoys, steeper edge pull, the
 HEARING channel, the active PING) and v4.6 (phantom-ack fix: reply-only
 lines never claim actions, render as "XO (note)"; spoken rumble bearings
-quantized to 10° for the TTS cache) are deployed.
+quantized to 10° for the TTS cache) are deployed. v4.7 "Sensation"
+(`HANDOFF-v4.7.md`) is the client-side feel release before v5: vector
+overlay repair (min length, labeled ends, all-stop bracket), the drift
+marker behind the new `set_overlay` verb (pure ui event — v5 overlays are
+ENUM VALUES on it, not new verbs), the ping made perceivable (new `ping`
+fx carrying a 180-sample server-computed LOS occlusion mask — the client
+ring tears open behind terrain; sonar sounds; red LIT countdown off
+`you.ping.revealS`, owner-only), and the feel pass (engine plume anchored
+by the `SHIP_STERN` normalized-offset table in render.js — v5 archetypes
+add one entry each and get plumes free; tier ceremony stings; dust
+shroud + hiss; rock spin; camera shake; hull hum). Zero sim/balance
+changes; ping mechanics untouched (`tests/ping.test.ts` unmodified).
 
 ## Commands
 
@@ -68,7 +79,9 @@ Note: on this machine's rootless Docker, `-p` port publishing doesn't route
   prox fuses, expiry, seekers). Also `snapshotFor()` (contacts[] by tier +
   ghost), `stateSummaryFor()` (LLM prompt state), `queryData()`.
 - `server/terrain.ts` — seeded rock/dust generation, circle/ellipse segment
-  raycasts, `losClear` (used by sensors, locks, seekers, PDCs, fx).
+  raycasts, `losClear` (used by sensors, locks, seekers, PDCs, fx),
+  `firstLosBreakT` (earliest LOS break along a ray — feeds the v4.7 ping
+  fx occlusion mask; the server computes LOS, the client only animates).
 - `server/match.ts` — Match owns a Sim + sockets; physics timer at 10 Hz,
   snapshot broadcast timer at 4 Hz; terrain seed per match (rematch keeps
   the field unless newField); practice vs room modes, disconnect

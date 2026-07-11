@@ -68,6 +68,9 @@ export const PING_RANGE_M = 150000; // everything within, LOS permitting (rocks/
 export const PING_TRACK_S = 5; // granted TRACK tier duration, then decay to passive
 export const PING_REVEAL_S = 10; // the pinger reads ID tier to ALL ships, map-wide, no LOS — you screamed
 export const PING_COOLDOWN_S = 30;
+// v4.7: the ping fx ships a precomputed occlusion mask so the client ring
+// can tear open behind rocks/dust without a client-side raycast port.
+export const PING_SHADOW_SAMPLES = 180; // 2 deg resolution
 
 // Contact tiers, as fractions of the computed detection range:
 export const TIER_FAINT_FRAC = 1.0; // approximate position only, no vector

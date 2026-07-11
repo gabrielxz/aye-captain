@@ -132,10 +132,10 @@ export function segCircleHitT(
 }
 
 // Segment-vs-ellipse: map the ellipse to the unit circle and reuse the
-// circle test (affine maps preserve intersection).
-export function segHitsDust(
+// circle test (affine maps preserve intersection AND the segment parameter).
+export function segDustHitT(
   x1: number, y1: number, x2: number, y2: number, d: Dust
-): boolean {
+): number | null {
   const rad = (d.rot * Math.PI) / 180;
   const cos = Math.cos(rad);
   const sin = Math.sin(rad);
@@ -146,7 +146,28 @@ export function segHitsDust(
   };
   const [ax, ay] = local(x1, y1);
   const [bx, by] = local(x2, y2);
-  return segCircleHitT(ax, ay, bx, by, 0, 0, 1) !== null;
+  return segCircleHitT(ax, ay, bx, by, 0, 0, 1);
+}
+
+export function segHitsDust(
+  x1: number, y1: number, x2: number, y2: number, d: Dust
+): boolean {
+  return segDustHitT(x1, y1, x2, y2, d) !== null;
+}
+
+// Earliest parameter t where LOS breaks along the segment — rocks or dust —
+// or null if clear the whole way. Feeds the ping fx occlusion mask (v4.7).
+export function firstLosBreakT(
+  x1: number, y1: number, x2: number, y2: number, terrain: Terrain
+): number | null {
+  let best: number | null = null;
+  const rock = firstRockHit(x1, y1, x2, y2, terrain);
+  if (rock) best = rock.t;
+  for (const d of terrain.dust) {
+    const t = segDustHitT(x1, y1, x2, y2, d);
+    if (t !== null && (best === null || t < best)) best = t;
+  }
+  return best;
 }
 
 export function insideDust(x: number, y: number, terrain: Terrain): boolean {
