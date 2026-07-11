@@ -2347,6 +2347,11 @@ export class Sim {
       tubes_ready: ship.tubes.filter((t) => t.loaded).length,
       reserve_missiles: ship.reserve,
       missiles_aboard: missilesAboard(ship),
+      // playtest 2026-07-11: "reloading" while reserve reads 0 sounds like
+      // a lie unless the XO says it's the final stock going in
+      ...(ship.reserve === 0 && ship.tubes.some((t) => !t.loaded && t.reload > 0)
+        ? { magazine_note: "reserve empty — the missiles loading now are the LAST aboard" }
+        : {}),
       lock: ship.lock.has ? "held" : ship.lock.progress > 0 ? "acquiring" : "none",
     };
     const pdc = {

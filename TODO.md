@@ -1,5 +1,19 @@
 # TODO — next steps
 
+## v4.7.2 — playtest patch round two (2026-07-11)
+
+- **"Not sure what 'detail readout' / 'full resolution' means"**: the HUD
+  CONTACT row now names what each tier buys — "FAINT · pos only",
+  "TRACK · lockable", "ID · full readout" — anchoring the XO's tier
+  vocabulary to something visible.
+- **"Tube 2 said reloading but we were out of missiles"**: the XO was
+  right — a tube only says reloading when a missile already pulled from
+  reserve is going in — but reserve reads 0 during the LAST reload, which
+  sounds like a lie. The tubes query now carries a magazine_note
+  ("the missiles loading now are the LAST aboard") and the XO voices it.
+- **Rock spin doubled** (±0.6 → ±1.2°/s at the small end) — the v4.7 rate
+  read as stationary.
+
 ## v4.7.1 — playtest patch (reports 2026-07-11, same day as v4.7)
 
 - **"XO said 'kilometer' weird / garbled the end of the sentence"**: the

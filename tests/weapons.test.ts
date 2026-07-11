@@ -195,4 +195,29 @@ assert(segmentMinDist(0,0, 1000,0, 500,-50, 500,50) === 0, "crossing paths -> 0"
   snap = sim2.snapshotFor("A") as any;
   assert(!snap.missiles.some((m: any) => !m.own), `missile beyond ${Math.round(burnDetectM / 1000)} km detect range hidden`);
 }
+// v4.7.2: the tubes query flags when the loading missiles are the last
+// aboard (playtest: "reloading" with reserve 0 read as a lie)
+{
+  const sim = new Sim();
+  const a = sim.addShip("A", 0, 0, 0);
+  sim.addShip("B", 0, 200000, 180, false);
+  a.reserve = 2;
+  sim.enqueue("A", [{ verb: "fire_missile", params: { tubes: [1, 2], guidance: "bearing", bearing_degrees: 90 } } as any]);
+  sim.tick();
+  sim.tick();
+  let data = sim.queryData("A", "tubes") as any;
+  assert(/reloading/.test(data.tubes), "both tubes reloading the last birds");
+  assert(/LAST aboard/.test(data.magazine_note ?? ""), "magazine_note flags the last-of-it reload");
+
+  const sim2 = new Sim();
+  const a2 = sim2.addShip("A", 0, 0, 0);
+  sim2.addShip("B", 0, 200000, 180, false);
+  a2.reserve = 0;
+  sim2.enqueue("A", [{ verb: "fire_missile", params: { tubes: [1, 2], guidance: "bearing", bearing_degrees: 90 } } as any]);
+  sim2.tick();
+  sim2.tick();
+  data = sim2.queryData("A", "tubes") as any;
+  assert(/tube one empty, tube two empty/.test(data.tubes), "dry magazine: tubes report empty, not reloading");
+  assert(data.magazine_note === undefined, "no note when nothing is loading");
+}
 console.log("done");

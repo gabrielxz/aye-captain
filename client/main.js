@@ -285,7 +285,9 @@ function updateHUDFromSnapshot(snap) {
   const painted = you.painted ?? "none";
   const prop = Math.round(you.propellant ?? 0);
   const contact = (snap.contacts ?? [])[0] ?? null;
-  const TIER_LABEL = { 1: "FAINT", 2: "TRACK", 3: "ID" };
+  // each tier names what it buys — the anchor for the XO's "detail
+  // readout" / "track" / "faint" vocabulary (playtest 2026-07-11)
+  const TIER_LABEL = { 1: "FAINT · pos only", 2: "TRACK · lockable", 3: "ID · full readout" };
   const contactLabel = contact ? TIER_LABEL[contact.tier] ?? "?" : snap.ghost ? "ghost" : "—";
   const enemyHull = contact?.tier === 3 && contact.hull !== undefined ? `${contact.hull}/${contact.hullMax ?? 100}` : "—";
   updateHUD([

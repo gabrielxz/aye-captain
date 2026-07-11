@@ -32,8 +32,10 @@ be going somewhere — not both.
   visible ~234 km out; a dark drifter ~54 km (and unlockable until ~32).
   Contacts have **tiers**: FAINT (a smudge — approximate position, no
   vector), TRACK (true position + velocity, **lockable**), ID (full
-  readout). Rocks and dust block line of sight — inside a dust cloud you're
-  blind and unseen.
+  readout). The HUD's CONTACT row names what the current tier buys
+  ("TRACK · lockable") — it's the same vocabulary the XO's tier calls use.
+  Rocks and dust block line of sight — inside a dust cloud you're blind
+  and unseen.
 - **Hearing**: beyond sensor range every drive **rumbles** — a bearing-only
   chevron and a low ambience, out to 2.5× detection range (a cruising ship
   is heard across most of the map). Terrain doesn't block it. Bearings

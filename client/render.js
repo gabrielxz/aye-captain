@@ -426,8 +426,9 @@ function rockShapes() {
   rockShapeCache = terrain.rocks.map((rock, i) => {
     const rand = mulberry32(1000 + i * 7919);
     // v4.7 §4.4: slow individual spin, seeded per rock, big bodies slower.
-    // Cosmetic only — the collision circle doesn't care.
-    const spinDps = (rand() - 0.5) * 1.2 * Math.min(1, 1500 / rock.r);
+    // Cosmetic only — the collision circle doesn't care. (v4.7.2: doubled
+    // from ±0.6°/s after the playtest read the original as not moving.)
+    const spinDps = (rand() - 0.5) * 2.4 * Math.min(1, 1500 / rock.r);
     const n = rock.centerpiece ? 22 : 14;
     const points = [];
     for (let k = 0; k < n; k++) {
