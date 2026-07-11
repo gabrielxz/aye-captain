@@ -49,7 +49,7 @@ const grantLock = (ship: Ship) => {
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 0);
   const b = sim.addShip("B", 0, 8000, 90, false);
-  b.thrust = 0; // quiet ship (sig 10): a decoy would ALWAYS win autonomously
+  b.thrust = 0; // quiet ship (sig 30): a decoy would ALWAYS win autonomously
   b.vx = 400; // crossing east — lead pursuit should aim ahead of it
   a.pdcPosture = "hold"; b.pdcPosture = "hold";
   grantLock(a);
@@ -109,12 +109,14 @@ const grantLock = (ship: Ship) => {
   assert(m.guidance === "autonomous", "dead launcher = autonomous bird");
 }
 
-// 5. seeker detection thresholds: a dark drifter (sig 10 => ~4 km) is
-// invisible to a seeker at 8 km; a full burn (110 => ~44 km) is not
+// 5. seeker detection thresholds: a dark drifter is invisible to a seeker
+// just beyond its dark-signature range; a full burn is not. Ranges derived
+// from constants (v4.3: dark sig 30 => ~12 km, burn 130 => ~52 km).
 {
+  const darkSeekM = (C.MISSILE_SEEKER_BASE_M * C.SIG_BASE) / 100;
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 0);
-  const b = sim.addShip("B", 0, 8000, 0, false);
+  const b = sim.addShip("B", 0, darkSeekM + 4000, 0, false);
   b.thrust = 0;
   a.pdcPosture = "hold"; b.pdcPosture = "hold";
   grantLock(a);
@@ -123,11 +125,11 @@ const grantLock = (ship: Ship) => {
   const m = (sim as any).missiles[0];
   m.guidance = "autonomous"; // seeker-only
   sim.tick();
-  assert(m.lock === null, "seeker cannot detect a dark drifter at 8 km (sig 10 => ~4 km)");
+  assert(m.lock === null, `seeker cannot detect a dark drifter beyond ${Math.round(darkSeekM / 1000)} km (sig ${C.SIG_BASE})`);
   b.thrust = 100;
   b.propellant = C.PROPELLANT_MAX;
   sim.tick();
-  assert(m.lock?.type === "ship", "the moment it burns (sig 110 => ~44 km), the seeker grabs it");
+  assert(m.lock?.type === "ship", `the moment it burns (sig ${C.SIG_BASE + 100}), the seeker grabs it`);
 }
 
 // 6. PDCs are sensor-slaved: ordnance the ship cannot detect (dust between)

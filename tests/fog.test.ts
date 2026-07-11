@@ -1,6 +1,6 @@
 // Fog of war under the v4 contact-tier model. Detection range scales with
-// the TARGET's signature: quiet ship (sig 10) seen at 16.5 km; tiers at
-// <=30% (id), <=60% (track), <=100% (faint) of that.
+// the TARGET's signature: quiet ship (sig 30 post-v4.3) seen at ~54 km;
+// tiers at <=30% (id), <=60% (track), <=100% (faint) of that.
 import { Sim } from "../server/sim.js";
 import * as C from "../server/constants.js";
 
@@ -9,7 +9,7 @@ const assert = (cond: boolean, msg: string) => {
   else console.log("ok:", msg);
 };
 
-const quietDetect = C.SENSOR_BASE_M * (C.SIG_BASE / 100); // 16.5 km
+const quietDetect = C.SENSOR_BASE_M * (C.SIG_BASE / 100); // ~54 km at v4.3 values
 
 // 1. spawn distance: dark ships see nothing — no contacts, no ghost
 {
@@ -77,7 +77,46 @@ const quietDetect = C.SENSOR_BASE_M * (C.SIG_BASE / 100); // 16.5 km
   b.thrust = 100;
   b.propellant = C.PROPELLANT_MAX;
   sim.tick();
-  assert(a.contactTier >= 1, `full burn (sig 110, detect ~181 km) seen at 100 km (tier ${a.contactTier})`);
+  assert(a.contactTier >= 1, `full burn (sig ${C.SIG_BASE + 100}) seen at 100 km (tier ${a.contactTier})`);
+}
+
+// 4b. v4.3 sensor rebase: the compressed spread, pinned at its boundaries.
+// Dark is an edge, not an off-switch: a drifter is contact-visible at ~54 km
+// but not lockable (track) until ~32 km, not ID'd until ~16 km.
+{
+  const dark = C.SENSOR_BASE_M * (C.SIG_BASE / 100);
+  const mk = (distM: number, thrust: number) => {
+    const sim = new Sim();
+    const a = sim.addShip("A", 0, 0, 0);
+    const b = sim.addShip("B", 0, distM, 180, false);
+    b.thrust = thrust;
+    sim.tick();
+    return a.contactTier;
+  };
+  assert(dark === 54000, `dark detect is 54 km (got ${dark / 1000})`);
+  assert(mk(dark - 1000, 0) === 1, "dark drifter faint just inside 54 km");
+  assert(mk(dark + 2000, 0) === 0, "dark drifter invisible beyond 54 km");
+  assert(mk(dark * C.TIER_TRACK_FRAC - 1000, 0) === 2, "dark drifter TRACKABLE inside ~32 km");
+  assert(mk(dark * C.TIER_ID_FRAC - 1000, 0) === 3, "dark drifter IDs inside ~16 km");
+  const cruise = C.SENSOR_BASE_M * ((C.SIG_BASE + 50) / 100);
+  assert(cruise === 144000, `50% cruise detect is 144 km (got ${cruise / 1000})`);
+  assert(mk(cruise - 2000, 50) >= 1, "50% cruise faint just inside 144 km");
+  // spawn spot-check (v4.3 §5): even a full-burner (detect 234 km) is dark
+  // at the 300 km spawn separation — the first move still precedes first
+  // contact, the opening hunt survives the rebase
+  const flank = C.SENSOR_BASE_M * ((C.SIG_BASE + 100) / 100);
+  assert(flank === 234000, `flank detect is 234 km (got ${flank / 1000})`);
+  assert(2 * C.SPAWN_DIST_FROM_CENTER_M > flank, "spawn separation exceeds flank detect");
+  {
+    // real spawn geometry (both ships INSIDE the region — outside it the
+    // signature-max rule would light anything up)
+    const sim = new Sim();
+    const a = sim.addShip("A", 0, -C.SPAWN_DIST_FROM_CENTER_M, 0);
+    const b = sim.addShip("B", 0, C.SPAWN_DIST_FROM_CENTER_M, 180, false);
+    b.thrust = 100;
+    sim.tick();
+    assert(a.contactTier === 0, "full-burner still invisible at spawn range");
+  }
 }
 
 // 5. contact lost: ghost lastKnown + steering falls back to it

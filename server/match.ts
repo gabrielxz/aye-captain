@@ -11,6 +11,9 @@ export class Match {
   readonly code: string | null;
   readonly practice: boolean;
   private sockets = new Map<ShipId, WebSocket | null>();
+  // Spectators (v4.2): cosmetic callsigns, no persistence, no seat. They
+  // receive omniscient snapshots and never appear in the transcript.
+  private spectators = new Map<WebSocket, string>();
   private timer: ReturnType<typeof setInterval> | null = null; // physics substeps
   private snapTimer: ReturnType<typeof setInterval> | null = null; // snapshot broadcast
   private forfeitTimer: ReturnType<typeof setTimeout> | null = null;
@@ -42,6 +45,9 @@ export class Match {
     match.attach("A", ws);
     match.sendStart("A");
     match.start();
+    // v4.3 welcome: client is connected (start just went out) and audio is
+    // already unlocked — clicking PRACTICE was the user gesture.
+    match.sendTranscript("A", "xo", "Practice range is hot, Captain. Drone's out there somewhere.");
     if (!llmAvailable()) {
       match.sendTranscript(
         "A",
@@ -65,7 +71,7 @@ export class Match {
   // later joins with the same code re-occupy a disconnected seat.
   joinOrReconnect(ws: WebSocket): string | null {
     const openSlot = (["B", "A"] as ShipId[]).find((id) => !this.sockets.get(id));
-    if (!openSlot) return "room is full";
+    if (!openSlot) return "room is full — WATCH to spectate";
 
     this.attach(openSlot, ws);
     if (!this.started) {
@@ -88,11 +94,60 @@ export class Match {
       this.sendTranscript(other, "sys", "Opponent reconnected — fight's back on.");
       if (!this.sim.winner) this.start();
     }
+    // client "start" handling resets the watching readout — repopulate it
+    if (this.spectators.size > 0) this.broadcastSpectators();
     return null;
   }
 
   private attach(id: ShipId, ws: WebSocket): void {
     this.sockets.set(id, ws);
+  }
+
+  // First unused name from the pool wins; a freed callsign is reusable
+  // immediately. Exhausting the pool restarts it with -2, -3, ... suffixes.
+  private nextCallsign(): string {
+    const taken = new Set(this.spectators.values());
+    for (let round = 1; ; round++) {
+      for (const base of C.SPECTATOR_CALLSIGNS) {
+        const name = round === 1 ? base : `${base}-${round}`;
+        if (!taken.has(name)) return name;
+      }
+    }
+  }
+
+  addSpectator(ws: WebSocket): string {
+    const callsign = this.nextCallsign();
+    this.spectators.set(ws, callsign);
+    ws.send(
+      JSON.stringify({
+        type: "start",
+        role: "spectator",
+        callsign,
+        practice: this.practice,
+        terrain: this.sim.terrain,
+      })
+    );
+    this.broadcastSpectators();
+    return callsign;
+  }
+
+  isSpectator(ws: WebSocket): boolean {
+    return this.spectators.has(ws);
+  }
+
+  // Presence roster to everyone in the room. Deliberately silent: no
+  // transcript entry, no sound, no XO line — the HUD element is the telling.
+  private broadcastSpectators(): void {
+    const payload = JSON.stringify({
+      type: "spectators",
+      names: [...this.spectators.values()],
+    });
+    for (const ws of this.sockets.values()) {
+      if (ws && ws.readyState === ws.OPEN) ws.send(payload);
+    }
+    for (const ws of this.spectators.keys()) {
+      if (ws.readyState === ws.OPEN) ws.send(payload);
+    }
   }
 
   private sendStart(id: ShipId): void {
@@ -111,6 +166,11 @@ export class Match {
   }
 
   detach(ws: WebSocket): void {
+    if (this.spectators.has(ws)) {
+      this.spectators.delete(ws);
+      this.broadcastSpectators();
+      return; // spectators never pause or forfeit anything
+    }
     let left: ShipId | null = null;
     for (const [id, sock] of this.sockets) {
       if (sock === ws) {
@@ -139,6 +199,7 @@ export class Match {
       this.forfeitTimer = null;
       if (this.sim.winner) return;
       this.sim.winner = remaining;
+      const durationS = this.sim.tickCount / C.TICK_RATE_HZ;
       const ws2 = this.sockets.get(remaining);
       if (ws2 && ws2.readyState === ws2.OPEN) {
         ws2.send(
@@ -146,11 +207,12 @@ export class Match {
             type: "gameover",
             youWin: true,
             winner: remaining,
-            durationS: this.sim.tickCount / C.TICK_RATE_HZ,
+            durationS,
             forfeit: true,
           })
         );
       }
+      this.sendGameoverToSpectators(remaining, durationS, true);
     }, C.DISCONNECT_GRACE_S * 1000);
   }
 
@@ -205,6 +267,12 @@ export class Match {
         ws.send(JSON.stringify({ type: "snapshot", ...this.sim.snapshotFor(id) }));
       }
     }
+    if (this.spectators.size > 0) {
+      const snap = JSON.stringify({ type: "snapshot", ...this.sim.snapshotSpectator() });
+      for (const ws of this.spectators.keys()) {
+        if (ws.readyState === ws.OPEN) ws.send(snap);
+      }
+    }
     this.sim.clearFx();
   }
 
@@ -223,6 +291,20 @@ export class Match {
     for (const id of this.sockets.keys()) {
       this.sendStart(id);
     }
+    for (const [ws, callsign] of this.spectators) {
+      if (ws.readyState === ws.OPEN) {
+        ws.send(
+          JSON.stringify({
+            type: "start",
+            role: "spectator",
+            callsign,
+            practice: this.practice,
+            terrain: this.sim.terrain,
+          })
+        );
+      }
+    }
+    if (this.spectators.size > 0) this.broadcastSpectators();
     this.start();
   }
 
@@ -245,6 +327,7 @@ export class Match {
           );
         }
       }
+      this.sendGameoverToSpectators(ev.winner, durationS, false);
     } else if (ev.kind === "ui") {
       const ws = this.sockets.get(ev.ship);
       if (ws && ws.readyState === ws.OPEN) {
@@ -255,6 +338,14 @@ export class Match {
       for (const id of targets) {
         this.sendTranscript(id, "sys", ev.text, ev.alert);
       }
+    }
+  }
+
+  private sendGameoverToSpectators(winner: ShipId, durationS: number, forfeit: boolean): void {
+    // no youWin: the spectator client banners "SHIP {winner} WINS"
+    const payload = JSON.stringify({ type: "gameover", winner, durationS, forfeit });
+    for (const ws of this.spectators.keys()) {
+      if (ws.readyState === ws.OPEN) ws.send(payload);
     }
   }
 

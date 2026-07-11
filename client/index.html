@@ -50,7 +50,7 @@
       text-transform: uppercase; letter-spacing: 4px;
     }
     #lobby .join-row { display: flex; gap: 8px; }
-    #lobby .join-row button { min-width: 132px; }
+    #lobby .join-row button { min-width: 100px; }
     #lobby-status { color: var(--warn); min-height: 1.2em; }
 
     /* ---------- game ---------- */
@@ -136,6 +136,25 @@
       color: var(--dim); text-decoration: none; font-size: 12px; letter-spacing: 2px;
     }
     #banner-howto:hover { color: var(--accent); }
+
+    /* ---------- spectator presence (v4.2) ---------- */
+    /* players: quiet watcher roster, top-left (opposite the HUD panel) */
+    #watching {
+      position: absolute; top: 10px; left: 12px; display: none;
+      color: var(--dim); font-size: 11px; letter-spacing: 1px;
+      background: rgba(6, 9, 13, 0.55); padding: 3px 8px;
+      pointer-events: none;
+    }
+    /* spectators: own-callsign badge, top center of the map */
+    #spec-badge {
+      position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+      display: none; color: var(--accent); font-size: 12px; letter-spacing: 2px;
+      border: 1px solid var(--line); background: rgba(11, 17, 24, 0.7);
+      padding: 4px 14px; pointer-events: none;
+    }
+    /* spectators can't give orders or call rematches */
+    body.spectating #cmd-row { display: none; }
+    body.spectating .banner-buttons { display: none; }
   </style>
 </head>
 <body>
@@ -146,6 +165,7 @@
     <div class="join-row">
       <input id="join-code" maxlength="4" placeholder="CODE" autocomplete="off" />
       <button id="btn-join">JOIN</button>
+      <button id="btn-watch">WATCH</button>
     </div>
     <button id="btn-practice">PRACTICE</button>
     <button id="btn-howto">HOW TO PLAY</button>
@@ -155,6 +175,8 @@
   <div id="game">
     <div id="map-wrap">
       <canvas id="map"></canvas>
+      <div id="watching"></div>
+      <div id="spec-badge"></div>
       <div id="banner">
         <h2 id="banner-title"></h2>
         <div class="detail" id="banner-detail"></div>

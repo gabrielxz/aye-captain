@@ -1,4 +1,6 @@
+import { readFileSync } from "node:fs";
 import { Sim } from "../server/sim.js";
+import { validateCommand } from "../server/translator.js";
 import * as C from "../server/constants.js";
 
 const assert = (cond: boolean, msg: string) => {
@@ -145,5 +147,68 @@ const so = (params: any) => ({ verb: "set_standing_order", params } as any);
   const ev = sim.tick();
   assert(ev.some(e => e.kind === "reject" && /nest/.test((e as any).reason)), "nested order rejected");
   assert(a.standingOrders.length === 0, "nothing stored");
+}
+
+// 8. v4.3 §1 regression — "cut thrusters at 300 m/s" fired instantly at 114.
+// Root cause was the TRANSLATOR emitting lte for a rising threshold; this
+// block pins the evaluator half (correct ops behave, wrong op reproduces
+// the bug, unknown metrics never fire) and the schema example that anchors
+// the prompt fix.
+{
+  const sim = new Sim();
+  const a = sim.addShip("A", 0, 0, 0);
+  sim.addShip("B", 0, 200000, 180, true);
+  a.vy = 114; // the live repro state: under the threshold, climbing
+  const cut = (op: string) => so({
+    label: "cutoff",
+    condition: { metric: "own_speed", op, value: 300 },
+    actions: [{ verb: "set_thrust", params: { percent: 0 } }],
+  });
+
+  sim.enqueue("A", [cut("gte")]);
+  sim.tick();
+  let ev = sim.tick();
+  assert(!ev.some(e => e.kind === "notice" && /'cutoff' triggered/.test((e as any).text)), "gte 300 does NOT fire at 114 m/s");
+  a.vy = 305; // threshold reached
+  ev = sim.tick();
+  assert(ev.some(e => e.kind === "notice" && /'cutoff' triggered/.test((e as any).text)), "gte 300 fires once we reach 300");
+
+  // the buggy translation: lte on a rising threshold fires immediately
+  const sim2 = new Sim();
+  const b2 = sim2.addShip("A", 0, 0, 0);
+  sim2.addShip("B", 0, 200000, 180, true);
+  b2.vy = 114;
+  sim2.enqueue("A", [cut("lte")]);
+  sim2.tick();
+  const ev2 = sim2.tick();
+  assert(ev2.some(e => e.kind === "notice" && /'cutoff' triggered/.test((e as any).text)), "lte 300 at 114 m/s reproduces the instant-fire bug (why direction matters)");
+
+  // unknowable/unknown metrics evaluate FALSE — never undefined-truthy
+  const sim3 = new Sim();
+  const a3 = sim3.addShip("A", 0, 0, 0);
+  sim3.addShip("B", 0, 200000, 180, true);
+  (a3.standingOrders as any).push({
+    label: "ghost metric", condition: { metric: "own_velocity", op: "lte", value: 300 },
+    actions: [{ verb: "set_thrust", params: { percent: 0 } }], repeat: false, cooldown: 0,
+  });
+  const ev3 = sim3.tick();
+  assert(!ev3.some(e => e.kind === "notice" && /'ghost metric' triggered/.test((e as any).text)), "unknown metric evaluates false, never fires");
+  assert(a3.standingOrders.length === 1, "unknown-metric order stays armed (not consumed)");
+}
+
+// 9. the schema example anchoring the prompt fix stays a valid RISING order
+{
+  const schema = JSON.parse(readFileSync(new URL("../ship_command_schema.json", import.meta.url), "utf8"));
+  const ex = schema.example_translations.examples.find(
+    (e: any) => e.captain === "cut thrusters at 300 meters per second"
+  );
+  assert(!!ex, "verbatim playtest utterance is a schema example");
+  const cmd = ex.commands[0];
+  assert(cmd.params.condition.op === "gte", "example encodes the RISING threshold (gte)");
+  assert(validateCommand(cmd) !== null, "example passes the validator");
+  assert(/reach/i.test(cmd.acknowledgement), "readback states the trigger direction");
+  const rules: string[] = schema.llm_translator_rules.rules;
+  assert(rules.some(r => /DIRECTION of crossing/.test(r)), "prompt rule for threshold direction present");
+  assert(rules.some(r => /trigger direction/.test(r)), "prompt rule for spoken readback direction present");
 }
 console.log("done");

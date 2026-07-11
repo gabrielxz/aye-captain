@@ -466,6 +466,28 @@
         ]
       },
       {
+        "captain": "cut thrusters at 300 meters per second",
+        "commands": [
+          { "verb": "set_standing_order", "params": {
+              "label": "cutoff at 300",
+              "condition": { "metric": "own_speed", "op": "gte", "value": 300 },
+              "actions": [ { "verb": "set_thrust", "params": { "percent": 0 } } ],
+              "repeat": false
+          }, "acknowledgement": "Aye — cutting thrust when we reach three hundred." }
+        ]
+      },
+      {
+        "captain": "Sing out if propellant gets down to twenty-five percent",
+        "commands": [
+          { "verb": "set_standing_order", "params": {
+              "label": "propellant low",
+              "condition": { "metric": "propellant_percent", "op": "lte", "value": 25 },
+              "actions": [ { "verb": "show_vector", "params": {} } ],
+              "repeat": false
+          }, "acknowledgement": "I'll sing out if tanks drop below a quarter." }
+        ]
+      },
+      {
         "captain": "Damage report",
         "commands": [
           { "verb": "query", "params": { "topic": "damage_report" }, "acknowledgement": "" }
@@ -482,6 +504,8 @@
       "Compound utterances may emit up to 4 commands, executed in order.",
       "Never invent game state. Use query for anything the captain asks about; the acknowledgement for a query is written AFTER the server returns the snapshot.",
       "Conditional phrasing ('if', 'when', 'as soon as', 'the moment') always becomes set_standing_order, never immediate execution.",
+      "Numeric thresholds encode the DIRECTION of crossing, resolved against CURRENT SHIP STATE: if the current value is below the threshold and climbing toward it ('at X', 'when we reach/hit X'), the trigger is gte; if above and falling ('down to X', 'below X'), it is lte/lt. Never emit an operator the current value already satisfies unless the captain clearly wants immediate action.",
+      "Standing-order acknowledgements MUST state the trigger direction aloud — 'when we REACH three hundred' vs 'if we DROP BELOW three hundred' — so a wrong guess is audible at registration, not discovered mid-burn.",
       "Vague quantities get sensible defaults, stated aloud: 'slow down' -> thrust 25%, 'ease off' -> reduce by ~25 points, 'hard about' -> relative 180.",
       "Acknowledgements are at most 12 words. Every word is spoken aloud by the ship's voice — brevity is a feature.",
       "Continuous tracking ('keep facing him', 'stay pointed at him') is not a helm capability: execute a single set_heading target snapshot and say so — you can point the ship on command; the captain flies the ship.",

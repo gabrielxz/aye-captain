@@ -2259,6 +2259,40 @@ export class Sim {
     };
   }
 
+  // Omniscient referee view for spectators (v4.2): both ships in full
+  // detail, all ordnance, all fx — fog of war deliberately does not apply.
+  // Must NEVER be routed to a player socket (leak test in
+  // tests/spectator.test.ts). Ordnance `own` here means "belongs to ship A"
+  // so the client's existing two-color rendering maps A=own-tint, B=enemy.
+  snapshotSpectator(): Record<string, unknown> {
+    return {
+      tick: this.tickCount,
+      spectator: true,
+      ships: [...this.ships.values()].map((s) => ({
+        id: s.id,
+        x: s.x,
+        y: s.y,
+        vx: s.vx,
+        vy: s.vy,
+        facing: s.facing,
+        thrustOut: effectiveThrust(s),
+        hull: s.hull,
+        hullMax: s.isDrone ? C.DRONE_HULL_POINTS : C.HULL_POINTS,
+        drone: s.isDrone,
+      })),
+      contacts: [],
+      ghost: null,
+      missiles: this.missiles.map((m) => ({
+        id: m.id, x: m.x, y: m.y, vx: m.vx, vy: m.vy, burning: m.burning,
+        own: m.owner === "A",
+      })),
+      decoys: this.decoys.map((d) => ({
+        id: d.id, x: d.x, y: d.y, vx: d.vx, vy: d.vy, own: d.owner === "A",
+      })),
+      fx: this.fx,
+    };
+  }
+
   // Called by the match after all per-player snapshots are broadcast.
   clearFx(): void {
     this.fx = [];

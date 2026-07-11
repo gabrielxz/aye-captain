@@ -83,8 +83,12 @@ function clampZoom(z) {
 
 function ensureZoom() {
   if (camera.zoom === 0 && canvas.clientWidth > 0) {
-    // opening view: local space around own ship, ~120 km across
-    camera.zoom = clampZoom(Math.min(canvas.clientWidth, canvas.clientHeight) / 120000);
+    // opening view: spectators get the whole region (referee framing);
+    // players get local space around own ship, ~120 km across
+    camera.zoom =
+      state.role === "spectator"
+        ? zoomBounds().min
+        : clampZoom(Math.min(canvas.clientWidth, canvas.clientHeight) / 120000);
   }
 }
 
@@ -504,9 +508,12 @@ function drawGrid() {
   ctx.stroke();
 }
 
-// Range rings around own ship at 10/50/100 km, labeled, fading out when
-// they're too small to matter or bigger than the view.
-const RANGE_RINGS_M = [10000, 50000, 100000];
+// Single range ring around own ship at 50 km — the map's only ruler, and
+// (post v4.3 sensor rebase) roughly where a dark ship gets spotted. Kept
+// labeled and kept AS AN ARRAY so a future playtest can re-add or delete
+// rings in one line (v4.3 §4). The 10 and 100 km rings read as mystery
+// circles in the playtest and are gone.
+const RANGE_RINGS_M = [50000];
 function drawRangeRings(you) {
   const span = Math.max(canvas.clientWidth, canvas.clientHeight);
   for (const r of RANGE_RINGS_M) {
@@ -636,7 +643,9 @@ function draw() {
   drawFx();
   drawOrdnance();
 
-  if (you) {
+  if (state.lastSnap?.spectator) {
+    drawSpectatorShips();
+  } else if (you) {
     drawShip(you, "own", {
       thrust: state.lastSnap.you.thrustOut ?? state.lastSnap.you.thrust,
       hull: state.lastSnap.you.hull,
@@ -650,9 +659,11 @@ function draw() {
   drawInset(you);
 }
 
-// The captain's plotting table: bearing and range from own ship to the
-// cursor. Makes blind fire, contact callouts, and dust-cloud speculation
-// speakable. Always on while the pointer is over the map.
+// The captain's plotting table: bearing from own ship to the cursor. Makes
+// blind fire, contact callouts, and dust-cloud speculation speakable.
+// Always on while the pointer is over the map. (v4.3: range dropped —
+// bearing is the speakable currency; range-to-empty-space invited false
+// precision. The 50 km ring is the distance ruler.)
 function drawCursorReadout(you) {
   if (!hover || !you || camera.zoom === 0) return;
   const wx = camera.x + (hover.x - canvas.clientWidth / 2) / camera.zoom;
@@ -660,8 +671,7 @@ function drawCursorReadout(you) {
   const dx = wx - you.x;
   const dy = wy - you.y;
   const brg = String(Math.round(((Math.atan2(dx, dy) * 180) / Math.PI + 360) % 360)).padStart(3, "0");
-  const rangeKm = Math.hypot(dx, dy) / 1000;
-  const label = `BRG ${brg} · ${rangeKm < 100 ? rangeKm.toFixed(1) : Math.round(rangeKm)} km`;
+  const label = `BRG ${brg}`;
   ctx.font = "11px monospace";
   const w = ctx.measureText(label).width;
   let tx = hover.x + 16;
@@ -672,6 +682,24 @@ function drawCursorReadout(you) {
   ctx.fillRect(tx - 4, ty - 11, w + 8, 15);
   ctx.fillStyle = "#8fa8bf";
   ctx.fillText(label, tx, ty);
+}
+
+// Spectator (v4.2): both ships in full detail — A in own-tint, B in enemy
+// tint, matching the ordnance coloring the server pre-baked into `own`.
+function drawSpectatorShips() {
+  for (const s of state.lastSnap.ships ?? []) {
+    const ent = interpolate((sn) => (sn.ships ?? []).find((k) => k.id === s.id) ?? null);
+    if (!ent) continue;
+    drawShip(ent, s.id === "A" ? "own" : "enemy", {
+      thrust: s.thrustOut ?? 0,
+      hull: s.hull,
+      hullMax: s.hullMax ?? 100,
+    });
+    const [sx, sy] = worldToScreen(ent.x, ent.y);
+    ctx.fillStyle = s.id === "A" ? COLORS.own : COLORS.enemy;
+    ctx.font = "10px monospace";
+    ctx.fillText(s.id, sx + MIN_SHIP_PX / 2 + 5, sy + 3);
+  }
 }
 
 // Contacts by tier: faint = a position smudge with no vector; track = full
@@ -796,6 +824,15 @@ function drawInset(you) {
     ctx.fillStyle = COLORS.own;
     ctx.beginPath();
     ctx.arc(ox, oy, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // spectator: both ships, same colors as the main view
+  for (const s of state.lastSnap.ships ?? []) {
+    const [px, py] = toInset(s.x, s.y);
+    ctx.fillStyle = s.id === "A" ? COLORS.own : COLORS.enemy;
+    ctx.beginPath();
+    ctx.arc(px, py, 3, 0, Math.PI * 2);
     ctx.fill();
   }
 

@@ -27,9 +27,10 @@ export function initUI() {
   document.getElementById("btn-create").addEventListener("click", () => {
     send({ type: "create" });
   });
-  document.getElementById("btn-join").addEventListener("click", joinMatch);
+  document.getElementById("btn-join").addEventListener("click", () => joinMatch(false));
+  document.getElementById("btn-watch").addEventListener("click", () => joinMatch(true));
   document.getElementById("join-code").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") joinMatch();
+    if (e.key === "Enter") joinMatch(false);
   });
   document.getElementById("btn-practice").addEventListener("click", () => {
     send({ type: "practice" });
@@ -76,6 +77,7 @@ export function initUI() {
   // is global either way — see initVoice.
   document.addEventListener("keydown", (e) => {
     if (!gameEl.classList.contains("active")) return;
+    if (state.role === "spectator") return; // no command box to focus
     if (document.activeElement === cmdEl) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === "Enter" || e.key === "`") {
@@ -120,6 +122,7 @@ function initVoice() {
 
   document.addEventListener("keydown", (e) => {
     if (!gameEl.classList.contains("active")) return;
+    if (state.role === "spectator") return; // spectators don't talk to the XO
     if (e.code !== "Space" || e.ctrlKey || e.metaKey || e.altKey) return;
     if (voice.listening) {
       e.preventDefault(); // swallow key-repeat so it doesn't type over interim text
@@ -145,13 +148,41 @@ export function showLobbyStatus(text) {
   document.getElementById("lobby-status").textContent = text;
 }
 
-function joinMatch() {
+function joinMatch(spectate) {
   const code = document.getElementById("join-code").value.trim().toUpperCase();
   if (code.length !== 4) {
     showLobbyStatus("room code is 4 letters");
     return;
   }
-  send({ type: "join", code });
+  send({ type: spectate ? "spectate" : "join", code });
+}
+
+// ---------- spectator presence (v4.2) ----------
+
+// Player-side roster, quiet by design: collapses to a count past
+// SPECTATOR_NAMES_SHOWN_MAX (3), gone entirely when nobody is watching.
+export function updateWatching(names) {
+  const el = document.getElementById("watching");
+  if (!names || names.length === 0) {
+    el.style.display = "none";
+    return;
+  }
+  el.textContent = names.length > 3 ? `WATCHING: ${names.length}` : `WATCHING: ${names.join(", ")}`;
+  el.style.display = "block";
+}
+
+// Own-callsign badge on the spectator's screen; also flips the body class
+// that hides the command row and rematch buttons.
+export function setSpectator(callsign) {
+  const badge = document.getElementById("spec-badge");
+  if (callsign) {
+    badge.textContent = `SPECTATOR — ${callsign}`;
+    badge.style.display = "block";
+    document.body.classList.add("spectating");
+  } else {
+    badge.style.display = "none";
+    document.body.classList.remove("spectating");
+  }
 }
 
 const WHO_LABEL = { capt: "CAPT", xo: "XO", sys: "*" };

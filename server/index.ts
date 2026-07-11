@@ -129,6 +129,18 @@ wss.on("connection", (ws: WebSocket) => {
         matchByWs.set(ws, match);
         break;
       }
+      case "spectate": {
+        if (matchByWs.has(ws)) return;
+        const code = String(msg.code ?? "").toUpperCase();
+        const match = rooms.get(code);
+        if (!match) {
+          ws.send(JSON.stringify({ type: "error", message: `no room '${code}'` }));
+          return;
+        }
+        match.addSpectator(ws);
+        matchByWs.set(ws, match);
+        break;
+      }
       case "utterance": {
         const match = matchByWs.get(ws);
         if (match && typeof msg.text === "string") {
@@ -139,6 +151,7 @@ wss.on("connection", (ws: WebSocket) => {
       case "rematch": {
         const match = matchByWs.get(ws);
         if (!match || !match.sim.winner) break;
+        if (match.isSpectator(ws)) break; // only the players call rematch
         if (!match.canRematch()) {
           ws.send(JSON.stringify({ type: "error", message: "opponent is gone — no rematch" }));
           break;

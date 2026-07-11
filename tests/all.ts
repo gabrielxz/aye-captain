@@ -14,3 +14,5 @@ import "./lock.test.js";
 import "./propellant.test.js";
 import "./orders.test.js";
 import "./zone.test.js";
+import "./spectator.test.js";
+import "./welcome.test.js";

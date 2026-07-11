@@ -27,8 +27,11 @@ export const HULL_POINTS = 100;
 
 // Signature & detection: DETECTION IS THE GAME. Drive plumes are visible
 // across enormous distances; going dark is the only stealth.
-// ship signature = SIG_BASE + EFFECTIVE thrust% (10..110), plus spikes.
-export const SIG_BASE = 10; // a drifting dark ship
+// ship signature = SIG_BASE + EFFECTIVE thrust% (30..130), plus spikes.
+// v4.3 rebase: SIG_BASE 10 -> 30, SENSOR_BASE_M 165 -> 180 km — playtest
+// showed stealth was FREE (dark = off-switch); dark is now an edge: a
+// drifter is still contact-visible at ~54 km, just not lockable until ~32.
+export const SIG_BASE = 30; // a drifting dark ship
 export const SIG_SPIKE_LAUNCH = 150; // missile launch flash (replaces the flat reveal)
 export const SIG_SPIKE_LAUNCH_S = 5;
 export const SIG_SPIKE_PDC = 50; // PDC firing (used by v4 §6)
@@ -36,8 +39,8 @@ export const SIG_SPIKE_PDC_S = 3;
 export const MISSILE_SIG_BURNING = 80;
 export const MISSILE_SIG_COASTING = 8; // a ballistic torpedo is nearly invisible. Intended. Terrifying.
 // detection_range = SENSOR_BASE_M x (signature / 100), LOS permitting
-// -> full burn (110) seen at ~181 km; 50% cruise at ~99 km; dark drift (10) at ~16.5 km
-export const SENSOR_BASE_M = 165000;
+// -> full burn (130) seen at ~234 km; 50% cruise (80) at ~144 km; dark drift (30) at ~54 km
+export const SENSOR_BASE_M = 180000;
 // Contact tiers, as fractions of the computed detection range:
 export const TIER_FAINT_FRAC = 1.0; // approximate position only, no vector
 export const TIER_TRACK_FRAC = 0.6; // true position + velocity, continuous
@@ -93,21 +96,23 @@ export const MISSILE_LAUNCH_DELAY_TICKS = 2; // flies straight, no seeking, duri
 export const MISSILE_ACQ_CONE_DEG = 60; // half-angle of seeker cone
 // Seekers use the standard detection formula with their own (weak) base:
 // seeker detection = MISSILE_SEEKER_BASE_M x target signature / 100, LOS
-// required -> full-burn ship (110) at ~44 km; dark drifter (10) at ~4 km.
+// required -> full-burn ship (130) at ~52 km; dark drifter (30) at ~12 km.
 // Blind fire is a flushing tool, not a sniper rifle.
 export const MISSILE_SEEKER_BASE_M = 40000;
 export const MISSILE_PROX_FUSE_M = 200;
 export const MISSILE_DAMAGE = 35;
 
-// Decoys. Signature sits BETWEEN cruise and full burn (v4.1 retune): a ship
-// at effective thrust <~80% is out-shone by its decoy (spoof works); hotter
+// Decoys. Signature sits BETWEEN cruise and full burn (LINKED to SIG_BASE:
+// must stay above SIG_BASE + ~50 and below SIG_BASE + 100): a ship at
+// effective thrust <~70% is out-shone by its decoy (spoof works); hotter
 // out-shines it (spoof fails). Doctrine: "break the lock, throttle down,
 // decoy." Side effect to preserve: a drifting decoy reads as an ordinary
-// faint/track contact to enemy SHIP sensors (~148 km) — strategic deception;
-// it resolves as a decoy only at ID tier.
+// faint/track contact to enemy SHIP sensors (~180 km) — strategic deception;
+// it resolves as a decoy only at ID tier. (v4.3 retune 90 -> 100 with the
+// SIG_BASE rebase.)
 export const DECOY_SUPPLY = 4;
 export const DECOY_LIFETIME_S = 20;
-export const DECOY_SIGNATURE = 90;
+export const DECOY_SIGNATURE = 100;
 export const DECOY_DRIFT_MPS = 10; // small random drift added on ejection
 
 // Standing orders
@@ -149,6 +154,13 @@ export const DRONE_HULL_POINTS = 60;
 export const DRONE_THRUST_PERCENT = 50; // signature as a ship at 50% thrust
 export const DRONE_FIRES_BACK = true; // reduced aggression: locks + one missile at a time
 export const DRONE_MISSILE_COOLDOWN_S = 90; // long pause between drone shots
+
+// Spectators (v4.2): cosmetic identity only — no persistence, first-come.
+// When the pool is exhausted, names repeat with -2, -3, ... suffixes.
+export const SPECTATOR_CALLSIGNS = [
+  "Ghost", "Watcher", "Echo", "Specter", "Shade", "Drifter", "Raven", "Static",
+];
+export const SPECTATOR_NAMES_SHOWN_MAX = 3; // player HUD lists names up to this, then collapses to a count
 
 // LLM
 export const LLM_MODEL = "claude-haiku-4-5-20251001";

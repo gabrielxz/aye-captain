@@ -1,12 +1,13 @@
 // ws handling + client state store
-import { startRenderLoop, bigBoomAt, showVector } from "./render.js";
-import { initUI, addTranscript, updateHUD, showLobbyStatus, enterGame, showBanner, hideBanner } from "./ui.js";
+import { startRenderLoop, bigBoomAt, showVector, camera } from "./render.js";
+import { initUI, addTranscript, updateHUD, showLobbyStatus, enterGame, showBanner, hideBanner, updateWatching, setSpectator } from "./ui.js";
 import * as audio from "./audio.js";
 
 export const state = {
   config: null, // {zoneRadius, stt} from server hello
   terrain: null, // {seed, rocks[], dust[]} — arrives with each match start
-  role: null, // "A" | "B"
+  role: null, // "A" | "B" | "spectator"
+  callsign: null, // spectator callsign (cosmetic, server-assigned)
   practice: false,
   prevSnap: null, // previous snapshot (for interpolation)
   lastSnap: null, // latest snapshot
@@ -45,15 +46,36 @@ function handleMessage(msg) {
       break;
     case "start":
       state.role = msg.role;
+      state.callsign = msg.callsign ?? null;
       state.practice = !!msg.practice;
       state.terrain = msg.terrain ?? null;
       state.prevSnap = null;
       state.lastSnap = null;
       state.fxBuffer = [];
       state.gameOver = false;
+      updateWatching([]); // fresh roster arrives right behind the start
+      setSpectator(msg.role === "spectator" ? msg.callsign : null);
+      if (msg.role === "spectator") {
+        // referee framing: whole region, nothing to follow
+        camera.follow = false;
+        camera.x = 0;
+        camera.y = 0;
+        camera.zoom = 0; // recomputed to the full-region view on the next frame
+      }
       hideBanner();
       enterGame();
-      addTranscript("sys", msg.practice ? "practice mode — drone contact inbound" : `you are ship ${msg.role}`);
+      addTranscript(
+        "sys",
+        msg.role === "spectator"
+          ? `spectating as ${msg.callsign} — the room sees your callsign`
+          : msg.practice
+            ? "practice mode — drone contact inbound"
+            : `you are ship ${msg.role}`
+      );
+      break;
+    case "spectators":
+      // silent by design: no sound, no transcript line, no XO mention
+      updateWatching(msg.names ?? []);
       break;
     case "snapshot": {
       const now = performance.now();
@@ -74,21 +96,33 @@ function handleMessage(msg) {
     case "gameover": {
       state.gameOver = true;
       audio.stopContinuous();
+      const snap = state.lastSnap;
+      const mins = Math.floor(msg.durationS / 60);
+      const secs = Math.round(msg.durationS % 60);
+      const timeLine = `match time ${mins}:${String(secs).padStart(2, "0")}`;
+      if (state.role === "spectator") {
+        audio.sfxBoom(true, false);
+        const loser = (snap?.ships ?? []).find((s) => s.id !== msg.winner);
+        if (loser) bigBoomAt(loser.x, loser.y);
+        showBanner(
+          `SHIP ${msg.winner} WINS`,
+          msg.forfeit ? "opponent never came back — win by forfeit" : timeLine
+        );
+        addTranscript("sys", `ship ${msg.winner} wins — match over`);
+        break;
+      }
       audio.sfxBoom(true, !msg.youWin);
       // terminal explosion on the losing ship
-      const snap = state.lastSnap;
       if (snap) {
         const contact = (snap.contacts ?? [])[0];
         if (!msg.youWin && snap.you) bigBoomAt(snap.you.x, snap.you.y);
         else if (msg.youWin && contact) bigBoomAt(contact.x, contact.y);
       }
-      const mins = Math.floor(msg.durationS / 60);
-      const secs = Math.round(msg.durationS % 60);
       showBanner(
         msg.youWin ? "VICTORY" : "SHIP LOST",
         msg.forfeit
           ? "opponent never came back — win by forfeit"
-          : `match time ${mins}:${String(secs).padStart(2, "0")}`
+          : timeLine
       );
       addTranscript("sys", msg.youWin ? "Enemy ship destroyed. Well fought, Captain." : "Hull breach — we're done. Abandon ship.", !msg.youWin);
       break;
@@ -167,6 +201,17 @@ function soundFromSnapshot(snap) {
 
 const TUBE_LABEL = { ready: "RDY", reloading: null, empty: "—" };
 function updateHUDFromSnapshot(snap) {
+  if (snap.spectator) {
+    // referee panel: just the two hulls (everything else is on the map)
+    updateHUD(
+      (snap.ships ?? []).map((s) => ({
+        label: `SHIP ${s.id} HULL`,
+        value: `${s.hull}/${s.hullMax}${s.drone ? " (drone)" : ""}`,
+        cls: s.hull <= s.hullMax * 0.35 ? "alert" : s.hull <= s.hullMax * 0.65 ? "warn" : "",
+      }))
+    );
+    return;
+  }
   const you = snap.you;
   if (!you) return;
   const tanksDry = (you.propellant ?? 0) <= 0;

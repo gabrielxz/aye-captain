@@ -149,6 +149,9 @@ const STOCK_LINES = [
   "Back inside the shroud, Captain. We're under cover again.",
   "Enemy ship destroyed. Well fought, Captain.",
   "Hull breach — we're done. Abandon ship.",
+  // v4.3: match-start welcomes
+  "Enemy ship is out there somewhere. Good hunting, Captain.",
+  "Practice range is hot, Captain. Drone's out there somewhere.",
 ];
 
 // Sequential on purpose: ElevenLabs free/low tiers have tight concurrency

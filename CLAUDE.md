@@ -6,10 +6,12 @@
 language. The captain types English; Claude Haiku translates each utterance
 into schema-JSON commands; an authoritative Node server executes them.
 `ship_command_schema.json` is the LLM<->server contract. **Where they
-disagree on constants, the handoff specs (HANDOFF.md, HANDOFF-v4.md) win.**
+disagree on constants, the handoff specs win (HANDOFF.md, HANDOFF-v4.md,
+newest addendum last: HANDOFF-v4.1.md, HANDOFF-v4.3.md).**
 
-**Status: v4 + v4.1 built (specs: `HANDOFF-v4.md` + `HANDOFF-v4.1.md`,
-which WINS where they conflict) — NOT yet deployed.** Detection-warfare
+**Status: v4 + v4.1 DEPLOYED to production 2026-07-11 (specs:
+`HANDOFF-v4.md` + `HANDOFF-v4.1.md`, which WINS where they conflict).**
+Detection-warfare
 overhaul on top of v3: 250 km region, 3 km/s ships, 10 Hz physics substeps
 + swept collision, signature-scaled sensing with contact tiers
 (faint/track/id), seeded terrain (rocks block LOS + are solid; dust blinds
@@ -17,9 +19,12 @@ both ways), edge gravity instead of a wall, 6 km/s burn-and-coast
 torpedoes with UPLINKED/AUTONOMOUS guidance + blind bearing fire,
 sensor-slaved PDCs replacing the laser, decoys doubling as fake contacts,
 full-stop maneuver, vector overlay + cursor bearing readout, camera
-(zoom/pan/follow/inset). 280 headless assertions in `tests/`. Production
-still runs v3 at https://aye-captain.fly.dev; this ships as ONE release
-(constants desync old clients mid-match).
+(zoom/pan/follow/inset). 300+ headless assertions in `tests/`. Live at
+https://aye-captain.fly.dev; Gabriel's online playtest is the open
+milestone item (TODO.md has the watch-list — do not pre-tune its knobs).
+v4.2 (spectator presence) and v4.3 (`HANDOFF-v4.3.md`: standing-order
+threshold fix, XO welcomes, bearing-only readout, single 50 km ring,
+sensor rebase SIG_BASE 30 / SENSOR_BASE 180 km) ship together.
 
 ## Commands
 
@@ -141,6 +146,13 @@ Note: on this machine's rootless Docker, `-p` port publishing doesn't route
   rejection; raw output is logged whenever parsing fails or drops elements.
 - v4.1: DECOY_SIGNATURE retuned 150 -> 90 after the flag on the 150 value —
   throttle discipline is back ("break the lock, throttle down, decoy").
+  v4.3 re-linked it to the SIG_BASE rebase: 90 -> 100 (spoof works below
+  ~70% effective thrust; the relationship comment lives in constants.ts).
+- v4.3: stealth is taxed, not removed — SIG_BASE 10 -> 30, SENSOR_BASE
+  165 -> 180 km ("stealth was free" playtest finding). Threshold standing
+  orders encode crossing DIRECTION resolved against live state, and XO
+  readbacks must speak it; the verbatim bug utterance is a schema example.
+  Deferred (TODO.md): ramscoop regen, active ping — do not build yet.
 - v4.1: the 2 s seeker-reacquire-then-permanently-ballistic rule was
   REMOVED: a target-less autonomous bird holds course and may acquire
   later (blind fire needs long candidate-less flight); only dry fuel ends
@@ -159,6 +171,14 @@ Note: on this machine's rootless Docker, `-p` port publishing doesn't route
   (v4.1 §7 verification).
 - Explosion fx are shown within SENSOR_BASE_M + LOS regardless of tier
   (bright events), a deliberate mild softening of fog.
+- v4.2: spectators (lobby WATCH + room code) get the OMNISCIENT referee
+  view via `snapshotSpectator()` — fog deliberately does not apply, so a
+  second-screen spectator is a wallhack; flagged in the handbook as
+  cheating, not prevented. Identity is a cosmetic server-assigned callsign
+  (pool + -2 suffixes, first-come reuse). Presence is silent by design: a
+  corner WATCHING readout only — no sound, no transcript, no XO line. In
+  spectator snapshots, ordnance `own` means "ship A's" (reuses the client's
+  two-color rendering).
 
 ## Testing conventions
 
@@ -175,5 +195,7 @@ translator-path checks. Two tabs for PvP.
 ## v4 non-goals (HANDOFF-v4.md §10 — do not build)
 
 More than 2 players per room. Ship archetypes. Kinetic weapons/railgun.
-Probes. Player-to-player comms. Spectator client. Contact designations
-(Alpha/Bravo). Terrain gravity. Subsystem damage. Manual PDC aiming.
+Probes. Player-to-player comms. Contact designations (Alpha/Bravo).
+Terrain gravity. Subsystem damage. Manual PDC aiming. (A spectator client
+WAS a v4 non-goal but was built in v4.2 by explicit request — watch-only,
+no chat, no controls.)
