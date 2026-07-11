@@ -34,6 +34,8 @@ const VECTOR_SECONDS = 10; // the vector line = this much travel at current velo
 const MIN_VECTOR_PX = 34; // legibility floor; clears the 22px hull clamp
 const DRIFT_STUB_PX = 26; // drift marker radius from hull center; just outside MIN_SHIP_PX
 const DRIFT_MIN_SPEED_MPS = 5; // below this: draw nothing (matches full_stop's cutoff)
+const SHAKE_MAX_PX = 7; // camera shake on own-hull hits
+const SHAKE_DECAY_MS = 320;
 
 // ---------- sprite loading (SVG text -> tinted blob -> Image) ----------
 
@@ -731,6 +733,13 @@ function draw() {
   ctx.fillRect(0, 0, w, h);
   if (camera.zoom === 0) return; // canvas not sized yet
 
+  const shakeK = Math.exp(-(now - shakeAt) / SHAKE_DECAY_MS);
+  const shaking = shakeK > 0.02;
+  if (shaking) {
+    ctx.save();
+    ctx.translate((Math.random() - 0.5) * 2 * shakeMag * shakeK, (Math.random() - 0.5) * 2 * shakeMag * shakeK);
+  }
+
   drawStars();
   drawGrid();
   if (state.config) {
@@ -758,6 +767,7 @@ function draw() {
   drawDriftMarker(you);
   drawVectorOverlay(you);
   drawDustShroud();
+  if (shaking) ctx.restore();
   drawCursorReadout(you);
   drawInset(you);
 }
@@ -1239,6 +1249,14 @@ function drawFx() {
 // Big terminal explosion at a world position (used on game over).
 export function bigBoomAt(x, y) {
   state.fxBuffer.push({ fx: { type: "boom", big: true, x, y }, at: performance.now() });
+}
+
+// v4.7 §4.5: camera shake on hits WE took. Exponential decay, short.
+let shakeAt = -Infinity;
+let shakeMag = 0;
+export function kickShake(big) {
+  shakeAt = performance.now();
+  shakeMag = big ? SHAKE_MAX_PX : SHAKE_MAX_PX * 0.6;
 }
 
 export function startRenderLoop() {

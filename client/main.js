@@ -1,5 +1,5 @@
 // ws handling + client state store
-import { startRenderLoop, bigBoomAt, showVector, setOverlay, resetOverlays, camera } from "./render.js";
+import { startRenderLoop, bigBoomAt, showVector, setOverlay, resetOverlays, kickShake, camera } from "./render.js";
 import { initUI, addTranscript, updateHUD, showLobbyStatus, enterGame, showBanner, hideBanner, updateWatching, setSpectator } from "./ui.js";
 import * as audio from "./audio.js";
 
@@ -123,6 +123,7 @@ function handleMessage(msg) {
         break;
       }
       audio.sfxBoom(true, !msg.youWin);
+      if (!msg.youWin) kickShake(true);
       // terminal explosion on the losing ship
       if (snap) {
         const contact = (snap.contacts ?? [])[0];
@@ -236,10 +237,12 @@ function soundFromSnapshot(snap) {
     }
     // decoy deployed (ours)
     if ((you.decoys ?? 0) < prevAudio.decoys) audio.sfxDecoy();
-    // any hull drop we take: rock hits crunch, weapons fire booms
+    // any hull drop we take: rock hits crunch, weapons fire booms — and
+    // either way the camera feels it (v4.7 §4.5)
     if (you.hull < prevAudio.hull) {
       if (prevAudio.collisionWarning !== null) audio.sfxCrunch();
       else audio.sfxBoom(false, true);
+      kickShake(prevAudio.hull - you.hull >= 20);
     }
   }
   // collision klaxon while an impact is projected inside 10 s
