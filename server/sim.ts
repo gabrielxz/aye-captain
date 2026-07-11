@@ -2748,8 +2748,13 @@ export class Sim {
         }
       }
       if (deadSlugs.has(sl.id)) continue;
+      // muzzle guard: same-owner ordnance is exempt for the slug's first
+      // second — anything launched the same tick co-spawns at the ship's
+      // position and would be swatted at range zero. Downrange (6+ km
+      // out), your own decoy/probe is honestly hittable — no IFF.
+      const muzzle = (owner: ShipId) => sl.age < 1 && owner === sl.owner;
       for (const m of this.missiles) {
-        if (deadMissiles.has(m.id)) continue;
+        if (deadMissiles.has(m.id) || muzzle(m.owner)) continue;
         const dMin = segmentMinDist(
           sl.prevX, sl.prevY, sl.x, sl.y,
           m.prevX, m.prevY, m.x, m.y
@@ -2760,7 +2765,7 @@ export class Sim {
         }
       }
       for (const d of this.decoys) {
-        if (deadDecoys.has(d.id)) continue;
+        if (deadDecoys.has(d.id) || muzzle(d.owner)) continue;
         const dMin = segmentMinDist(
           sl.prevX, sl.prevY, sl.x, sl.y,
           d.x - d.vx * dt, d.y - d.vy * dt, d.x, d.y
@@ -2773,7 +2778,7 @@ export class Sim {
         }
       }
       for (const pr of this.probes) {
-        if (deadProbes.has(pr.id)) continue;
+        if (deadProbes.has(pr.id) || muzzle(pr.owner)) continue;
         const dMin = segmentMinDist(
           sl.prevX, sl.prevY, sl.x, sl.y,
           pr.prevX, pr.prevY, pr.x, pr.y

@@ -104,6 +104,29 @@ const run = (sim: Sim, ticks: number): SimEvent[] => {
   assert(b.hull === 75, `...and carries on into the hull behind it (hull ${b.hull})`);
 }
 
+// 5b. muzzle guard: rail + probe ordered the SAME tick co-spawn at the
+// ship — the slug must not swat its own co-launch (browser-found bug);
+// a same-owner probe well downrange is still honestly hittable
+{
+  const sim = new Sim();
+  const a = sim.addShip("A", 0, 0, 0);
+  quiet(sim);
+  sim.enqueue("A", [
+    { verb: "fire_railgun", params: { mode: "bearing", bearing_degrees: 0 } },
+    { verb: "launch_probe", params: { bearing_degrees: 0 } },
+  ]);
+  run(sim, 2);
+  assert((sim as any).probes.length === 1, "same-tick probe survives its own rail muzzle");
+  // a parked own probe far downrange is fair game (no IFF on slugs)
+  const sim2 = new Sim();
+  sim2.addShip("A", 0, 0, 0);
+  quiet(sim2);
+  (sim2 as any).probes.push({ id: 950, owner: "A", team: null, idx: 1, bearing: 0, x: 0, y: 20000, prevX: 0, prevY: 20000, vx: 0, vy: 0, age: 60 });
+  sim2.enqueue("A", [{ verb: "fire_railgun", params: { mode: "bearing", bearing_degrees: 0 } }]);
+  run(sim2, 5);
+  assert((sim2 as any).probes.length === 0, "your own probe downrange is still hittable — no IFF");
+}
+
 // 6. inherited velocity: a shooter sliding sideways imparts its drift
 {
   const sim = new Sim();
