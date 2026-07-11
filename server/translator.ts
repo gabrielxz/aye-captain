@@ -202,6 +202,19 @@ export function validateCommand(raw: unknown, nested = false): Command | null {
       if (typeof p.contact !== "string" || !CONTACT_REF.test(p.contact)) return null;
       return out({ contact: p.contact });
     }
+    case "transmit": {
+      if (p.channel !== "broadcast" && p.channel !== "tightbeam") return null;
+      if (typeof p.message !== "string" || p.message.trim().length === 0) return null;
+      const clean: Record<string, unknown> = {
+        channel: p.channel,
+        message: p.message.trim().slice(0, 140),
+      };
+      if (p.channel === "tightbeam") {
+        if (typeof p.recipient !== "string" || !CONTACT_REF.test(p.recipient)) return null;
+        clean.recipient = p.recipient;
+      }
+      return out(clean);
+    }
     case "launch_probe": {
       const clean: Record<string, unknown> = {};
       if (p.bearing_degrees !== undefined) {

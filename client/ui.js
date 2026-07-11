@@ -256,7 +256,7 @@ export function setSpectator(callsign) {
 
 // xo-note = a reply-only line: the XO talking, NOT confirming an executed
 // command — rendered distinct so conversation can't masquerade as action
-const WHO_LABEL = { capt: "CAPT", xo: "XO", "xo-note": "XO (note)", sys: "*" };
+const WHO_LABEL = { capt: "CAPT", xo: "XO", "xo-note": "XO (note)", sys: "*", comms: "COMMS" };
 
 export function addTranscript(who, text, alert = false) {
   const div = document.createElement("div");

@@ -19,6 +19,7 @@
             "fire_missile",
             "fire_railgun",
             "launch_probe",
+            "transmit",
             "reload_tubes",
             "deploy_decoy",
             "maneuver",
@@ -126,6 +127,21 @@
         "bearing_degrees": { "type": "number", "description": "Launch bearing. Omitted = out the nose." }
       },
       "examples": [ {}, { "bearing_degrees": 90 } ]
+    },
+
+    "transmit": {
+      "description": "Send a ship-to-ship message. channel 'broadcast': EVERY captain receives it, and transmitting flares a COMMS SPIKE — all captains get a bearing chevron with OUR CALLSIGN attached for 5 s (voiceprint; talking is a tactical act). channel 'tightbeam': private to one recipient — requires a current TRACK on them (you must know where to point the dish), EXCEPT teammates, who are always reachable with no track and no spike. The MESSAGE IS VERBATIM: extract the captain's words exactly — everything after the transmit intent — do not paraphrase, do not sanitize beyond trimming; max 140 chars (truncate gracefully at a word boundary if the captain rambles). The receiving XO reads it aloud attributed to our callsign. 10 s cooldown per channel.",
+      "type": "object",
+      "required": ["channel", "message"],
+      "properties": {
+        "channel": { "enum": ["broadcast", "tightbeam"] },
+        "recipient": { "type": "string", "description": "REQUIRED for tightbeam: a contact-table name (letter or identified callsign) or a teammate's callsign." },
+        "message": { "type": "string", "description": "The captain's words, verbatim." }
+      },
+      "examples": [
+        { "channel": "broadcast", "message": "anyone want to team up on the cruiser?" },
+        { "channel": "tightbeam", "recipient": "Mako", "message": "he's behind the moonlet" }
+      ]
     },
 
     "fire_missile": {
@@ -483,6 +499,18 @@
         ]
       },
       {
+        "captain": "Broadcast: anyone want to team up on the cruiser?",
+        "commands": [
+          { "verb": "transmit", "params": { "channel": "broadcast", "message": "anyone want to team up on the cruiser?" }, "acknowledgement": "" }
+        ]
+      },
+      {
+        "captain": "Tightbeam Mako: he's behind the moonlet, come around the north side",
+        "commands": [
+          { "verb": "transmit", "params": { "channel": "tightbeam", "recipient": "Mako", "message": "he's behind the moonlet, come around the north side" }, "acknowledgement": "" }
+        ]
+      },
+      {
         "captain": "Guns free — if anything comes at us the PDCs handle it",
         "commands": [
           { "verb": "set_pdc", "params": { "posture": "free" }, "acknowledgement": "PDCs weapons-free." }
@@ -699,6 +727,7 @@
       "DRIFT vs VECTOR: any request naming the DRIFT ('drift marker', 'show me our drift', 'put our drift on the map') is the persistent overlay — set_overlay. Asking about the VECTOR or the direction of travel ('show me our vector', 'which way are we drifting', 'what's our vector') is a momentary look — show_vector. When in doubt: a request phrased as a STATE ('keep it up', 'leave it on', 'kill/drop it') is set_overlay; a QUESTION is show_vector.",
       "A plain 'fire missile' fires ONE tube (omit the tubes param). Only an explicit salvo ('fire everything', 'both tubes', 'full salvo') uses tubes [1,2].",
       "Blind fire (guidance='bearing') ONLY when the captain explicitly asks for unlocked/blind/bearing fire. A plain 'fire missile' with no lock stays a locked attempt and gets the server's rejection, which offers blind fire as the follow-up.",
+      "TRANSMIT: the message is VERBATIM — everything after the transmit intent ('broadcast:', 'tell them', 'tightbeam Mako:'), word for word, no paraphrase. Leave the acknowledgement EMPTY (the ship confirms with 'Transmission away.'). 'broadcast'/'hail everyone'/'on the open channel' = broadcast (remind nobody: it flares our position and callsign to all). Naming a recipient = tightbeam.",
       "PROBE acks: leave the acknowledgement EMPTY — the ship speaks its own launch line. 'probe out'/'launch a probe (down) bearing X' = launch_probe. Probes are the tooling for rumble triangulation: if the captain wants a fix on a rumble, a probe off-axis gives the second bearing — suggest it only when asked how.",
       "RAILGUN acks: leave the acknowledgement EMPTY — the ship speaks its own stock line on fire ('Solution ready — firing.' / 'Slug away.'). 'put a slug on him/that solution' = fire_railgun solution; naming a bearing ('rail on 090') = bearing mode. The rail is a snapshot, not a duel-opener: remind the captain only when relevant that a thrusting target will dodge a solution."
     ]

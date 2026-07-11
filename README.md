@@ -111,6 +111,13 @@ be going somewhere — not both.
   (and rumbles like a real drive) for a full minute — fake contacts are a
   strategy. Plus: burning away at range genuinely outruns a torpedo's tank
   now, or dodge late to waste its fuel.
+- **Comms**: talk to other captains. "Broadcast: anyone want to team up on
+  the cruiser?" reaches everyone — and flares a comms spike: every captain
+  gets your bearing AND your callsign for 5 s (voiceprint; a broadcast is
+  a flare). "Tightbeam Mako: he's behind the moonlet" is a private whisper
+  — but you need a current track to point the dish (teammates are always
+  reachable). Delivery is verbatim; the receiving XO reads it aloud.
+  10 s per channel between sends, 140 characters.
 - **Propellant is delta-v**: a full tank is 100 s of hard burn — enough to
   reach flank speed and kill it once. It regenerates only inside the region
   with throttle ≤ 20%. Dry tanks = you drift. Turning is free.

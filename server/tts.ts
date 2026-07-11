@@ -182,6 +182,13 @@ const STOCK_LINES = [
   // v5 §6: probes (launch/loss/spent lines carry ordinals and quantized
   // bearings — bounded dynamic shapes, cached on first use)
   "No probes left, Captain.",
+  // v5 §7: comms
+  "Transmission away.",
+  "Broadcast array is recycling, Captain.",
+  "Tightbeam dish is recycling, Captain.",
+  "No track on them — I can't point the dish, Captain.",
+  "Nothing to send, Captain.",
+  "Tightbeam to whom, Captain?",
 ];
 
 // Sequential on purpose: ElevenLabs free/low tiers have tight concurrency

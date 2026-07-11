@@ -484,6 +484,23 @@ export class Match {
       this.sendTranscript(ev.ship, "xo", ev.text);
     } else if (ev.kind === "death") {
       this.captainDown(ev.ship, ev.callsign);
+    } else if (ev.kind === "transmission") {
+      // v5 §7: verbatim delivery, attributed to the sender's callsign.
+      // The XO reads it aloud — relayed messages are the game's only
+      // unbounded dynamic TTS (MESSAGE_MAX_CHARS is the cost control).
+      const targets =
+        ev.to === "all"
+          ? this.seats.filter((s) => !s.dead && s.id !== ev.from).map((s) => s.id)
+          : [ev.to];
+      for (const id of targets) {
+        this.sendTranscript(
+          id,
+          "comms",
+          `${ev.fromName}: “${ev.text}”`,
+          false,
+          `Transmission from ${ev.fromName}: ${ev.text}`
+        );
+      }
     } else if (ev.kind === "scuttle") {
       // quiet by design: free the seat, tell no one
       const seat = this.seats.find((s) => s.id === ev.ship);
@@ -552,7 +569,7 @@ export class Match {
       // Ship-AI lines get a voice; skip bookkeeping noise (standing-order
       // trigger logs, dev-harness echoes).
       const speak =
-        (who === "xo" || who === "xo-note" || who === "sys") &&
+        (who === "xo" || who === "xo-note" || who === "sys" || who === "comms") &&
         !text.startsWith("Standing order '") &&
         !text.startsWith("direct");
       const speech = speak ? ensureSpeech(speakText ?? text) : null;

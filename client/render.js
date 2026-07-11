@@ -776,6 +776,7 @@ function draw() {
 
   drawContacts();
   drawRumbles(you);
+  drawCommsSpikes(you);
   drawDriftMarker(you);
   drawVectorOverlay(you);
   drawDustShroud();
@@ -836,6 +837,49 @@ function drawCursorReadout(you) {
 // v4.5 hearing: rumbles are bearing-only — a soft chevron at the edge of
 // the view along the bearing from own ship, alpha scaled by loudness. It
 // deliberately has NO distance information to give.
+// v5 §7: comms spikes — a rumble-style chevron in comms blue with the
+// sender's CALLSIGN attached (the voiceprint is the point)
+function drawCommsSpikes(you) {
+  const spikes = state.lastSnap?.comms ?? [];
+  if (!you || spikes.length === 0) return;
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  const [ox, oy] = worldToScreen(you.x, you.y);
+  const pad = 40;
+  for (const sp of spikes) {
+    const rad = ((sp.bearing ?? 0) * Math.PI) / 180;
+    const dx = Math.sin(rad);
+    const dy = -Math.cos(rad);
+    let t = Infinity;
+    if (dx > 0) t = Math.min(t, (w - pad - ox) / dx);
+    if (dx < 0) t = Math.min(t, (pad - ox) / dx);
+    if (dy > 0) t = Math.min(t, (h - pad - oy) / dy);
+    if (dy < 0) t = Math.min(t, (pad - oy) / dy);
+    if (!Number.isFinite(t) || t < 40) continue;
+    const cx = ox + dx * t;
+    const cy = oy + dy * t;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(Math.atan2(dy, dx) + Math.PI / 2);
+    ctx.beginPath(); // single wide chevron + dot: reads as a voice, not a drive
+    ctx.moveTo(-11, 5); ctx.lineTo(0, -7); ctx.lineTo(11, 5);
+    ctx.strokeStyle = "#9ad1ff";
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.85;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, -12, 1.8, 0, Math.PI * 2);
+    ctx.fillStyle = "#9ad1ff";
+    ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = "#9ad1ff";
+    ctx.font = "10px monospace";
+    ctx.globalAlpha = 0.9;
+    ctx.fillText(sp.callsign ?? "?", cx + 8, cy + 14);
+    ctx.globalAlpha = 1;
+  }
+}
+
 function drawRumbles(you) {
   const rumbles = state.lastSnap?.rumbles ?? [];
   if (!you || rumbles.length === 0) return;

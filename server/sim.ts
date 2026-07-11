@@ -42,6 +42,7 @@ export interface Command {
     | "fire_missile"
     | "fire_railgun"
     | "launch_probe"
+    | "transmit"
     | "reload_tubes"
     | "deploy_decoy"
     | "maneuver"
@@ -197,6 +198,9 @@ export interface Ship {
   // v5 §6 probes (per archetype; no reloads)
   probesLeft: number;
   probeCounter: number; // launch ordinal ("probe two")
+  // v5 §7 comms: per-channel anti-spam cooldowns
+  commsCooldownBroadcastS: number;
+  commsCooldownTightbeamS: number;
   sigSpikeRail: number; // seconds of +RAIL_SIG_SPIKE remaining after firing
   droneCooldown: number; // drone-only: seconds until it may fire again
   droneWaypoint: number; // drone-only: index into the patrol route
@@ -356,6 +360,9 @@ export type SimEvent =
   | { kind: "death"; ship: ShipId; callsign: string; attacker: ShipId | null }
   // quiet ghost scuttle (v5 §2): the seat is freed but nobody is told
   | { kind: "scuttle"; ship: ShipId }
+  // v5 §7: a delivered transmission — the match routes it to the
+  // recipient(s) as a comms transcript line their XO reads verbatim
+  | { kind: "transmission"; from: ShipId; fromName: string; to: ShipId | "all"; text: string }
   | {
       kind: "gameover";
       winner: string;
@@ -446,6 +453,10 @@ export class Sim {
   decoys: Decoy[] = [];
   slugs: Slug[] = [];
   probes: Probe[] = [];
+  // v5 §7: live broadcast spikes — a transmitting hull is a flare for
+  // COMMS_SPIKE_S, callsign attached (voiceprint). Position frozen at
+  // transmit time; every viewer computes their own bearing chevron.
+  private commsSpikes: { x: number; y: number; from: ShipId; callsign: string; expiresAtTick: number }[] = [];
   terrain: Terrain;
   tickCount = 0;
   // Ship id in FFA, team name in Teams mode; set when hostilities end.
@@ -545,6 +556,8 @@ export class Sim {
       railCooldownS: 0,
       probesLeft: stats.probes,
       probeCounter: 0,
+      commsCooldownBroadcastS: 0,
+      commsCooldownTightbeamS: 0,
       sigSpikeRail: 0,
       prevPainted: "none",
       sigSpikeLaunch: 0,
@@ -1069,6 +1082,91 @@ export class Sim {
             text: `Probe ${PROBE_NAMES[ship.probeCounter - 1] ?? ship.probeCounter} away — bearing ${fmtBearing(brg)}.`,
             speak: `Probe away — bearing ${spokenBearing(brg)}.`,
           });
+        }
+        return null;
+      }
+      case "transmit": {
+        // v5 §7. Verbatim delivery — the message is the captain's words,
+        // trimmed and capped, never paraphrased.
+        const channel = cmd.params.channel === "tightbeam" ? "tightbeam" : "broadcast";
+        const rawMsg = typeof cmd.params.message === "string" ? cmd.params.message.trim() : "";
+        if (!rawMsg) return "Nothing to send, Captain.";
+        const message = rawMsg.slice(0, C.MESSAGE_MAX_CHARS);
+        if (channel === "broadcast") {
+          if (ship.commsCooldownBroadcastS > 0) return "Broadcast array is recycling, Captain.";
+          ship.commsCooldownBroadcastS = C.COMMS_COOLDOWN_S;
+          // the spike IS the price: every captain gets a bearing chevron
+          // with our callsign on it (voiceprint) for COMMS_SPIKE_S
+          this.commsSpikes.push({
+            x: ship.x,
+            y: ship.y,
+            from: ship.id,
+            callsign: ship.callsign,
+            expiresAtTick: this.tickCount + C.COMMS_SPIKE_S * C.TICK_RATE_HZ,
+          });
+          events.push({
+            kind: "transmission",
+            from: ship.id,
+            fromName: ship.callsign,
+            to: "all",
+            text: message,
+          });
+        } else {
+          if (ship.commsCooldownTightbeamS > 0) return "Tightbeam dish is recycling, Captain.";
+          const ref = typeof cmd.params.recipient === "string" ? cmd.params.recipient : "";
+          if (!ref) return "Tightbeam to whom, Captain?";
+          // teammates first: always reachable by name/callsign, no track
+          // needed (fleet encryption)
+          const mate = [...this.ships.values()].find(
+            (t) =>
+              t.id !== ship.id &&
+              !this.isHostile(ship, t) &&
+              t.callsign.toLowerCase() === ref.trim().toLowerCase()
+          );
+          let target: Ship | null = mate ?? null;
+          let decoyDish = false;
+          if (!target) {
+            const key = this.resolveContactRef(ship.id, ref);
+            if (!key || key.startsWith("t:")) return "No contact by that name on the board, Captain.";
+            if (key.startsWith("d")) {
+              // the dish is pointed at a decoy: fog-correct behavior is a
+              // confident transmission into the void — rejecting would
+              // unmask it
+              const d = this.decoys.find((k) => `d${k.id}` === key);
+              if (!d || this.decoyTierFor(ship, d) < 2) {
+                return "No track on them — I can't point the dish, Captain.";
+              }
+              decoyDish = true;
+            } else {
+              const t = this.ships.get(key.slice(1));
+              if (!t) return "No contact by that name on the board, Captain.";
+              // a current TRACK (fused map picture counts: a via-probe
+              // track tells the dish where to point)
+              if (!this.isHostile(ship, t)) {
+                target = t; // teammate referenced by letter (pre-§8 edge)
+              } else if (this.contactOn(ship.id, t.id).tier >= 2) {
+                target = t;
+              } else {
+                return "No track on them — I can't point the dish, Captain.";
+              }
+            }
+          }
+          ship.commsCooldownTightbeamS = C.COMMS_COOLDOWN_S;
+          if (!decoyDish && target) {
+            events.push({
+              kind: "transmission",
+              from: ship.id,
+              fromName: ship.callsign,
+              to: target.id,
+              text: message,
+            });
+          }
+          // decoyDish: the beam goes out, nobody is home — silence is the
+          // decoy doing its job
+        }
+        delete cmd.acknowledgement; // the ship confirms with its own line
+        if (!ship.isDrone) {
+          events.push({ kind: "notice", ship: ship.id, text: "Transmission away." });
         }
         return null;
       }
@@ -3200,6 +3298,8 @@ export class Sim {
     ship.sigSpikePdc = Math.max(0, ship.sigSpikePdc - dt);
     ship.sigSpikeRail = Math.max(0, ship.sigSpikeRail - dt);
     ship.railCooldownS = Math.max(0, ship.railCooldownS - dt);
+    ship.commsCooldownBroadcastS = Math.max(0, ship.commsCooldownBroadcastS - dt);
+    ship.commsCooldownTightbeamS = Math.max(0, ship.commsCooldownTightbeamS - dt);
     // ping timers snap to zero below float dust: 0.1-substep decrements
     // leave ~1e-14 residues, and a residue on pingGrantS would buy a fifth
     // track-tick — exactly enough to complete the lock the design forbids
@@ -3923,6 +4023,16 @@ export class Sim {
     ghosts.sort((a, b) => b.t - a.t);
     const ghost = ghosts[0] ?? null;
 
+    // v5 §7: live comms spikes — bearing + CALLSIGN (the voiceprint is
+    // the design: broadcasting tells everyone who spoke and roughly from
+    // where), never a position on the wire
+    const comms = this.commsSpikes
+      .filter((sp) => sp.from !== id && sp.expiresAtTick > this.tickCount)
+      .map((sp) => ({
+        bearing: Math.round(norm360(bearingTo(ship.x, ship.y, sp.x, sp.y))) % 360,
+        callsign: sp.callsign,
+      }));
+
     // v4.5 hearing: bearing-only rumbles (below faint). Strictly {cid,
     // bearing, loud} with per-viewer opaque cids — the fog invariant
     // forbids anything positional or identity-linked here.
@@ -3989,6 +4099,7 @@ export class Sim {
       },
       contacts,
       rumbles,
+      comms,
       ghost,
       ghosts,
       // own ordnance always; enemy ordnance only within detect range

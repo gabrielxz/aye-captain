@@ -160,7 +160,8 @@ function handleMessage(msg) {
       break;
     case "transcript":
       addTranscript(msg.who, msg.text, msg.alert);
-      if (msg.speech) audio.enqueueSpeech(msg.speech, !!msg.alert);
+      // incoming transmissions queue (above acks, below combat warnings)
+      if (msg.speech) audio.enqueueSpeech(msg.speech, !!msg.alert, msg.who === "comms");
       break;
     default:
       console.log("unhandled message", msg);

@@ -147,6 +147,19 @@ export const PROBE_LIFETIME_S = 180;
 export const PROBE_SENSOR_BASE_M = 60000; // reduced eyes; FULL hearing (same multiplier)
 export const PROBE_SIGNATURE = 25; // findable if hunted
 
+// v5 §7: ship-to-ship comms. BROADCAST reaches every captain and costs a
+// COMMS SPIKE on the hearing channel — a bearing chevron for everyone,
+// with the sender's CALLSIGN attached (voiceprint): talking is a tactical
+// act. TIGHTBEAM is private and needs a current TRACK on the recipient
+// (you must know where to point the dish) — except teammates, always
+// reachable (fleet encryption): no spike, no reveal. Delivery is
+// VERBATIM: the receiving XO reads the message aloud. Relayed messages
+// are the game's only unbounded dynamic TTS — the char cap is the cost
+// control.
+export const COMMS_SPIKE_S = 5;
+export const COMMS_COOLDOWN_S = 10; // per channel per ship
+export const MESSAGE_MAX_CHARS = 140;
+
 // Contact tiers, as fractions of the computed detection range:
 export const TIER_FAINT_FRAC = 1.0; // approximate position only, no vector
 export const TIER_TRACK_FRAC = 0.6; // true position + velocity, continuous
