@@ -1,25 +1,23 @@
 # TODO — next steps
 
-## v4 "The Big Dark" + v4.1 addendum — BUILT (2026-07-10), awaiting playtest + deploy
+## v4 "The Big Dark" + v4.1 addendum — DEPLOYED 2026-07-11
 
 All ten build-order steps of `HANDOFF-v4.md` plus the full `HANDOFF-v4.1.md`
 addendum (sensor-slaved PDCs, blind fire, uplinked/autonomous guidance,
 seeker detection math, decoy retune 90 + fake-contact deception, cursor
-bearing readout) are implemented and committed on branch `v4-big-dark`
-(280 headless assertions green; English-path verified in the browser:
-flank speed, vector overlay, full stop, and "put a torpedo down bearing
-zero four five, fire blind" → bird curving onto 045 with no lock).
+bearing readout) plus the Captain's Handbook at `/how-to-play` are LIVE at
+https://aye-captain.fly.dev — merged `v4-big-dark` → main, CI deploy green,
+lobby + handbook verified answering in production. 280 headless assertions;
+English paths verified in the browser (flank speed, vector overlay, full
+stop, and "put a torpedo down bearing zero four five, fire blind" → bird
+curving onto 045 with no lock). The new v4/v4.1 XO stock lines pre-generate
+into the /data speech cache on boot (one-time cost per line).
 
 **Remaining before this milestone is DONE:**
 
-- [ ] Gabriel playtests locally (`npm run dev`) — especially the feel items
-  below.
-- [ ] Deploy as ONE release: merge `v4-big-dark` to main (CI tests+deploys,
-  `--ha=false` baked in). Constants desync old clients mid-match, so don't
-  deploy while a live match matters.
-- [ ] First boot with ELEVENLABS key pre-generates the new v4 stock lines
-  (contact tiers, PDC, collision countdowns, dust, maneuvers) — cache lives
-  on /data, one-time cost.
+- [ ] Gabriel playtests ONLINE — especially the feel items below. Report
+  batched feedback as usual; `fly logs` + `/data/utterances.jsonl` localize
+  any "XO misbehaved" report.
 
 ## v4 playtest watch-list (reserved knobs, do NOT pre-tune)
 
