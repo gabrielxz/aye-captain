@@ -157,6 +157,10 @@ const STOCK_LINES = [
   "Ping away.",
   "One ping only, aye. Very well, Captain.",
   "Transducers recharging, Captain.",
+  // v4.7: drift marker
+  "Drift marker up, Captain.",
+  "Drift marker down.",
+  "We're not drifting anywhere, Captain — nothing to mark yet.",
 ];
 
 // Sequential on purpose: ElevenLabs free/low tiers have tight concurrency

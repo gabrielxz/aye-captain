@@ -34,6 +34,7 @@ export interface Command {
     | "deploy_decoy"
     | "maneuver"
     | "show_vector"
+    | "set_overlay"
     | "sensor_ping"
     | "set_standing_order"
     | "query";
@@ -213,6 +214,9 @@ export type SimEvent =
   | { kind: "ack"; ship: ShipId; text: string }
   | { kind: "notice"; ship: ShipId | "all"; text: string; alert?: boolean }
   | { kind: "ui"; ship: ShipId; what: "show_vector" } // client-side overlay triggers
+  // persistent client-side overlay toggles (v4.7): pure ui, no sim state.
+  // v5 adds ELEMENT values (probe markers, designations), not new events.
+  | { kind: "ui"; ship: ShipId; what: "overlay"; element: string; state: "on" | "off" }
   | { kind: "gameover"; winner: ShipId };
 
 // ---------- angle helpers ----------
@@ -468,6 +472,33 @@ export class Sim {
       }
       case "show_vector": {
         events.push({ kind: "ui", ship: ship.id, what: "show_vector" });
+        return null;
+      }
+      case "set_overlay": {
+        // v4.7: toggles a persistent CLIENT overlay. Server-side this is a
+        // ui event and nothing else — no sim state, cannot desync.
+        const element = cmd.params.element;
+        const overlayState = cmd.params.state;
+        if (element !== "drift") return "No such overlay, Captain.";
+        if (overlayState !== "on" && overlayState !== "off") {
+          return "Overlay goes 'on' or 'off', Captain.";
+        }
+        events.push({ kind: "ui", ship: ship.id, what: "overlay", element, state: overlayState });
+        // the ship owns this voice: the stock notice below is the whole
+        // confirmation, so a translator ack would double-speak (and burn a
+        // dynamic TTS synth). Drop it even if the model supplied one.
+        delete cmd.acknowledgement;
+        if (!ship.isDrone) {
+          // state is state: the marker toggles even when there's nothing to
+          // mark yet — the XO just says so instead of parroting "up".
+          const text =
+            overlayState === "off"
+              ? "Drift marker down."
+              : this.speedOf(ship) < 5
+                ? "We're not drifting anywhere, Captain — nothing to mark yet."
+                : "Drift marker up, Captain.";
+          events.push({ kind: "notice", ship: ship.id, text });
+        }
         return null;
       }
       case "sensor_ping": {

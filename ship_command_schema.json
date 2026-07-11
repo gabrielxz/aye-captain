@@ -20,6 +20,7 @@
             "deploy_decoy",
             "maneuver",
             "show_vector",
+            "set_overlay",
             "sensor_ping",
             "set_standing_order",
             "query"
@@ -144,6 +145,23 @@
       "type": "object",
       "properties": {},
       "examples": [ {} ]
+    },
+
+    "set_overlay": {
+      "description": "Toggle a PERSISTENT overlay element on the captain's map. element='drift': a hollow chevron riding just off the hull, rotated to the ship's velocity bearing — the sprite shows where we're AIMED, the drift marker shows where we're GOING. Stays up until turned off (resets at match start). Purely informational — no effect on the ship, no signature. The ship's own voice confirms the toggle: LEAVE acknowledgement EMPTY for this verb. Captain-speak is 'drift', never 'prograde'.",
+      "type": "object",
+      "required": ["element", "state"],
+      "properties": {
+        "element": {
+          "enum": ["drift"],
+          "description": "Which overlay. v4.7 has exactly one; future releases add values here, not new verbs."
+        },
+        "state": { "enum": ["on", "off"] }
+      },
+      "examples": [
+        { "element": "drift", "state": "on" },
+        { "element": "drift", "state": "off" }
+      ]
     },
 
     "sensor_ping": {
@@ -420,6 +438,24 @@
         ]
       },
       {
+        "captain": "Keep the drift marker up",
+        "commands": [
+          { "verb": "set_overlay", "params": { "element": "drift", "state": "on" }, "acknowledgement": "" }
+        ]
+      },
+      {
+        "captain": "Show me our drift",
+        "commands": [
+          { "verb": "set_overlay", "params": { "element": "drift", "state": "on" }, "acknowledgement": "" }
+        ]
+      },
+      {
+        "captain": "Drop the drift marker",
+        "commands": [
+          { "verb": "set_overlay", "params": { "element": "drift", "state": "off" }, "acknowledgement": "" }
+        ]
+      },
+      {
         "captain": "Any rocks or dust nearby we could hide in?",
         "commands": [
           { "verb": "query", "params": { "topic": "terrain" }, "acknowledgement": "" }
@@ -571,6 +607,7 @@
       "Vague quantities get sensible defaults, stated aloud: 'slow down' -> thrust 25%, 'ease off' -> reduce by ~25 points, 'hard about' -> relative 180.",
       "Acknowledgements are at most 12 words. Every word is spoken aloud by the ship's voice — brevity is a feature.",
       "Continuous tracking ('keep facing him', 'stay pointed at him') is not a helm capability: execute a single set_heading target snapshot and say so — you can point the ship on command; the captain flies the ship.",
+      "DRIFT vs VECTOR: any request naming the DRIFT ('drift marker', 'show me our drift', 'put our drift on the map') is the persistent overlay — set_overlay. Asking about the VECTOR or the direction of travel ('show me our vector', 'which way are we drifting', 'what's our vector') is a momentary look — show_vector. When in doubt: a request phrased as a STATE ('keep it up', 'leave it on', 'kill/drop it') is set_overlay; a QUESTION is show_vector.",
       "A plain 'fire missile' fires ONE tube (omit the tubes param). Only an explicit salvo ('fire everything', 'both tubes', 'full salvo') uses tubes [1,2].",
       "Blind fire (guidance='bearing') ONLY when the captain explicitly asks for unlocked/blind/bearing fire. A plain 'fire missile' with no lock stays a locked attempt and gets the server's rejection, which offers blind fire as the follow-up."
     ]

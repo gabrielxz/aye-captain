@@ -23,6 +23,8 @@ const SHIP_LEN_M = 60; // true hull length; far below one pixel at map scale
 const MIN_SHIP_PX = 22; // legibility clamp: never render smaller than this
 const VECTOR_SECONDS = 10; // the vector line = this much travel at current velocity
 const MIN_VECTOR_PX = 34; // legibility floor; clears the 22px hull clamp
+const DRIFT_STUB_PX = 26; // drift marker radius from hull center; just outside MIN_SHIP_PX
+const DRIFT_MIN_SPEED_MPS = 5; // below this: draw nothing (matches full_stop's cutoff)
 
 // ---------- sprite loading (SVG text -> tinted blob -> Image) ----------
 
@@ -224,6 +226,48 @@ let vectorUntil = 0; // XO-triggered: shown until this timestamp
 
 export function showVector(ms) {
   vectorUntil = performance.now() + ms;
+}
+
+// Persistent overlays toggled through the XO (set_overlay verb). Session
+// state only; reset on match start. No hotkey — deliberately reachable
+// only by asking the ship.
+const overlays = { drift: false };
+
+export function setOverlay(element, on) {
+  if (element in overlays) overlays[element] = on;
+}
+
+export function resetOverlays() {
+  for (const k of Object.keys(overlays)) overlays[k] = false;
+}
+
+// The drift marker: a hollow chevron at a fixed screen radius from the
+// hull, rotated to the velocity bearing. The sprite shows FACING; this
+// shows GOING — the divergence is the game's whole Newtonian premise.
+function drawDriftMarker(you) {
+  if (!overlays.drift || !you) return;
+  const vx = state.lastSnap?.you?.vx ?? 0;
+  const vy = state.lastSnap?.you?.vy ?? 0;
+  const speed = Math.hypot(vx, vy);
+  if (speed < DRIFT_MIN_SPEED_MPS) return;
+  const [sx, sy] = worldToScreen(you.x, you.y);
+  const dx = vx / speed;
+  const dy = -vy / speed; // screen y is down
+  const cx = sx + dx * DRIFT_STUB_PX;
+  const cy = sy + dy * DRIFT_STUB_PX;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(Math.atan2(dy, dx) + Math.PI / 2); // chevron points along travel
+  ctx.beginPath();
+  ctx.moveTo(-6, 4);
+  ctx.lineTo(0, -4);
+  ctx.lineTo(6, 4);
+  ctx.strokeStyle = COLORS.own;
+  ctx.lineWidth = 1.6;
+  ctx.globalAlpha = 0.85;
+  ctx.stroke();
+  ctx.restore();
+  ctx.globalAlpha = 1;
 }
 
 function drawVectorOverlay(you) {
@@ -673,6 +717,7 @@ function draw() {
 
   drawContacts();
   drawRumbles(you);
+  drawDriftMarker(you);
   drawVectorOverlay(you);
   drawCursorReadout(you);
   drawInset(you);

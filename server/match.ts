@@ -331,7 +331,8 @@ export class Match {
     } else if (ev.kind === "ui") {
       const ws = this.sockets.get(ev.ship);
       if (ws && ws.readyState === ws.OPEN) {
-        ws.send(JSON.stringify({ type: "ui", what: ev.what }));
+        const { kind, ship, ...payload } = ev; // what (+ overlay element/state)
+        ws.send(JSON.stringify({ type: "ui", ...payload }));
       }
     } else if (ev.kind === "notice") {
       const targets: ShipId[] = ev.ship === "all" ? ["A", "B"] : [ev.ship];

@@ -1,5 +1,5 @@
 // ws handling + client state store
-import { startRenderLoop, bigBoomAt, showVector, camera } from "./render.js";
+import { startRenderLoop, bigBoomAt, showVector, setOverlay, resetOverlays, camera } from "./render.js";
 import { initUI, addTranscript, updateHUD, showLobbyStatus, enterGame, showBanner, hideBanner, updateWatching, setSpectator } from "./ui.js";
 import * as audio from "./audio.js";
 
@@ -53,6 +53,7 @@ function handleMessage(msg) {
       state.lastSnap = null;
       state.fxBuffer = [];
       state.gameOver = false;
+      resetOverlays();
       updateWatching([]); // fresh roster arrives right behind the start
       setSpectator(msg.role === "spectator" ? msg.callsign : null);
       if (msg.role === "spectator") {
@@ -136,6 +137,7 @@ function handleMessage(msg) {
       break;
     case "ui":
       if (msg.what === "show_vector") showVector(5000);
+      else if (msg.what === "overlay") setOverlay(msg.element, msg.state === "on");
       break;
     case "transcript":
       addTranscript(msg.who, msg.text, msg.alert);
