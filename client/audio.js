@@ -410,10 +410,18 @@ function fetchSpeech(id) {
 //   stay queued (older ones are superseded news)
 // - everything else speaks ONLY when the voice channel is idle — during a
 //   furball the chatter goes text-only instead of piling up
-export function enqueueSpeech(id, alert = false) {
+export function enqueueSpeech(id, alert = false, queued = false) {
   if (!ctx) return;
-  if (!alert && (speaking || speechQueue.length > 0)) return;
+  // three tiers (v5 §7): alerts preempt; `queued` lines (incoming
+  // transmissions) WAIT their turn instead of being dropped; ordinary
+  // acks are dropped when the ship is already talking
+  if (!alert && !queued && (speaking || speechQueue.length > 0)) return;
   const entry = { id, alert, at: performance.now(), buf: fetchSpeech(id) };
+  if (queued && !alert) {
+    speechQueue.push(entry);
+    void playNext();
+    return;
+  }
   if (alert) {
     if (speechQueue.some((e) => e.alert && e.id === id)) return; // dedupe
     const firstNonAlert = speechQueue.findIndex((e) => !e.alert);

@@ -10,14 +10,21 @@ const COLORS = {
   grid: "#0d1520",
   zone: "#2a4a5a",
   own: "#2dd4bf",
+  ally: "#6ea8fe", // v5 §8: teammates (transponders)
   enemy: "#fc8181",
   ghost: "#4a5a6a",
   rings: "#3d5468",
   star: "#9fb4c8",
 };
+// v5 §8: FFA spectator identity tints, one per seat (team colors override
+// in Teams mode)
+const SEAT_TINTS = ["#2dd4bf", "#fc8181", "#f6ad55", "#6ea8fe", "#d6bcfa", "#68d391", "#f687b3", "#e2e8f0"];
+const TEAM_TINTS = { red: "#e07a7a", blue: "#7ab0e0" };
 
-// Which authored design to fly (candidates in client/assets/):
-// "interceptor" | "gunship" | "saucer"
+// v5 §4: shape = archetype (tint = player/side). The three authored
+// designs map straight across; SHIP_DESIGN remains the UNKNOWN-contact
+// wedge fallback key and the pre-v5 default.
+const ARCH_DESIGN = { corvette: "interceptor", frigate: "gunship", cruiser: "saucer" };
 const SHIP_DESIGN = "interceptor";
 const SHIP_LEN_M = 60; // true hull length; far below one pixel at map scale
 const MIN_SHIP_PX = 22; // legibility clamp: never render smaller than this
@@ -41,22 +48,26 @@ const SHAKE_DECAY_MS = 320;
 
 const TINTS = {
   own: { HULL: "#0e3f3a", ACCENT: "#2dd4bf" },
+  ally: { HULL: "#14283f", ACCENT: "#6ea8fe" },
   enemy: { HULL: "#3f1518", ACCENT: "#fc8181" },
   ghost: { HULL: "#141c26", ACCENT: "#4a5a6a" },
 };
-const sprites = {}; // tint -> Image
+const sprites = {}; // design -> tint -> Image
 
-fetch(`assets/${SHIP_DESIGN}.svg`)
-  .then((r) => r.text())
-  .then((svg) => {
-    for (const [name, tint] of Object.entries(TINTS)) {
-      const tinted = svg.replaceAll("HULL", tint.HULL).replaceAll("ACCENT", tint.ACCENT);
-      const img = new Image();
-      img.src = URL.createObjectURL(new Blob([tinted], { type: "image/svg+xml" }));
-      img.onload = () => (sprites[name] = img);
-    }
-  })
-  .catch(() => {}); // sprite-less fallback triangles still draw
+for (const design of new Set(Object.values(ARCH_DESIGN))) {
+  sprites[design] = {};
+  fetch(`assets/${design}.svg`)
+    .then((r) => r.text())
+    .then((svg) => {
+      for (const [name, tint] of Object.entries(TINTS)) {
+        const tinted = svg.replaceAll("HULL", tint.HULL).replaceAll("ACCENT", tint.ACCENT);
+        const img = new Image();
+        img.src = URL.createObjectURL(new Blob([tinted], { type: "image/svg+xml" }));
+        img.onload = () => (sprites[design][name] = img);
+      }
+    })
+    .catch(() => {}); // sprite-less fallback wedges still draw
+}
 
 function resize() {
   const rect = canvas.parentElement.getBoundingClientRect();
@@ -323,8 +334,10 @@ function drawVectorOverlay(you) {
   // projected stop point for an immediate full-stop maneuver: coast through
   // the retrograde flip, then decelerate at full burn (cheap, educational)
   const prop = state.lastSnap?.you?.propellant ?? 0;
-  const accel = state.config?.accel ?? 60;
-  const turnRate = state.config?.turnRate ?? 20;
+  // v5 §4: own archetype's numbers ride the snapshot; hello-config is the
+  // pre-launch fallback
+  const accel = state.lastSnap?.you?.accel ?? state.config?.accel ?? 60;
+  const turnRate = state.lastSnap?.you?.turnRate ?? state.config?.turnRate ?? 20;
   if (prop > 0) {
     const facing = state.lastSnap?.you?.facing ?? 0;
     const retro = (Math.atan2(-vx, -vy) * 180) / Math.PI;
@@ -620,7 +633,7 @@ function flareColor(pct) {
   return "#b7791f";
 }
 
-function drawShip(ent, kind, { ghost = false, thrust = 0, hull = null, hullMax = 100 } = {}) {
+function drawShip(ent, kind, { ghost = false, thrust = 0, hull = null, hullMax = 100, archetype = null } = {}) {
   const [sx, sy] = worldToScreen(ent.x, ent.y);
   const sizePx = Math.max(MIN_SHIP_PX, SHIP_LEN_M * camera.zoom);
   const r = sizePx / 2;
@@ -635,7 +648,7 @@ function drawShip(ent, kind, { ghost = false, thrust = 0, hull = null, hullMax =
   // legitimately knows ever pass thrust > 0 here (own ship, spectator view)
   // — enemy contacts carry no thrust data, so no plume can leak (v4.7 §4.1).
   if (!ghost && thrust > 0) {
-    const stern = SHIP_STERN[SHIP_DESIGN] ?? { x: 0, y: 0.4 };
+    const stern = SHIP_STERN[ARCH_DESIGN[archetype] ?? SHIP_DESIGN] ?? { x: 0, y: 0.4 };
     const sxp = stern.x * sizePx;
     const syp = stern.y * sizePx;
     const now = performance.now();
@@ -672,13 +685,16 @@ function drawShip(ent, kind, { ghost = false, thrust = 0, hull = null, hullMax =
     }
   }
 
-  const img = sprites[ghost ? "ghost" : kind];
+  // v5 §4: the SHAPE is ID-tier information — a contact without a known
+  // archetype renders as the neutral wedge, never a hull silhouette
+  const design = archetype ? ARCH_DESIGN[archetype] : null;
+  const img = design ? sprites[design]?.[ghost ? "ghost" : kind] : null;
   if (img) {
     if (ghost) ctx.globalAlpha = 0.55;
     ctx.drawImage(img, -r, -r, sizePx, sizePx);
     ctx.globalAlpha = 1;
   } else {
-    // fallback triangle while the sprite loads
+    // neutral wedge: unknown contacts, ghosts of unknowns, sprite loading
     ctx.beginPath();
     ctx.moveTo(0, -r);
     ctx.lineTo(r * 0.7, r);
@@ -759,12 +775,15 @@ function draw() {
     drawShip(you, "own", {
       thrust: state.lastSnap.you.thrustOut ?? state.lastSnap.you.thrust,
       hull: state.lastSnap.you.hull,
-      hullMax: 100,
+      hullMax: state.lastSnap.you.hullMax ?? 100,
+      archetype: state.lastSnap.you.archetype ?? null,
     });
   }
 
+  drawAllies();
   drawContacts();
   drawRumbles(you);
+  drawCommsSpikes(you);
   drawDriftMarker(you);
   drawVectorOverlay(you);
   drawDustShroud();
@@ -825,23 +844,81 @@ function drawCursorReadout(you) {
 // v4.5 hearing: rumbles are bearing-only — a soft chevron at the edge of
 // the view along the bearing from own ship, alpha scaled by loudness. It
 // deliberately has NO distance information to give.
-function drawRumbles(you) {
-  const rumbles = state.lastSnap?.rumbles ?? [];
-  if (!you || rumbles.length === 0) return;
+// v5 §7: comms spikes — a rumble-style chevron in comms blue with the
+// sender's CALLSIGN attached (the voiceprint is the point)
+function drawCommsSpikes(you) {
+  const spikes = state.lastSnap?.comms ?? [];
+  if (!you || spikes.length === 0) return;
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
   const [ox, oy] = worldToScreen(you.x, you.y);
-  const pad = 26; // chevron sits just inside the view edge
-  for (const r of rumbles) {
-    const rad = ((r.bearing ?? 0) * Math.PI) / 180;
+  const pad = 40;
+  for (const sp of spikes) {
+    const rad = ((sp.bearing ?? 0) * Math.PI) / 180;
     const dx = Math.sin(rad);
-    const dy = -Math.cos(rad); // screen y is down
-    // march from own ship to the view edge along the bearing
+    const dy = -Math.cos(rad);
     let t = Infinity;
     if (dx > 0) t = Math.min(t, (w - pad - ox) / dx);
     if (dx < 0) t = Math.min(t, (pad - ox) / dx);
     if (dy > 0) t = Math.min(t, (h - pad - oy) / dy);
     if (dy < 0) t = Math.min(t, (pad - oy) / dy);
+    if (!Number.isFinite(t) || t < 40) continue;
+    const cx = ox + dx * t;
+    const cy = oy + dy * t;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(Math.atan2(dy, dx) + Math.PI / 2);
+    ctx.beginPath(); // single wide chevron + dot: reads as a voice, not a drive
+    ctx.moveTo(-11, 5); ctx.lineTo(0, -7); ctx.lineTo(11, 5);
+    ctx.strokeStyle = "#9ad1ff";
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.85;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, -12, 1.8, 0, Math.PI * 2);
+    ctx.fillStyle = "#9ad1ff";
+    ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = "#9ad1ff";
+    ctx.font = "10px monospace";
+    ctx.globalAlpha = 0.9;
+    ctx.fillText(sp.callsign ?? "?", cx + 8, cy + 14);
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawRumbles(you) {
+  const rumbles = state.lastSnap?.rumbles ?? [];
+  if (!you || rumbles.length === 0) return;
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  const [sx0, sy0] = worldToScreen(you.x, you.y);
+  const pad = 26; // chevron sits just inside the view edge
+  for (const r of rumbles) {
+    // v5 §6: a probe-relayed rumble originates AT THE PROBE — its bearing
+    // ray is the second line the captain crosses for a fix
+    const [ox, oy] = r.ox !== undefined ? worldToScreen(r.ox, r.oy) : [sx0, sy0];
+    const rad = ((r.bearing ?? 0) * Math.PI) / 180;
+    const dx = Math.sin(rad);
+    const dy = -Math.cos(rad); // screen y is down
+    // march from the origin to the view edge along the bearing
+    let t = Infinity;
+    if (dx > 0) t = Math.min(t, (w - pad - ox) / dx);
+    if (dx < 0) t = Math.min(t, (pad - ox) / dx);
+    if (dy > 0) t = Math.min(t, (h - pad - oy) / dy);
+    if (dy < 0) t = Math.min(t, (pad - oy) / dy);
+    if (r.ox !== undefined && Number.isFinite(t) && t > 40) {
+      // faint dashed ray from the probe along the heard bearing
+      ctx.save();
+      ctx.strokeStyle = "#8fa8bf";
+      ctx.globalAlpha = 0.3;
+      ctx.setLineDash([4, 6]);
+      ctx.beginPath();
+      ctx.moveTo(ox, oy);
+      ctx.lineTo(ox + dx * t, oy + dy * t);
+      ctx.stroke();
+      ctx.restore();
+    }
     if (!Number.isFinite(t) || t < 40) continue; // own ship at/off the edge
     const cx = ox + dx * t;
     const cy = oy + dy * t;
@@ -867,21 +944,59 @@ function drawRumbles(you) {
   }
 }
 
-// Spectator (v4.2): both ships in full detail — A in own-tint, B in enemy
-// tint, matching the ordnance coloring the server pre-baked into `own`.
+// v5 §8: a spectator tint per ship — team color in Teams mode, a seat
+// palette entry in FFA (shape stays the archetype).
+function spectatorTint(shipId) {
+  const ships = state.lastSnap?.ships ?? [];
+  const idx = ships.findIndex((s) => s.id === shipId);
+  const s = ships[idx];
+  if (s?.team && TEAM_TINTS[s.team]) return TEAM_TINTS[s.team];
+  return SEAT_TINTS[(idx + SEAT_TINTS.length) % SEAT_TINTS.length];
+}
+
+// Spectator (v4.2): all ships in full detail — archetype shapes with a
+// per-ship identity ring + callsign in the seat/team tint.
 function drawSpectatorShips() {
   for (const s of state.lastSnap.ships ?? []) {
     const ent = interpolate((sn) => (sn.ships ?? []).find((k) => k.id === s.id) ?? null);
     if (!ent) continue;
     drawShip(ent, s.id === "A" ? "own" : "enemy", {
+      archetype: s.archetype ?? null,
       thrust: s.thrustOut ?? 0,
       hull: s.hull,
       hullMax: s.hullMax ?? 100,
     });
     const [sx, sy] = worldToScreen(ent.x, ent.y);
-    ctx.fillStyle = s.id === "A" ? COLORS.own : COLORS.enemy;
+    const tint = spectatorTint(s.id);
+    ctx.strokeStyle = tint;
+    ctx.globalAlpha = 0.6;
+    ctx.beginPath();
+    ctx.arc(sx, sy, MIN_SHIP_PX / 2 + 4, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = tint;
     ctx.font = "10px monospace";
-    ctx.fillText(s.id, sx + MIN_SHIP_PX / 2 + 5, sy + 3);
+    ctx.fillText(s.callsign ?? s.id, sx + MIN_SHIP_PX / 2 + 6, sy + 3);
+  }
+}
+
+// v5 §8 transponders: teammates render at full state — real archetype
+// shape, real plume (their thrust is legitimately known), callsign label.
+function drawAllies() {
+  const snap = state.lastSnap;
+  if (!snap) return;
+  for (const t of snap.allies ?? []) {
+    const ent = interpolate((s) => (s.allies ?? []).find((k) => k.id === t.id) ?? null) ?? t;
+    drawShip(ent, "ally", {
+      thrust: t.thrustOut ?? 0,
+      hull: t.hull,
+      hullMax: t.hullMax ?? 100,
+      archetype: t.archetype ?? null,
+    });
+    const [sx, sy] = worldToScreen(ent.x, ent.y);
+    ctx.fillStyle = COLORS.ally;
+    ctx.font = "10px monospace";
+    ctx.fillText(t.callsign ?? "", sx + 14, sy - 10);
   }
 }
 
@@ -923,7 +1038,7 @@ function drawContacts() {
       ctx.globalAlpha = 1;
       ctx.fillStyle = COLORS.enemy;
       ctx.font = "10px monospace";
-      ctx.fillText("faint contact", sx + pulse + 6, sy + 3);
+      ctx.fillText(c.label ? `${c.label} · faint` : "faint contact", sx + pulse + 6, sy + 3);
       continue;
     }
     // track/id: interpolate across consecutive snapshots, matched by the
@@ -936,17 +1051,32 @@ function drawContacts() {
     drawShip(ent, "enemy", {
       hull: c.tier === 3 ? (c.hull ?? null) : null,
       hullMax: c.hullMax ?? 100,
+      archetype: c.archetype ?? null, // ID-tier only: below it, the wedge
     });
+    if (c.label) {
+      // v5 §3: the designation letter (or callsign once identified)
+      const [lx, ly] = worldToScreen(ent.x, ent.y);
+      ctx.fillStyle = COLORS.enemy;
+      ctx.font = "10px monospace";
+      ctx.fillText(c.label, lx + 14, ly - 10);
+    }
   }
 
-  const ghost = snap.ghost;
-  if ((snap.contacts ?? []).length === 0 && ghost) {
+  // v5 §2: one last-known ghost per lost hostile (they draw even while
+  // other hostiles are live contacts — with several enemies both states
+  // coexist). Falls back to the legacy single ghost.
+  const ghosts = snap.ghosts ?? (snap.ghost && (snap.contacts ?? []).length === 0 ? [snap.ghost] : []);
+  for (const ghost of ghosts) {
     drawShip(ghost, "enemy", { ghost: true });
     const [sx, sy] = worldToScreen(ghost.x, ghost.y);
     const age = Math.max(0, snap.tick - ghost.t);
     ctx.fillStyle = COLORS.ghost;
     ctx.font = "10px monospace";
-    ctx.fillText(`last seen ${age}s ago`, sx + 14, sy + 4);
+    ctx.fillText(
+      `${ghost.label ? `${ghost.label} · ` : ""}last seen ${age}s ago`,
+      sx + 14,
+      sy + 4
+    );
   }
 }
 
@@ -1039,8 +1169,10 @@ function drawInset(you) {
     ctx.fill();
     ctx.globalAlpha = 1;
   }
-  if ((state.lastSnap.contacts ?? []).length === 0 && state.lastSnap.ghost) {
-    const g = state.lastSnap.ghost;
+  const insetGhosts =
+    state.lastSnap.ghosts ??
+    ((state.lastSnap.contacts ?? []).length === 0 && state.lastSnap.ghost ? [state.lastSnap.ghost] : []);
+  for (const g of insetGhosts) {
     const [ex, ey] = toInset(g.x, g.y);
     ctx.strokeStyle = COLORS.ghost;
     ctx.beginPath();
@@ -1059,12 +1191,58 @@ function interpolateById(listKey, id) {
 function drawOrdnance() {
   if (!state.lastSnap) return;
 
+  // v5 §6 probes: a small diamond with a sensor ring (own) or a bare
+  // diamond (detected enemy probe)
+  for (const pr of state.lastSnap.probes ?? []) {
+    const ent = interpolateById("probes", pr.id) ?? pr;
+    const [px, py] = worldToScreen(ent.x, ent.y);
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.rotate(Math.PI / 4);
+    ctx.strokeStyle = pr.own ? COLORS.own : COLORS.enemy;
+    ctx.lineWidth = 1.4;
+    ctx.strokeRect(-4, -4, 8, 8);
+    ctx.restore();
+    if (pr.own) {
+      ctx.strokeStyle = COLORS.own;
+      ctx.globalAlpha = 0.25 + 0.1 * Math.sin(performance.now() / 500);
+      ctx.beginPath();
+      ctx.arc(px, py, 14, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = COLORS.own;
+      ctx.font = "9px monospace";
+      ctx.fillText(`P${pr.idx ?? "?"}`, px + 10, py - 8);
+    }
+  }
+
+  // v5 §5 rail slugs: a hot hypervelocity streak along the velocity vector
+  for (const sl of state.lastSnap.slugs ?? []) {
+    const ent = interpolateById("slugs", sl.id) ?? sl;
+    const [sx, sy] = worldToScreen(ent.x, ent.y);
+    const sp = Math.hypot(sl.vx, sl.vy) || 1;
+    const trail = Math.max(14, sp * 0.06 * camera.zoom); // ~0.06 s of travel
+    const tx = sx - (sl.vx / sp) * trail;
+    const ty = sy + (sl.vy / sp) * trail;
+    const grad = ctx.createLinearGradient(sx, sy, tx, ty);
+    grad.addColorStop(0, sl.own ? "#e8fff9" : "#ffe8e8");
+    grad.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(tx, ty);
+    ctx.stroke();
+  }
+
   // missiles: small but loud — glow, hot dot, engine trail
   for (const m of state.lastSnap.missiles ?? []) {
     const ent = interpolateById("missiles", m.id);
     if (!ent) continue;
     const [sx, sy] = worldToScreen(ent.x, ent.y);
-    const color = m.own ? COLORS.own : COLORS.enemy;
+    const color = state.lastSnap.spectator && m.owner !== undefined
+      ? spectatorTint(m.owner)
+      : m.own ? COLORS.own : m.ally ? COLORS.ally : COLORS.enemy;
     // engine trail only while burning — a coasting torpedo is a bare dot
     if (m.burning !== false) {
       const speed = Math.hypot(m.vx, m.vy) || 1;

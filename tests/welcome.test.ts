@@ -26,13 +26,17 @@ const fakeWs = () => {
   match.destroy();
 }
 
-// 1v1: the existing welcome still fires for both captains when B joins
+// 1v1: the welcome fires for both captains when the creator launches
+// (v5 §2: joining fills a lobby seat; the match starts on LAUNCH)
 {
   const wsA = fakeWs();
   const wsB = fakeWs();
   const match = Match.createRoom("WLCM", wsA as any);
   assert(!wsA.sent.some((m) => m.type === "transcript" && /out there somewhere/.test(m.text)), "no welcome while waiting for opponent");
   match.joinOrReconnect(wsB as any);
+  assert(!wsA.sent.some((m) => m.type === "transcript" && /out there somewhere/.test(m.text)), "no welcome before launch");
+  const err = match.launch(wsA as any);
+  assert(err === null, "creator launches with 2 captains");
   for (const [name, ws] of [["A", wsA], ["B", wsB]] as const) {
     const welcomes = ws.sent.filter(
       (m) => m.type === "transcript" && /Enemy ship is out there somewhere/.test(m.text)

@@ -26,10 +26,42 @@ export const EDGE_PULL_CAP_MPS2 = 150;
 
 // Ship. Full tank = 100 s of hard burn = 6000 m/s of delta-v: propellant is
 // a delta-v budget — enough to reach flank speed and kill it once.
-export const MAX_SPEED_MPS = 3000; // LINKED to region size + EDGE_PULL tuning (the missile-speed link was broken deliberately in v4.5)
-export const ACCEL_FULL_THRUST_MPS2 = 60; // ~6g hard burn; top speed in ~50 s
-export const TURN_RATE_DEG_PER_SEC = 20;
-export const HULL_POINTS = 100;
+export const MAX_SPEED_MPS = 3000; // LINKED to region size + EDGE_PULL tuning (the missile-speed link was broken deliberately in v4.5); SHARED across archetypes (identity lives in accel/turn/sig)
+export const ACCEL_FULL_THRUST_MPS2 = 60; // ~6g hard burn; top speed in ~50 s. LINKED: == ARCHETYPES.frigate.accel (the baseline; drone + static prompt use this)
+export const TURN_RATE_DEG_PER_SEC = 20; // LINKED: == ARCHETYPES.frigate.turn
+export const HULL_POINTS = 100; // LINKED: == ARCHETYPES.frigate.hull
+
+// v5 §4: ship archetypes — NUMBERS ONLY for v5 (design policy: stat
+// blocks, no special abilities; the railgun loadout row is the first
+// sanctioned asymmetry). The FRIGATE row IS the v4 baseline — its values
+// are LINKED to the legacy globals below and must never drift from them.
+// Corvette: the ghost — dim, fast-cycling, deception-rich, best eyes, no
+// rail (a railgun is a spinal mount; the corvette's keel can't take one).
+// Cruiser: the thunderstorm — audible at map scale perpetually (sig 45
+// cannot hide; intended), deep magazines, wins by making you come to it.
+// railguns/railSlugs (§5) and probes (§6) are declared here so a loadout
+// is one row; the weapons land in their own build-order steps.
+export type ArchetypeName = "corvette" | "frigate" | "cruiser";
+export interface ArchetypeStats {
+  hull: number;
+  accel: number; // m/s² at full thrust
+  turn: number; // deg/s
+  sigBase: number; // signature of a drifting dark hull
+  sensorBase: number; // m; detection = sensorBase x target sig / 100
+  tubes: number;
+  magazine: number; // missiles aboard total (tubes start loaded from it)
+  tubeReload: number; // s
+  decoys: number;
+  pdcAmmoS: number;
+  railguns: 0 | 1;
+  railSlugs: number;
+  probes: number;
+}
+export const ARCHETYPES: Record<ArchetypeName, ArchetypeStats> = {
+  corvette: { hull: 60, accel: 85, turn: 28, sigBase: 20, sensorBase: 210000, tubes: 1, magazine: 4, tubeReload: 20, decoys: 6, pdcAmmoS: 40, railguns: 0, railSlugs: 0, probes: 4 },
+  frigate:  { hull: 100, accel: 60, turn: 20, sigBase: 30, sensorBase: 180000, tubes: 2, magazine: 6, tubeReload: 30, decoys: 4, pdcAmmoS: 60, railguns: 1, railSlugs: 20, probes: 2 },
+  cruiser:  { hull: 160, accel: 40, turn: 14, sigBase: 45, sensorBase: 160000, tubes: 3, magazine: 9, tubeReload: 30, decoys: 4, pdcAmmoS: 90, railguns: 1, railSlugs: 30, probes: 1 },
+};
 
 // Signature & detection: DETECTION IS THE GAME. Drive plumes are visible
 // across enormous distances; going dark is the only stealth.
@@ -37,7 +69,7 @@ export const HULL_POINTS = 100;
 // v4.3 rebase: SIG_BASE 10 -> 30, SENSOR_BASE_M 165 -> 180 km — playtest
 // showed stealth was FREE (dark = off-switch); dark is now an edge: a
 // drifter is still contact-visible at ~54 km, just not lockable until ~32.
-export const SIG_BASE = 30; // a drifting dark ship
+export const SIG_BASE = 30; // a drifting dark ship. LINKED: == ARCHETYPES.frigate.sigBase
 export const SIG_SPIKE_LAUNCH = 150; // missile launch flash (replaces the flat reveal)
 export const SIG_SPIKE_LAUNCH_S = 5;
 export const SIG_SPIKE_PDC = 50; // PDC firing (used by v4 §6)
@@ -46,7 +78,7 @@ export const MISSILE_SIG_BURNING = 80;
 export const MISSILE_SIG_COASTING = 8; // a ballistic torpedo is nearly invisible. Intended. Terrifying.
 // detection_range = SENSOR_BASE_M x (signature / 100), LOS permitting
 // -> full burn (130) seen at ~234 km; 50% cruise (80) at ~144 km; dark drift (30) at ~54 km
-export const SENSOR_BASE_M = 180000;
+export const SENSOR_BASE_M = 180000; // LINKED: == ARCHETYPES.frigate.sensorBase
 // v4.5 hearing channel: a second, concentric information ring driven by the
 // SAME signature. Beyond detection but within hearing, an emitter produces a
 // RUMBLE: bearing only — no range, no vector, no tier. Rocks/dust do NOT
@@ -72,6 +104,62 @@ export const PING_COOLDOWN_S = 30;
 // can tear open behind rocks/dust without a client-side raycast port.
 export const PING_SHADOW_SAMPLES = 180; // 2 deg resolution
 
+// v5 §5: the railgun (Frigate & Cruiser; the corvette's keel can't take a
+// spinal mount). SOLUTION mode computes constant-velocity lead against a
+// TRACK-or-better contact and fires immediately (no lock timer — the slug
+// can't be guided, so there's nothing to hold): deadly against ballistic
+// targets, and ANY thrust during flight breaks the assumption. This is the
+// designed anti-drifter — every posture now has a predator (missiles
+// punish burners, rails punish coasters, PDCs punish missiles). BEARING
+// mode is a manual skill shot. Slugs are physical: rocks stop them, they
+// can hit missiles/decoys/probes en route, they check NO IFF (the game's
+// only friendly-fire vector), and PDCs cannot engage them.
+// Dodge math for the tuning pair (speed, hit radius): at 60 m/s² a
+// reacting target displaces ~190 m over a 20 km shot (flight ~3.3 s) —
+// dodgeable when alert; a drifter displaces 0.
+export const RAIL_SLUG_SPEED_MPS = 6000; // LINKED: 2x MAX_SPEED_MPS, 2.5x MISSILE_MAX_SPEED_MPS — must far exceed ship speed or the weapon has no envelope
+export const RAIL_HIT_RADIUS_M = 100; // swept-segment collision, MANDATORY (invariant 6)
+export const RAIL_DAMAGE = 25;
+export const RAIL_COOLDOWN_S = 6;
+export const RAIL_SIG_SPIKE = 80; // rail fire is HEARD; "if you hear rail fire, burn"
+export const RAIL_SIG_SPIKE_S = 3;
+// Not in the handoff: slugs need an end. 60 s covers a full map crossing
+// at worst-case closing speeds (6 km/s + inherited 3 km/s = 540 km).
+export const RAIL_SLUG_LIFETIME_S = 60;
+// A slug has no drive — it is nearly invisible in flight (the FIRING is
+// what you hear). Same near-nothing signature as a coasting torpedo.
+export const RAIL_SLUG_SIG = 8;
+
+// v5 §6: sensor probes — remote ears (and reduced eyes). A probe is
+// implementation-wise a decoy with sensors: burn-and-drift ballistics,
+// findable if hunted (PDCs engage it, slugs hit it, seekers can grab it),
+// and it RELAYS its picture to the owning captain live, merged into their
+// map with "via probe" provenance. All fog rules apply FROM THE PROBE'S
+// POSITION (it can be LOS-blocked; it hears through terrain). The design
+// payoff: a rumble heard by your ship AND your probe = two bearing
+// chevrons = a human-triangulated fix — the XO still never triangulates
+// (deliberately human skill, v4.5 law). Probe-relayed tiers deliberately
+// do NOT feed missile locks (the information ladder: probes FIND ships;
+// locks need your own sensors). Counts per archetype; no reloads.
+export const PROBE_ACCEL_MPS2 = 150; // along the launch bearing, then drifts
+export const PROBE_BURN_S = 20;
+export const PROBE_LIFETIME_S = 180;
+export const PROBE_SENSOR_BASE_M = 60000; // reduced eyes; FULL hearing (same multiplier)
+export const PROBE_SIGNATURE = 25; // findable if hunted
+
+// v5 §7: ship-to-ship comms. BROADCAST reaches every captain and costs a
+// COMMS SPIKE on the hearing channel — a bearing chevron for everyone,
+// with the sender's CALLSIGN attached (voiceprint): talking is a tactical
+// act. TIGHTBEAM is private and needs a current TRACK on the recipient
+// (you must know where to point the dish) — except teammates, always
+// reachable (fleet encryption): no spike, no reveal. Delivery is
+// VERBATIM: the receiving XO reads the message aloud. Relayed messages
+// are the game's only unbounded dynamic TTS — the char cap is the cost
+// control.
+export const COMMS_SPIKE_S = 5;
+export const COMMS_COOLDOWN_S = 10; // per channel per ship
+export const MESSAGE_MAX_CHARS = 140;
+
 // Contact tiers, as fractions of the computed detection range:
 export const TIER_FAINT_FRAC = 1.0; // approximate position only, no vector
 export const TIER_TRACK_FRAC = 0.6; // true position + velocity, continuous
@@ -93,8 +181,8 @@ export const LOCK_TIME_S = 5; // continuous seconds in cone+range+tracked to acq
 export const LOCK_GRACE_S = 2; // integer: honest at 1 Hz tick; favors lock stability
 
 // Launch tubes
-export const TUBE_COUNT = 2;
-export const TUBE_RELOAD_S = 30; // per tube, tubes reload in parallel (v4.5: a full salvo is FELT — staggered fire is doctrine)
+export const TUBE_COUNT = 2; // LINKED: == ARCHETYPES.frigate.tubes
+export const TUBE_RELOAD_S = 30; // LINKED: == ARCHETYPES.frigate.tubeReload. Per tube, tubes reload in parallel (v4.5: a full salvo is FELT — staggered fire is doctrine)
 export const AUTO_RELOAD = true; // reload_tubes verb is a no-op while true
 
 // PDCs (point-defense cannons; replaced the laser in v4 §6). Automated,
@@ -105,14 +193,14 @@ export const PDC_RANGE_M = 8000; // vs inbound missiles, LOS required
 export const PDC_KILL_PROB_PER_S = 0.25; // per engaged missile, substep-scaled
 export const PDC_SHIP_RANGE_M = 3000; // vs enemy ships, LOS required
 export const PDC_SHIP_DPS = 5; // continuous hull damage
-export const PDC_AMMO_S = 60; // seconds of cumulative fire; no regeneration
+export const PDC_AMMO_S = 60; // seconds of cumulative fire; no regeneration. LINKED: == ARCHETYPES.frigate.pdcAmmoS
 
 // Missiles: burn-and-coast torpedoes. MAGAZINE is everything aboard:
 // TUBE_COUNT start loaded, the rest are reserves (6 total shots per match).
 // Engine is ON whenever (below max speed) OR (turning to track); engine-on
 // drains propellant at 1/s. Dry = BALLISTIC: no accel, no turning, flies its
 // line until lifetime, impact, or PDC kill — still detonates on prox.
-export const MISSILE_MAGAZINE = 6;
+export const MISSILE_MAGAZINE = 6; // LINKED: == ARCHETYPES.frigate.magazine
 // v4.5 retune: engagements actually start 20-50 km (post sensor rebase),
 // which was inside the old 6 km/s missile's no-counterplay zone. 2400 m/s
 // is deliberately BELOW MAX_SPEED_MPS (0.8x): outrunning the burn is a
@@ -148,7 +236,7 @@ export const MISSILE_DAMAGE = 35;
 // faint/track contact to enemy SHIP sensors (~180 km) — strategic deception;
 // it resolves as a decoy only at ID tier. (v4.3 retune 90 -> 100 with the
 // SIG_BASE rebase.)
-export const DECOY_SUPPLY = 4;
+export const DECOY_SUPPLY = 4; // LINKED: == ARCHETYPES.frigate.decoys
 export const DECOY_LIFETIME_S = 60; // v4.5: matches longer missile flights; a decoy drifts convincingly for a full minute as a fake contact
 export const DECOY_SIGNATURE = 100;
 export const DECOY_DRIFT_MPS = 10; // small random drift added on ejection
@@ -173,11 +261,39 @@ export const COLLISION_LETHAL_AT_MPS = 1500;
 export const COLLISION_RESTITUTION = 0.5; // bounce: reflect + dampen normal component
 export const COLLISION_WARNING_S = 20; // project own velocity this far ahead
 
-// Spawn
-export const SPAWN_DIST_FROM_CENTER_M = 150000; // LINKED to REGION_RADIUS_M (60%): opposite sides, 300 km apart, facing each other, v=0
+// Spawn (v5 §2): captains spawn evenly spaced on a ring, facing center,
+// v=0 — two players land on opposite sides, 300 km apart (the v4 geometry).
+// Teams spawn on opposite arcs, teammates spaced along theirs.
+export const SPAWN_RING_RADIUS_M = 150000; // LINKED to REGION_RADIUS_M (60%)
+export const TEAM_SPAWN_SPACING_M = 40000; // teammate spacing along the team arc
 
-// Match lifecycle
-export const DISCONNECT_GRACE_S = 60; // pause sim awaiting reconnect, then forfeit
+// Callsigns & contact designations (v5 §3)
+// Permanent per-ship callsigns, assigned at match start (never typed).
+// Known to an observer only at/after ID tier (or via a §7 broadcast
+// voiceprint) — leaking one earlier is a fog bug.
+export const CALLSIGN_POOL = [
+  "Kestrel", "Vagrant", "Mako", "Aurora", "Bastion", "Wraith", "Halcyon", "Sable",
+];
+// Per-observer track labels in acquisition order ("Contact Alpha", ...).
+// Wraps with -2 suffixes if a long match burns the alphabet.
+export const DESIGNATION_LETTERS = [
+  "Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel",
+  "India", "Juliet", "Kilo", "Lima", "Mike", "November", "Oscar", "Papa",
+  "Quebec", "Romeo", "Sierra", "Tango", "Uniform", "Victor", "Whiskey",
+  "X-ray", "Yankee", "Zulu",
+];
+// A lost track reacquired within this window (and physically plausibly —
+// within max-speed reach of its last known fix) keeps its letter;
+// otherwise the XO can't correlate and opens a NEW letter (identification
+// resets with it).
+export const CONTACT_CORRELATE_S = 60;
+
+// Match lifecycle (v5 §2)
+export const MAX_PLAYERS = 8; // captains per room; spectators unlimited
+// A disconnected captain's ship becomes a drifting GHOST (thrust 0,
+// standing orders suspended, PDCs on last posture) until reconnect or this
+// timer scuttles it quietly. Replaces the v4 pause-and-forfeit.
+export const DISCONNECT_FORFEIT_S = 120;
 
 // Practice drone (exempt from propellant; thrust exists only as signature).
 // With terrain it patrols waypoints among the rocks and dust (so solo

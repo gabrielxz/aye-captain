@@ -15,7 +15,11 @@
             "set_thrust",
             "set_heading",
             "set_pdc",
+            "set_lock_target",
             "fire_missile",
+            "fire_railgun",
+            "launch_probe",
+            "transmit",
             "reload_tubes",
             "deploy_decoy",
             "maneuver",
@@ -68,14 +72,16 @@
           "description": "REQUIRED for mode=relative. port = counterclockwise, starboard = clockwise. The LLM maps 'left'->port, 'right'->starboard."
         },
         "target": {
-          "enum": ["enemy_ship", "nearest_missile", "nearest_decoy", "nearest_contact"],
-          "description": "REQUIRED for mode=target. SNAPSHOT semantics: the server resolves the target's bearing ONCE, at execution, and it becomes a fixed goal heading — the ship does NOT track continuously. Inside standing-order actions, each trigger re-snapshots at trigger time. 'enemy_ship' resolves to the tracked position at tier >= 2, the approximate faint fix at tier 1, or last-known otherwise."
+          "type": "string",
+          "description": "REQUIRED for mode=target. CONTINUOUS tracking: the helm re-resolves the target's bearing every tick and keeps the nose on it until a new heading or maneuver order replaces the goal — 'point at him' and 'keep facing him' are the same order. Accepts the keywords enemy_ship / nearest_missile / nearest_decoy / nearest_contact / nearest_rumble, OR A CONTACT NAME from the CURRENT SHIP STATE contact table: a designation letter ('Bravo', 'Contact Alpha') or an identified callsign ('Kestrel'). Use the exact names the table shows — a name not on the table is rejected. 'enemy_ship' steers by the best-known hostile (with several contacts prefer the specific name the captain used); if a tracked contact drops below faint mid-track the helm holds the last known position and announces it. 'nearest_rumble' points the nose down the loudest rumble's bearing (bearing-only; there is no range below faint)."
         }
       },
       "examples": [
         { "mode": "relative", "direction": "starboard", "degrees": 30 },
         { "mode": "absolute", "degrees": 90 },
-        { "mode": "target", "target": "nearest_missile" }
+        { "mode": "target", "target": "nearest_missile" },
+        { "mode": "target", "target": "nearest_rumble" },
+        { "mode": "target", "target": "Bravo" }
       ]
     },
 
@@ -87,6 +93,55 @@
         "posture": { "enum": ["free", "hold"] }
       },
       "examples": [ { "posture": "hold" }, { "posture": "free" } ]
+    },
+
+    "set_lock_target": {
+      "description": "Designate WHICH contact the missile lock builds on (v5: several hostiles may be on the board). Takes a contact name from the CURRENT SHIP STATE contact table — a designation letter ('Bravo') or an identified callsign ('Kestrel'). The lock still needs the target within lock cone/range at TRACK or better for the lock time; designation just aims the seeker head. Without a designation the lock auto-picks the nearest eligible hostile. Emit this when the captain names WHO to lock ('lock up Bravo', 'target Kestrel'); usually paired with set_heading at the same contact so the nose brings it into the cone.",
+      "type": "object",
+      "required": ["contact"],
+      "properties": {
+        "contact": { "type": "string", "description": "Contact-table name: designation letter or identified callsign." }
+      },
+      "examples": [ { "contact": "Bravo" }, { "contact": "Kestrel" } ]
+    },
+
+    "fire_railgun": {
+      "description": "Fire the railgun (Frigate and Cruiser only — a Corvette mounts none; say so in character). Two modes. SOLUTION (default): the XO computes a constant-velocity firing solution against a TRACK-or-better contact and fires IMMEDIATELY — no lock timer, nothing to hold. Deadly against a coasting/ballistic target; ANY thrust by the target during the slug's flight breaks the solution and it misses ('any thrust beats a solution'). Optional target: a contact-table name; omitted = the nearest tracked hostile. BEARING: a manual skill shot straight down bearing_degrees (or the nose if omitted) — no requirements. Slugs fly at 6 km/s, pure ballistics: rocks stop them, PDCs cannot, they check NO IFF (in team games a slug will hit a friend in the line of fire), and firing is HEARD map-wide-ish ('if you hear rail fire, burn'). 6 s recharge between shots; slugs do not resupply.",
+      "type": "object",
+      "properties": {
+        "mode": { "enum": ["solution", "bearing"], "description": "Default solution." },
+        "target": { "type": "string", "description": "Solution mode: contact-table name (letter or identified callsign). Omitted = nearest tracked hostile." },
+        "bearing_degrees": { "type": "number", "description": "Bearing mode: compass bearing to fire down. Omitted = straight out the nose." }
+      },
+      "examples": [
+        { "mode": "solution" },
+        { "mode": "solution", "target": "Bravo" },
+        { "mode": "bearing", "bearing_degrees": 90 }
+      ]
+    },
+
+    "launch_probe": {
+      "description": "Launch a sensor probe down a bearing (or straight out the nose if omitted). The probe burns hard for 20 s along that fixed line, then drifts for its ~3-minute life, RELAYING its own sensor picture back live: contacts it earns (reduced eyes, 60 km base) and rumbles it hears (full hearing) merge into the captain's map marked 'via probe'. All fog applies from the probe's position. Probes are findable and killable (PDCs, slugs, seekers). Supply is per-archetype and does NOT reload — corvettes carry 4, frigates 2, cruisers 1. Two bearings on one rumble (ship + probe) make a human triangulation — the XO never crosses them for you.",
+      "type": "object",
+      "properties": {
+        "bearing_degrees": { "type": "number", "description": "Launch bearing. Omitted = out the nose." }
+      },
+      "examples": [ {}, { "bearing_degrees": 90 } ]
+    },
+
+    "transmit": {
+      "description": "Send a ship-to-ship message. channel 'broadcast': EVERY captain receives it, and transmitting flares a COMMS SPIKE — all captains get a bearing chevron with OUR CALLSIGN attached for 5 s (voiceprint; talking is a tactical act). channel 'tightbeam': private to one recipient — requires a current TRACK on them (you must know where to point the dish), EXCEPT teammates, who are always reachable with no track and no spike. The MESSAGE IS VERBATIM: extract the captain's words exactly — everything after the transmit intent — do not paraphrase, do not sanitize beyond trimming; max 140 chars (truncate gracefully at a word boundary if the captain rambles). The receiving XO reads it aloud attributed to our callsign. 10 s cooldown per channel.",
+      "type": "object",
+      "required": ["channel", "message"],
+      "properties": {
+        "channel": { "enum": ["broadcast", "tightbeam"] },
+        "recipient": { "type": "string", "description": "REQUIRED for tightbeam: a contact-table name (letter or identified callsign) or a teammate's callsign." },
+        "message": { "type": "string", "description": "The captain's words, verbatim." }
+      },
+      "examples": [
+        { "channel": "broadcast", "message": "anyone want to team up on the cruiser?" },
+        { "channel": "tightbeam", "recipient": "Mako", "message": "he's behind the moonlet" }
+      ]
     },
 
     "fire_missile": {
@@ -131,7 +186,7 @@
     },
 
     "maneuver": {
-      "description": "Run an autopilot macro with a defined end state (this does NOT violate the captain-flies-the-ship doctrine; continuous tracking remains removed). full_stop: the helm flips to retrograde, burns at an appropriate throttle, and cuts thrust when speed < 5 m/s; the XO announces start and completion. Cancelled automatically by ANY subsequent set_thrust or set_heading ('belay that' should emit set_thrust with the current setting to take the conn back). Rejected if already stopped.",
+      "description": "Run an autopilot macro with a defined end state. full_stop: the helm flips to retrograde, burns at an appropriate throttle, and cuts thrust when speed < 5 m/s; the XO announces start and completion. Cancelled automatically by ANY subsequent set_thrust or set_heading ('belay that' should emit set_thrust with the current setting to take the conn back). Rejected if already stopped.",
       "type": "object",
       "required": ["type"],
       "properties": {
@@ -257,7 +312,7 @@
             "collision_warning",
             "rumble_present"
           ],
-          "description": "enemy_contact_tier: 0 = no contact, 1 = faint, 2 = track, 3 = id ('if you get a track on him' => gte 2). enemy_range and enemy_bearing_off_nose are KNOWABLE ONLY AT TIER >= 2 — at faint or below the comparison is simply false (unknowable-metric rule). enemy_bearing_off_nose = absolute degrees between our facing and the bearing to the enemy (0 = dead ahead). Booleans (op=eq, value=true/false): missile_inbound (a missile is CURRENTLY detected inbound), have_lock (our missile lock is held), being_painted (the enemy is acquiring or holds a lock on US), in_dust (we are inside a dust cloud), collision_warning (a rock lies on our projected vector). tubes_ready = loaded launch tubes (0-2). pdc_ammo_seconds = seconds of point-defense fire remaining."
+          "description": "v5 MULTI-ENEMY SEMANTICS: enemy_range and enemy_bearing_off_nose refer to the NEAREST TRACKED hostile; enemy_contact_tier is the best tier held on ANY hostile; missile_inbound and being_painted are ANY-source. enemy_contact_tier: 0 = no contact, 1 = faint, 2 = track, 3 = id ('if you get a track on him' => gte 2). enemy_range and enemy_bearing_off_nose are KNOWABLE ONLY with a tracked hostile — otherwise the comparison is simply false (unknowable-metric rule). enemy_bearing_off_nose = absolute degrees between our facing and the bearing to that hostile (0 = dead ahead). Booleans (op=eq, value=true/false): missile_inbound (a hostile missile is CURRENTLY detected inbound), have_lock (our missile lock is held), being_painted (a hostile is acquiring or holds a lock on US), in_dust (we are inside a dust cloud), collision_warning (a rock lies on our projected vector). tubes_ready = loaded launch tubes (0 up to this hull's tube count). pdc_ammo_seconds = seconds of point-defense fire remaining."
         },
         "op": { "enum": ["lt", "lte", "gt", "gte", "eq"] },
         "value": {
@@ -303,24 +358,25 @@
   },
 
   "server_constants_suggested": {
-    "description": "v4 'The Big Dark' tunables. These live server-side (constants.ts is the source of truth), documented here so the LLM prompt and sim agree on the world's shape. All units abstract: distance in meters, speed in m/s, angles in degrees.",
+    "description": "v5 'The Fleet' tunables, refreshed by the §9 audit. These live server-side (constants.ts is the SOURCE OF TRUTH; where docs disagree, constants.ts wins). Units: meters, m/s, degrees, seconds.",
     "tick_rate_hz": 1,
     "physics": { "substeps": 10, "snapshot_rate_hz": 4 },
     "map": {
       "region_radius_m": 250000,
-      "outside_region_effect": "treated as signature-max (tier ID at any range); NO propellant regen; a restoring current (5 m/s^2 per 50 km beyond, cap 50) pulls back toward center — gravity, not walls"
+      "spawn_ring_radius_m": 150000,
+      "outside_region_effect": "treated as signature-max (tier ID at any range); NO propellant regen; a restoring current (300 m/s^2 per 50 km beyond, cap 150) pulls back toward center — gravity, not walls"
     },
-    "ship": {
-      "max_speed_mps": 3000,
-      "accel_at_full_thrust_mps2": 60,
-      "turn_rate_deg_per_sec": 20,
-      "hull_points": 100
+    "archetypes": {
+      "note": "v5: three hulls, NUMBERS ONLY (max speed 3000 m/s shared). CURRENT SHIP STATE names this hull's archetype and live loadout.",
+      "corvette": { "hull": 60, "accel_mps2": 85, "turn_dps": 28, "sig_base": 20, "sensor_base_m": 210000, "tubes": 1, "missiles": 4, "tube_reload_s": 20, "decoys": 6, "pdc_ammo_s": 40, "railguns": 0, "probes": 4 },
+      "frigate": { "hull": 100, "accel_mps2": 60, "turn_dps": 20, "sig_base": 30, "sensor_base_m": 180000, "tubes": 2, "missiles": 6, "tube_reload_s": 30, "decoys": 4, "pdc_ammo_s": 60, "railguns": 1, "rail_slugs": 20, "probes": 2 },
+      "cruiser": { "hull": 160, "accel_mps2": 40, "turn_dps": 14, "sig_base": 45, "sensor_base_m": 160000, "tubes": 3, "missiles": 9, "tube_reload_s": 30, "decoys": 4, "pdc_ammo_s": 90, "railguns": 1, "rail_slugs": 30, "probes": 1 }
     },
     "detection": {
-      "sensor_base_m": 165000,
-      "formula": "detection_range = sensor_base x target_signature / 100, line of sight permitting",
-      "ship_signature": "10 base + effective thrust percent, +150 for 5s after a missile launch, +50 for 3s while PDCs fire",
+      "formula": "detection_range = VIEWER sensor_base x target_signature / 100, line of sight permitting",
+      "ship_signature": "archetype sig base + effective thrust percent, +150 for 5s after a missile launch, +50 for 3s while PDCs fire, +80 for 3s after rail fire",
       "tiers": "id <= 30% of detection range, track <= 60%, faint <= 100%; faint = approximate position only (2 km noise, 5 s refresh), no vector, no lock",
+      "hearing": "beyond detection to 2.5x detection an emitter RUMBLES: bearing only, no range/vector/tier; terrain never blocks hearing",
       "terrain": "rocks block LOS (sensors, locks, seekers, PDC); dust blocks sensors both ways — inside a cloud you are blind and unseen"
     },
     "propellant": {
@@ -336,35 +392,60 @@
       "kill_prob_per_s": 0.25,
       "ship_range_m": 3000,
       "ship_dps": 5,
-      "ammo_seconds_of_fire": 60,
-      "notes": "automated by posture (free/hold); never targets decoys or terrain; firing spikes signature"
+      "notes": "automated by posture (free/hold); sensor-slaved; engages hostile missiles, probes, and knife-range ships; NEVER decoys, terrain, rail slugs, or friendlies (IFF); firing spikes signature; ammo per archetype, no regeneration"
     },
     "missile": {
-      "magazine_total_aboard": 6,
-      "launch_tubes": 2,
-      "tube_reload_seconds": 20,
-      "max_speed_mps": 6000,
-      "acceleration_mps2": 400,
+      "max_speed_mps": 2400,
+      "acceleration_mps2": 150,
       "engine_seconds": 25,
       "flight_model": "burn-and-coast: engine on while below max speed or turning; dry = ballistic (no turns), still detonates on proximity",
       "signature": "80 burning / 8 coasting",
       "launch_delay_ticks": 2,
-      "acquisition_cone_degrees": 60,
+      "seeker_base_m": 40000,
+      "acquisition_cone_degrees": 30,
       "proximity_fuse_m": 200,
+      "arming_distance_m": 3000,
       "lifetime_s": 120,
-      "damage": 35
+      "damage": 35,
+      "iff": "seekers and prox fuses ignore friendly ships/decoys/probes (teams)"
     },
     "missile_lock": {
       "cone_half_angle_degrees": 30,
       "range_m": 80000,
       "time_to_acquire_s": 5,
       "grace_s": 2,
-      "notes": "LOCK REQUIRES TIER_TRACK OR BETTER — a faint contact cannot be locked; the target always feels being painted (RWR)"
+      "notes": "LOCK REQUIRES TIER_TRACK OR BETTER ON YOUR OWN SENSORS — probe-relayed tracks and faint contacts cannot be locked; the designated target always feels being painted (RWR); set_lock_target picks WHO, else nearest eligible"
+    },
+    "railgun": {
+      "slug_speed_mps": 6000,
+      "damage": 25,
+      "cooldown_s": 6,
+      "hit_radius_m": 100,
+      "sig_spike": "+80 for 3 s — rail fire is HEARD with a bearing",
+      "notes": "frigate/cruiser only; solution mode needs a TRACK and misses any target that thrusts during flight; slugs check NO IFF, are stopped by rocks and hulls, obliterate ordnance en route, and cannot be engaged by PDCs"
+    },
+    "probe": {
+      "burn_s": 20,
+      "accel_mps2": 150,
+      "lifetime_s": 180,
+      "sensor_base_m": 60000,
+      "signature": 25,
+      "notes": "relays contacts + rumbles from ITS position, marked 'via probe'; full hearing; relayed tracks never feed locks; killable (PDCs, slugs, seekers); no reloads"
+    },
+    "comms": {
+      "spike_s": 5,
+      "cooldown_s_per_channel": 10,
+      "message_max_chars": 140,
+      "notes": "broadcast = everyone + a bearing chevron with the sender's CALLSIGN (voiceprint); tightbeam = private, needs a current track (teammates exempt)"
     },
     "decoy": {
-      "supply": 4,
-      "lifetime_seconds": 20,
-      "signature": 150
+      "supply": "per archetype",
+      "lifetime_seconds": 60,
+      "signature": 100
+    },
+    "teams": {
+      "transponders": "teammates always at ID on each other's maps, full state; NOTHING else shared — no fused contacts/rumbles/probe feeds",
+      "iff": "guided weapons ignore friendlies; RAIL SLUGS AND COLLISIONS CHECK NOTHING"
     },
     "terrain": {
       "rocks": "30 x 1-8 km radius + one ~15 km centerpiece; solid (collision damage above 50 m/s, lethal ~1500 m/s)",
@@ -392,6 +473,67 @@
               "actions": [ { "verb": "fire_missile", "params": {} } ],
               "repeat": false
           }, "acknowledgement": "Tube one will fire the moment we have him." }
+        ]
+      },
+      {
+        "captain": "Keep us pointed at him",
+        "commands": [
+          { "verb": "set_heading", "params": { "mode": "target", "target": "enemy_ship" }, "acknowledgement": "Helm's on him — we'll hold the nose there." }
+        ]
+      },
+      {
+        "captain": "Point us at Bravo",
+        "commands": [
+          { "verb": "set_heading", "params": { "mode": "target", "target": "Bravo" }, "acknowledgement": "Helm's on Bravo." }
+        ]
+      },
+      {
+        "captain": "Lock up Kestrel and fire when you have him",
+        "commands": [
+          { "verb": "set_lock_target", "params": { "contact": "Kestrel" }, "acknowledgement": "Seeker head on Kestrel." },
+          { "verb": "set_heading", "params": { "mode": "target", "target": "Kestrel" } },
+          { "verb": "set_standing_order", "params": {
+              "label": "fire on lock",
+              "condition": { "metric": "have_lock", "op": "eq", "value": true },
+              "actions": [ { "verb": "fire_missile", "params": {} } ],
+              "repeat": false
+          }, "acknowledgement": "Tube one fires the moment the lock lands." }
+        ]
+      },
+      {
+        "captain": "Steer for that rumble",
+        "commands": [
+          { "verb": "set_heading", "params": { "mode": "target", "target": "nearest_rumble" }, "acknowledgement": "Coming onto the rumble's bearing." }
+        ]
+      },
+      {
+        "captain": "Put a slug on that solution",
+        "commands": [
+          { "verb": "fire_railgun", "params": { "mode": "solution" }, "acknowledgement": "" }
+        ]
+      },
+      {
+        "captain": "Rail on bearing zero nine zero",
+        "commands": [
+          { "verb": "fire_railgun", "params": { "mode": "bearing", "bearing_degrees": 90 }, "acknowledgement": "" }
+        ]
+      },
+      {
+        "captain": "Probe out, bearing zero nine zero",
+        "commands": [
+          { "verb": "launch_probe", "params": { "bearing_degrees": 90 }, "acknowledgement": "" }
+        ]
+      },
+      {
+        "captain": "Broadcast: anyone want to team up on the cruiser?",
+        "commands": [
+          { "verb": "transmit", "params": { "channel": "broadcast", "message": "anyone want to team up on the cruiser?" }, "acknowledgement": "" }
+        ]
+      },
+      {
+        "captain": "Tightbeam Mako: he's behind the moonlet, come around the north side",
+        "commands": [
+          { "verb": "transmit", "params": { "channel": "tightbeam", "recipient": "Mako", "message": "he's behind the moonlet, come around the north side" }, "acknowledgement": "" }
         ]
       },
       {
@@ -593,6 +735,7 @@
     "rules": [
       "Emit only valid commands from this schema. If the captain's intent maps to no verb, emit no command and have the acknowledgement explain what the ship can and cannot do.",
       "Ambiguity policy: make a reasonable interpretation and state it in the acknowledgement rather than asking clarifying questions. Misinterpretation is part of the game; stalling is not.",
+      "CONTACT NAMES: the CURRENT SHIP STATE contact table lists this captain's designations ('Contact Alpha', 'Contact Bravo') and identified callsigns. When the captain names one, pass that exact name as the set_heading target / set_lock_target contact. 'him'/'the contact' with several contacts on the table = the nearest tracked one — say which in the acknowledgement ('On Bravo — the near one'). NEVER use a callsign that is not on the table: unidentified ships have no names yet.",
       "Compound utterances may emit up to 4 commands, executed in order.",
       "Never invent game state. Use query for anything the captain asks about; the acknowledgement for a query is written AFTER the server returns the snapshot.",
       "Conditional phrasing ('if', 'when', 'as soon as', 'the moment') always becomes set_standing_order, never immediate execution.",
@@ -606,10 +749,13 @@
       "A reply-only element (acknowledgement with no verb) must NEVER claim an action was taken — no 'PDCs holding', no 'coming about'. It explains what the ship can and cannot do, or states your interpretation problem. IF YOU CAN NAME THE ACTION, EMIT THE VERB: understanding the intent well enough to describe the action means you emit the command, not a reply.",
       "Vague quantities get sensible defaults, stated aloud: 'slow down' -> thrust 25%, 'ease off' -> reduce by ~25 points, 'hard about' -> relative 180.",
       "Acknowledgements are at most 12 words. Every word is spoken aloud by the ship's voice — brevity is a feature.",
-      "Continuous tracking ('keep facing him', 'stay pointed at him') is not a helm capability: execute a single set_heading target snapshot and say so — you can point the ship on command; the captain flies the ship.",
+      "Continuous tracking IS a helm capability: 'keep facing him', 'stay pointed at him', 'keep the nose on him', 'chase that rumble' all emit a single set_heading mode=target — the helm re-resolves the bearing every tick until a new heading order. Never build a standing order for it; one command does the whole job.",
       "DRIFT vs VECTOR: any request naming the DRIFT ('drift marker', 'show me our drift', 'put our drift on the map') is the persistent overlay — set_overlay. Asking about the VECTOR or the direction of travel ('show me our vector', 'which way are we drifting', 'what's our vector') is a momentary look — show_vector. When in doubt: a request phrased as a STATE ('keep it up', 'leave it on', 'kill/drop it') is set_overlay; a QUESTION is show_vector.",
       "A plain 'fire missile' fires ONE tube (omit the tubes param). Only an explicit salvo ('fire everything', 'both tubes', 'full salvo') uses tubes [1,2].",
-      "Blind fire (guidance='bearing') ONLY when the captain explicitly asks for unlocked/blind/bearing fire. A plain 'fire missile' with no lock stays a locked attempt and gets the server's rejection, which offers blind fire as the follow-up."
+      "Blind fire (guidance='bearing') ONLY when the captain explicitly asks for unlocked/blind/bearing fire. A plain 'fire missile' with no lock stays a locked attempt and gets the server's rejection, which offers blind fire as the follow-up.",
+      "TRANSMIT: the message is VERBATIM — everything after the transmit intent ('broadcast:', 'tell them', 'tightbeam Mako:'), word for word, no paraphrase. Leave the acknowledgement EMPTY (the ship confirms with 'Transmission away.'). 'broadcast'/'hail everyone'/'on the open channel' = broadcast (remind nobody: it flares our position and callsign to all). Naming a recipient = tightbeam.",
+      "PROBE acks: leave the acknowledgement EMPTY — the ship speaks its own launch line. 'probe out'/'launch a probe (down) bearing X' = launch_probe. Probes are the tooling for rumble triangulation: if the captain wants a fix on a rumble, a probe off-axis gives the second bearing — suggest it only when asked how.",
+      "RAILGUN acks: leave the acknowledgement EMPTY — the ship speaks its own stock line on fire ('Solution ready — firing.' / 'Slug away.'). 'put a slug on him/that solution' = fire_railgun solution; naming a bearing ('rail on 090') = bearing mode. The rail is a snapshot, not a duel-opener: remind the captain only when relevant that a thrusting target will dodge a solution."
     ]
   }
 }

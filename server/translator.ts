@@ -39,7 +39,7 @@ function buildSystemPrompt(): string {
     PERSONA,
 
     `## World constants
-- Max speed ${C.MAX_SPEED_MPS} m/s, full-thrust acceleration ${C.ACCEL_FULL_THRUST_MPS2} m/s^2, turn rate ${C.TURN_RATE_DEG_PER_SEC} deg/s.
+- Max speed ${C.MAX_SPEED_MPS} m/s (all hulls). Baseline FRIGATE: acceleration ${C.ACCEL_FULL_THRUST_MPS2} m/s^2, turn ${C.TURN_RATE_DEG_PER_SEC} deg/s. v5 archetypes differ in numbers only — CORVETTE (fast, dim, 1 tube, no railgun), FRIGATE (baseline), CRUISER (heavy hull, 3 tubes, loud). CURRENT SHIP STATE names this hull's archetype; magazine/decoy/tube counts there are authoritative.
 - Ships drift (Newtonian): rotating does not change velocity. Braking = flip 180 and burn. Turning is free (reaction wheels).
 - Propellant: tank ${C.PROPELLANT_MAX}, burns ${C.PROPELLANT_BURN_AT_FULL}/s at 100% thrust (linear). Regenerates ${C.PROPELLANT_REGEN_PER_S}/s ONLY inside the zone with throttle set <= ${C.REGEN_MAX_THRUST_PCT}%. At zero: no thrust output (setting remembered), ship coasts; turning and weapons still work.
 - Detection: contact tiers. FAINT = approximate position only, no vector, cannot lock. TRACK = true position + velocity, lockable. ID = full detail. Detection range = ${C.SENSOR_BASE_M / 1000} km x (target signature / 100), line of sight permitting: a hard-burning ship shows ~${Math.round((C.SENSOR_BASE_M * (C.SIG_BASE + 100)) / 100 / 1000)} km out, a dark drifter ~${Math.round((C.SENSOR_BASE_M * C.SIG_BASE) / 100 / 1000)} km. Rocks and dust clouds block sensors, locks, and seekers. Region radius ${C.REGION_RADIUS_M / 1000} km.
@@ -76,7 +76,11 @@ const SYSTEM_PROMPT = buildSystemPrompt();
 
 // ---------- validation ----------
 
-const TARGETS = ["enemy_ship", "nearest_missile", "nearest_decoy", "nearest_contact"];
+const TARGETS = ["enemy_ship", "nearest_missile", "nearest_decoy", "nearest_contact", "nearest_rumble"];
+// v5 §3: free-form contact refs — a designation letter or callsign as it
+// appears in the contact table ("Bravo", "Contact Alpha", "Kestrel").
+// Resolution (and rejection of unknown names) happens in the sim.
+const CONTACT_REF = /^[A-Za-z][A-Za-z0-9' -]{0,30}$/;
 const METRICS = [
   "enemy_contact_tier",
   "enemy_range",
@@ -118,7 +122,9 @@ const TOPICS = [
 function validTubesParam(v: unknown): number[] | null {
   if (!Array.isArray(v) || v.length === 0) return null;
   const tubes = v.map(Number);
-  if (tubes.some((n) => !Number.isInteger(n) || n < 1 || n > 2)) return null;
+  // v5 §4: archetypes carry 1-3 tubes (the sim rejects per-ship overs);
+  // 4 leaves headroom for TUBE_NAMES
+  if (tubes.some((n) => !Number.isInteger(n) || n < 1 || n > 4)) return null;
   return [...new Set(tubes)];
 }
 
@@ -186,10 +192,50 @@ export function validateCommand(raw: unknown, nested = false): Command | null {
         return out({ mode: "absolute", degrees: p.degrees });
       }
       if (p.mode === "target") {
-        if (typeof p.target !== "string" || !TARGETS.includes(p.target)) return null;
+        if (typeof p.target !== "string") return null;
+        if (!TARGETS.includes(p.target) && !CONTACT_REF.test(p.target)) return null;
         return out({ mode: "target", target: p.target });
       }
       return null;
+    }
+    case "set_lock_target": {
+      if (typeof p.contact !== "string" || !CONTACT_REF.test(p.contact)) return null;
+      return out({ contact: p.contact });
+    }
+    case "transmit": {
+      if (p.channel !== "broadcast" && p.channel !== "tightbeam") return null;
+      if (typeof p.message !== "string" || p.message.trim().length === 0) return null;
+      const clean: Record<string, unknown> = {
+        channel: p.channel,
+        message: p.message.trim().slice(0, 140),
+      };
+      if (p.channel === "tightbeam") {
+        if (typeof p.recipient !== "string" || !CONTACT_REF.test(p.recipient)) return null;
+        clean.recipient = p.recipient;
+      }
+      return out(clean);
+    }
+    case "launch_probe": {
+      const clean: Record<string, unknown> = {};
+      if (p.bearing_degrees !== undefined) {
+        if (typeof p.bearing_degrees !== "number" || !Number.isFinite(p.bearing_degrees)) return null;
+        clean.bearing_degrees = p.bearing_degrees;
+      }
+      return out(clean);
+    }
+    case "fire_railgun": {
+      const mode = p.mode === "bearing" ? "bearing" : "solution";
+      const clean: Record<string, unknown> = { mode };
+      if (mode === "bearing") {
+        if (p.bearing_degrees !== undefined) {
+          if (typeof p.bearing_degrees !== "number" || !Number.isFinite(p.bearing_degrees)) return null;
+          clean.bearing_degrees = p.bearing_degrees;
+        }
+      } else if (p.target !== undefined) {
+        if (typeof p.target !== "string" || !CONTACT_REF.test(p.target)) return null;
+        clean.target = p.target;
+      }
+      return out(clean);
     }
     case "deploy_decoy":
       return out({});

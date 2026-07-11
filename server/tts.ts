@@ -161,6 +161,36 @@ const STOCK_LINES = [
   "Drift marker up, Captain.",
   "Drift marker down.",
   "We're not drifting anywhere, Captain — nothing to mark yet.",
+  // v5 §1: continuous tracking
+  "Lost him — helm's holding his last known position.",
+  "Contact regained — helm's tracking him again.",
+  "No contact to point at, Captain.",
+  "No rumble to steer on, Captain.",
+  // v5 §3: designations (letter/callsign lines are dynamic — synthesized
+  // on first use and cached; only the fixed shapes pre-generate)
+  "No contact by that name on the board, Captain.",
+  "Contact identified — it's a decoy.",
+  // v5 §5: railgun
+  "Solution ready — firing.",
+  "Slug away.",
+  "Rail's recharging.",
+  "Slugs are out.",
+  "No track for a solution, Captain — I can fire on a bearing.",
+  "This boat doesn't mount a railgun, Captain.",
+  "Rail slug connected.",
+  "We just lost a decoy.",
+  // v5 §6: probes (launch/loss/spent lines carry ordinals and quantized
+  // bearings — bounded dynamic shapes, cached on first use)
+  "No probes left, Captain.",
+  // v5 §7: comms
+  "Transmission away.",
+  "Broadcast array is recycling, Captain.",
+  "Tightbeam dish is recycling, Captain.",
+  "No track on them — I can't point the dish, Captain.",
+  "Nothing to send, Captain.",
+  "Tightbeam to whom, Captain?",
+  // v5 §8: teams
+  "They're squawking friendly, Captain.",
 ];
 
 // Sequential on purpose: ElevenLabs free/low tiers have tight concurrency

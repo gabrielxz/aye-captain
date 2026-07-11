@@ -91,9 +91,12 @@ const grantLock = (ship: Ship) => {
   assert(specs[0].sent.some((m) => m.type === "spectators"), "rematch re-broadcasts the roster");
 
   // gameover reaches spectators without a youWin verdict
-  (match as any).routeEvent({ kind: "gameover", winner: "A" });
+  (match as any).routeEvent({
+    kind: "gameover", winner: "A", winnerName: "Kestrel",
+    placements: ["A", "B"], placementNames: ["Kestrel", "Drone"],
+  });
   const over = specs[0].sent.find((m) => m.type === "gameover");
-  assert(over?.winner === "A" && over?.youWin === undefined, "spectator gameover names the winner, no youWin");
+  assert(over?.winner === "Kestrel" && over?.youWin === undefined, "spectator gameover names the winner, no youWin");
 
   match.destroy();
 }

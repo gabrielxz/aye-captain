@@ -1,12 +1,13 @@
 // ws handling + client state store
 import { startRenderLoop, bigBoomAt, showVector, setOverlay, resetOverlays, kickShake, camera } from "./render.js";
-import { initUI, addTranscript, updateHUD, showLobbyStatus, enterGame, showBanner, hideBanner, updateWatching, setSpectator } from "./ui.js";
+import { initUI, addTranscript, updateHUD, showLobbyStatus, enterGame, showBanner, hideBanner, updateWatching, setSpectator, showRoomLobby, hideRoomLobby } from "./ui.js";
 import * as audio from "./audio.js";
 
 export const state = {
   config: null, // {zoneRadius, stt} from server hello
   terrain: null, // {seed, rocks[], dust[]} — arrives with each match start
-  role: null, // "A" | "B" | "spectator"
+  role: null, // seat id ("A".."H") | "spectator"
+  team: null, // "red" | "blue" | null (v5 teams mode)
   callsign: null, // spectator callsign (cosmetic, server-assigned)
   practice: false,
   prevSnap: null, // previous snapshot (for interpolation)
@@ -46,7 +47,9 @@ function handleMessage(msg) {
       break;
     case "start":
       state.role = msg.role;
+      state.team = msg.team ?? null;
       state.callsign = msg.callsign ?? null;
+      hideRoomLobby();
       state.practice = !!msg.practice;
       state.terrain = msg.terrain ?? null;
       state.prevSnap = null;
@@ -111,15 +114,18 @@ function handleMessage(msg) {
       const mins = Math.floor(msg.durationS / 60);
       const secs = Math.round(msg.durationS % 60);
       const timeLine = `match time ${mins}:${String(secs).padStart(2, "0")}`;
+      // v5 §2: banner lists the placements ("A · C · B", winner first)
+      const standings =
+        (msg.placements ?? []).length > 2 ? ` — standings: ${msg.placements.join(" · ")}` : "";
+      const isTeamWin = msg.winner === "red" || msg.winner === "blue";
+      const winnerName = msg.winnerName ?? msg.winner;
+      const winnerLabel = isTeamWin
+        ? `${String(winnerName).toUpperCase()} TEAM WINS`
+        : `${String(winnerName).toUpperCase()} WINS`;
       if (state.role === "spectator") {
         audio.sfxBoom(true, false);
-        const loser = (snap?.ships ?? []).find((s) => s.id !== msg.winner);
-        if (loser) bigBoomAt(loser.x, loser.y);
-        showBanner(
-          `SHIP ${msg.winner} WINS`,
-          msg.forfeit ? "opponent never came back — win by forfeit" : timeLine
-        );
-        addTranscript("sys", `ship ${msg.winner} wins — match over`);
+        showBanner(winnerLabel, (msg.forfeit ? "win by forfeit — " : "") + timeLine + standings);
+        addTranscript("sys", `${isTeamWin ? `team ${winnerName}` : winnerName} wins — match over`);
         break;
       }
       audio.sfxBoom(true, !msg.youWin);
@@ -132,15 +138,17 @@ function handleMessage(msg) {
       }
       showBanner(
         msg.youWin ? "VICTORY" : "SHIP LOST",
-        msg.forfeit
-          ? "opponent never came back — win by forfeit"
-          : timeLine
+        (msg.forfeit ? "win by forfeit — " : "") + timeLine + standings
       );
       addTranscript("sys", msg.youWin ? "Enemy ship destroyed. Well fought, Captain." : "Hull breach — we're done. Abandon ship.", !msg.youWin);
       break;
     }
     case "created":
-      showLobbyStatus(`ROOM CODE: ${msg.code} — waiting for opponent...`);
+      showLobbyStatus(`ROOM CODE: ${msg.code}`);
+      break;
+    case "lobby":
+      // v5 §2: roster/config while the room fills; creator launches
+      showRoomLobby(msg);
       break;
     case "error":
       showLobbyStatus(msg.message);
@@ -152,7 +160,8 @@ function handleMessage(msg) {
       break;
     case "transcript":
       addTranscript(msg.who, msg.text, msg.alert);
-      if (msg.speech) audio.enqueueSpeech(msg.speech, !!msg.alert);
+      // incoming transmissions queue (above acks, below combat warnings)
+      if (msg.speech) audio.enqueueSpeech(msg.speech, !!msg.alert, msg.who === "comms");
       break;
     default:
       console.log("unhandled message", msg);
@@ -237,6 +246,10 @@ function soundFromSnapshot(snap) {
     }
     // decoy deployed (ours)
     if ((you.decoys ?? 0) < prevAudio.decoys) audio.sfxDecoy();
+    // rail fired (ours): slug count dropped (v5 §5 — reuse the launch thunk)
+    if (you.rail && prevAudio.railSlugs !== null && you.rail.slugs < prevAudio.railSlugs) {
+      audio.sfxLaunch(true);
+    }
     // any hull drop we take: rock hits crunch, weapons fire booms — and
     // either way the camera feels it (v4.7 §4.5)
     if (you.hull < prevAudio.hull) {
@@ -251,6 +264,7 @@ function soundFromSnapshot(snap) {
   );
   prevAudio = {
     tubes: (you.tubes ?? []).map((t) => ({ state: t.state })),
+    railSlugs: you.rail ? you.rail.slugs : null,
     enemyMissiles: new Set((snap.missiles ?? []).filter((m) => !m.own).map((m) => m.id)),
     decoys: you.decoys ?? 0,
     hull: you.hull,
@@ -264,7 +278,7 @@ function updateHUDFromSnapshot(snap) {
     // referee panel: just the two hulls (everything else is on the map)
     updateHUD(
       (snap.ships ?? []).map((s) => ({
-        label: `SHIP ${s.id} HULL`,
+        label: `${(s.callsign ?? s.id).toUpperCase()} HULL`,
         value: `${s.hull}/${s.hullMax}${s.drone ? " (drone)" : ""}`,
         cls: s.hull <= s.hullMax * 0.35 ? "alert" : s.hull <= s.hullMax * 0.65 ? "warn" : "",
       }))
@@ -284,16 +298,25 @@ function updateHUDFromSnapshot(snap) {
       : "no lock";
   const painted = you.painted ?? "none";
   const prop = Math.round(you.propellant ?? 0);
-  const contact = (snap.contacts ?? [])[0] ?? null;
-  // each tier names what it buys — the anchor for the XO's "detail
-  // readout" / "track" / "faint" vocabulary (playtest 2026-07-11)
-  const TIER_LABEL = { 1: "FAINT · pos only", 2: "TRACK · lockable", 3: "ID · full readout" };
-  const contactLabel = contact ? TIER_LABEL[contact.tier] ?? "?" : snap.ghost ? "ghost" : "—";
-  const enemyHull = contact?.tier === 3 && contact.hull !== undefined ? `${contact.hull}/${contact.hullMax ?? 100}` : "—";
+  // v5 §3: contacts carry designation labels; each tier names what it buys
+  // (the tier vocabulary anchor, playtest 2026-07-11)
+  const TIER_WORD = { 1: "FAINT", 2: "TRACK", 3: "ID" };
+  const contacts = snap.contacts ?? [];
+  const ghosts = snap.ghosts ?? (snap.ghost ? [snap.ghost] : []);
+  const contactsLine =
+    contacts.length === 0 && ghosts.length === 0
+      ? "—"
+      : [
+          ...contacts.map((c) => `${c.label ?? "?"}·${TIER_WORD[c.tier] ?? "?"}`),
+          ...ghosts.map((g) => `${g.label ?? "ghost"}·lost`),
+        ].join("  ");
+  const idContact = contacts.find((c) => c.tier === 3 && c.hull !== undefined) ?? null;
+  const enemyHull = idContact ? `${idContact.hull}/${idContact.hullMax ?? 100}` : "—";
   updateHUD([
+    { label: "SHIP", value: `${you.callsign ?? state.role ?? "—"}${you.archetype ? ` · ${you.archetype}` : ""}`, cls: "good" },
     { label: "HULL", value: `${you.hull}`, cls: you.hull <= 35 ? "alert" : you.hull <= 65 ? "warn" : "" },
-    { label: "EN HULL", value: enemyHull, cls: contact?.tier === 3 && contact.hull <= (contact.hullMax ?? 100) / 2 ? "good" : "" },
-    { label: "CONTACT", value: contactLabel, cls: contact ? (contact.tier >= 2 ? "good" : "warn") : "" },
+    { label: "EN HULL", value: enemyHull, cls: idContact && idContact.hull <= (idContact.hullMax ?? 100) / 2 ? "good" : "" },
+    { label: "CONTACTS", value: contactsLine, cls: contacts.some((c) => c.tier >= 2) ? "good" : contacts.length ? "warn" : "", full: true },
     { label: "SIG", value: `${Math.round(you.signature ?? 0)}`, cls: (you.signature ?? 0) > 100 ? "alert" : (you.signature ?? 0) > 50 ? "warn" : "good" },
     { label: "THRUST", value: `${Math.round(you.thrust)}%${tanksDry && you.thrust > 0 ? " (DRY)" : ""}`, cls: tanksDry && you.thrust > 0 ? "alert" : "" },
     { label: "SPD", value: `${you.speed} m/s` },
@@ -306,6 +329,23 @@ function updateHUDFromSnapshot(snap) {
       label: "PDC",
       value: `${(you.pdc?.posture ?? "free").toUpperCase()} ${you.pdc?.ammoS ?? 0}s`,
       cls: (you.pdc?.ammoS ?? 0) <= 6 ? "alert" : (you.pdc?.ammoS ?? 0) <= 15 ? "warn" : you.pdc?.posture === "free" ? "good" : "",
+    },
+    {
+      label: "RAIL",
+      // armed classes only (corvettes show a dash)
+      value: you.rail
+        ? you.rail.slugs <= 0
+          ? "OUT"
+          : you.rail.cooldownS > 0
+            ? `${you.rail.cooldownS}s · ${you.rail.slugs}`
+            : `RDY · ${you.rail.slugs}`
+        : "—",
+      cls: you.rail ? (you.rail.slugs <= 0 ? "alert" : you.rail.cooldownS > 0 ? "warn" : "good") : "",
+    },
+    {
+      label: "PROBES",
+      value: `${you.probes ?? 0}${(snap.probes ?? []).some((p) => p.own) ? ` · ${(snap.probes ?? []).filter((p) => p.own).length} out` : ""}`,
+      cls: (snap.probes ?? []).some((p) => p.own) ? "good" : "",
     },
     {
       label: "PING",

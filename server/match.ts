@@ -1,49 +1,74 @@
 // match/room lifecycle, lobby codes
 import type { WebSocket } from "ws";
 import * as C from "./constants.js";
-import { Sim, type Command, type ShipId, type SimEvent } from "./sim.js";
+import {
+  Sim,
+  headingVec,
+  norm360,
+  type Command,
+  type ShipId,
+  type SimEvent,
+} from "./sim.js";
 import { llmAvailable, translateUtterance, phraseQueryAnswer } from "./translator.js";
 import { logUtterance } from "./datalog.js";
 import { ensureSpeech } from "./tts.js";
+
+export type RoomMode = "ffa" | "teams";
+export type Team = "red" | "blue";
+
+const SEAT_IDS = ["A", "B", "C", "D", "E", "F", "G", "H"];
+
+// One captain's chair (v5 §2: up to MAX_PLAYERS of these per room).
+// `dead` marks a captain whose ship is gone — their socket lives on in the
+// spectator pipeline until a rematch seats them again.
+interface Seat {
+  id: ShipId;
+  ws: WebSocket | null;
+  team: Team | null;
+  archetype: C.ArchetypeName; // v5 §4: lobby pick, mirrors allowed
+  dead: boolean;
+}
 
 export class Match {
   sim: Sim;
   readonly code: string | null;
   readonly practice: boolean;
-  private sockets = new Map<ShipId, WebSocket | null>();
+  private seats: Seat[] = [];
+  private mode: RoomMode = "ffa";
+  private launched = false;
   // Spectators (v4.2): cosmetic callsigns, no persistence, no seat. They
-  // receive omniscient snapshots and never appear in the transcript.
+  // receive omniscient snapshots and never appear in the transcript. Dead
+  // captains join this map (keyed by their own socket) keeping their seat.
   private spectators = new Map<WebSocket, string>();
   private timer: ReturnType<typeof setInterval> | null = null; // physics substeps
   private snapTimer: ReturnType<typeof setInterval> | null = null; // snapshot broadcast
-  private forfeitTimer: ReturnType<typeof setTimeout> | null = null;
-  private started = false; // both players have been present at least once
 
   constructor(practice: boolean, code: string | null = null, seed: string = Match.randomSeed()) {
     this.practice = practice;
     this.code = code;
-    this.sim = Match.buildSim(practice, seed);
-    this.sockets.set("A", null);
-    this.sockets.set("B", null);
+    // pre-launch rooms hold an empty sim on the room's terrain seed; launch
+    // replaces it with the spawned field (rematch keeps the seed unless
+    // newField)
+    this.sim = practice ? Match.buildPracticeSim(seed) : new Sim(seed);
   }
 
   static randomSeed(): string {
     return Math.random().toString(36).slice(2, 10);
   }
 
-  // Fresh sim on a terrain seed with the standard spawn: opposite sides of
-  // center, facing each other, v = 0.
-  private static buildSim(practice: boolean, seed: string): Sim {
+  // Practice: the captain plus the drone, on the classic two-point spawn.
+  private static buildPracticeSim(seed: string): Sim {
     const sim = new Sim(seed);
-    sim.addShip("A", 0, -C.SPAWN_DIST_FROM_CENTER_M, 0);
-    sim.addShip("B", 0, C.SPAWN_DIST_FROM_CENTER_M, 180, practice); // drone in practice
+    sim.addShip("A", 0, -C.SPAWN_RING_RADIUS_M, 0, false, null, C.CALLSIGN_POOL[0]);
+    sim.addShip("B", 0, C.SPAWN_RING_RADIUS_M, 180, true, null, "Drone"); // practice target
     return sim;
   }
 
   static createPractice(ws: WebSocket): Match {
     const match = new Match(true);
-    match.attach("A", ws);
-    match.sendStart("A");
+    match.seats.push({ id: "A", ws, team: null, archetype: "frigate", dead: false });
+    match.launched = true;
+    match.sendStart(match.seats[0]);
     match.start();
     // v4.3 welcome: client is connected (start just went out) and audio is
     // already unlocked — clicking PRACTICE was the user gesture.
@@ -59,48 +84,177 @@ export class Match {
     return match;
   }
 
-  // Two-player room: creator becomes ship A and waits for a join.
+  // Room lobby (v5 §2): the creator takes the first seat and configures the
+  // room; captains join until the creator hits LAUNCH.
   static createRoom(code: string, ws: WebSocket): Match {
     const match = new Match(false, code);
-    match.attach("A", ws);
+    match.seats.push({ id: "A", ws, team: null, archetype: "frigate", dead: false });
     ws.send(JSON.stringify({ type: "created", code }));
+    match.broadcastLobby();
     return match;
   }
 
-  // Fill the open slot: first join becomes ship B and starts the match;
-  // later joins with the same code re-occupy a disconnected seat.
-  joinOrReconnect(ws: WebSocket): string | null {
-    const openSlot = (["B", "A"] as ShipId[]).find((id) => !this.sockets.get(id));
-    if (!openSlot) return "room is full — WATCH to spectate";
+  private nextSeatId(): ShipId {
+    const used = new Set(this.seats.map((s) => s.id));
+    return SEAT_IDS.find((id) => !used.has(id)) ?? `P${this.seats.length + 1}`;
+  }
 
-    this.attach(openSlot, ws);
-    if (!this.started) {
-      this.started = true;
-      this.sendStart("A");
-      this.sendStart("B");
-      this.start();
-      for (const id of ["A", "B"] as ShipId[]) {
-        this.sendTranscript(id, "sys", "Enemy ship is out there somewhere. Good hunting, Captain.");
-      }
-    } else {
-      // reconnect: resume the paused match
-      if (this.forfeitTimer) {
-        clearTimeout(this.forfeitTimer);
-        this.forfeitTimer = null;
-      }
-      this.sendStart(openSlot);
-      this.sendTranscript(openSlot, "sys", "Reconnected. Resuming command.");
-      const other: ShipId = openSlot === "A" ? "B" : "A";
-      this.sendTranscript(other, "sys", "Opponent reconnected — fight's back on.");
-      if (!this.sim.winner) this.start();
+  // Pre-launch: take a new seat. Post-launch: reconnect to your ghosted
+  // ship (seat-based, no accounts — first vacant living seat wins).
+  joinOrReconnect(ws: WebSocket): string | null {
+    if (this.launched) {
+      const seat = this.seats.find((s) => !s.dead && s.ws === null && this.sim.ships.has(s.id));
+      if (!seat) return "match underway — WATCH to spectate";
+      seat.ws = ws;
+      this.sim.setGhost(seat.id, false);
+      this.sendStart(seat);
+      this.sendTranscript(seat.id, "sys", "Reconnected. Resuming command.");
+      if (!this.sim.winner && !this.running) this.start();
+      if (this.spectators.size > 0) this.broadcastSpectators();
+      return null;
     }
-    // client "start" handling resets the watching readout — repopulate it
-    if (this.spectators.size > 0) this.broadcastSpectators();
+    if (this.seats.length >= C.MAX_PLAYERS) return "room is full — WATCH to spectate";
+    const seat: Seat = { id: this.nextSeatId(), ws, team: null, archetype: "frigate", dead: false };
+    if (this.mode === "teams") seat.team = this.smallerTeam();
+    this.seats.push(seat);
+    this.broadcastLobby();
     return null;
   }
 
-  private attach(id: ShipId, ws: WebSocket): void {
-    this.sockets.set(id, ws);
+  private smallerTeam(): Team {
+    const red = this.seats.filter((s) => s.team === "red").length;
+    const blue = this.seats.filter((s) => s.team === "blue").length;
+    return red <= blue ? "red" : "blue";
+  }
+
+  // Room creator toggles FFA | Teams before launch.
+  setMode(ws: WebSocket, mode: RoomMode): void {
+    if (this.launched || this.seats[0]?.ws !== ws) return;
+    if (mode !== "ffa" && mode !== "teams") return;
+    this.mode = mode;
+    if (mode === "teams") {
+      for (const seat of this.seats) {
+        if (!seat.team) seat.team = this.smallerTeam();
+      }
+    } else {
+      for (const seat of this.seats) seat.team = null;
+    }
+    this.broadcastLobby();
+  }
+
+  // A captain picks their team (Teams mode, pre-launch).
+  setTeam(ws: WebSocket, team: Team): void {
+    if (this.launched || this.mode !== "teams") return;
+    if (team !== "red" && team !== "blue") return;
+    const seat = this.seats.find((s) => s.ws === ws);
+    if (!seat) return;
+    seat.team = team;
+    this.broadcastLobby();
+  }
+
+  // A captain picks their archetype (pre-launch; mirrors allowed).
+  setArchetype(ws: WebSocket, archetype: C.ArchetypeName): void {
+    if (this.launched) return;
+    if (!(archetype in C.ARCHETYPES)) return;
+    const seat = this.seats.find((s) => s.ws === ws);
+    if (!seat) return;
+    seat.archetype = archetype;
+    this.broadcastLobby();
+  }
+
+  // The creator starts the match (min 2 captains; Teams needs both sides
+  // manned).
+  launch(ws: WebSocket): string | null {
+    if (this.launched) return null;
+    if (this.seats[0]?.ws !== ws) return "only the room creator can launch";
+    if (this.seats.length < 2) return "need at least 2 captains to launch";
+    if (this.mode === "teams") {
+      for (const seat of this.seats) {
+        if (!seat.team) seat.team = this.smallerTeam();
+      }
+      const red = this.seats.some((s) => s.team === "red");
+      const blue = this.seats.some((s) => s.team === "blue");
+      if (!red || !blue) return "both teams need at least one captain";
+    }
+    this.beginMatch(this.sim.terrain.seed);
+    return null;
+  }
+
+  // Build the spawned sim and send everyone in. Shared by launch and
+  // rematch.
+  private beginMatch(seed: string): void {
+    this.stop();
+    this.sim = new Sim(seed);
+    this.spawnShips();
+    this.launched = true;
+    for (const seat of this.seats) {
+      seat.dead = false;
+      if (seat.ws) this.spectators.delete(seat.ws); // dead captains re-seat on rematch
+      this.sendStart(seat);
+      if (seat.ws === null) this.sim.setGhost(seat.id, true); // absent captain starts as a ghost
+    }
+    for (const [ws, callsign] of this.spectators) {
+      if (ws.readyState === ws.OPEN) {
+        ws.send(
+          JSON.stringify({
+            type: "start",
+            role: "spectator",
+            callsign,
+            practice: this.practice,
+            terrain: this.sim.terrain,
+          })
+        );
+      }
+    }
+    if (this.spectators.size > 0) this.broadcastSpectators();
+    this.start();
+    const welcome =
+      this.seats.length > 2
+        ? "Enemy ships are out there somewhere. Good hunting, Captain."
+        : "Enemy ship is out there somewhere. Good hunting, Captain.";
+    for (const seat of this.seats) {
+      this.sendTranscript(seat.id, "sys", welcome);
+    }
+  }
+
+  // v5 §2 spawns: evenly spaced on the spawn ring, facing center, v=0.
+  // Teams take opposite arcs, teammates spaced ~TEAM_SPAWN_SPACING_M along
+  // theirs.
+  private spawnShips(): void {
+    const ring = C.SPAWN_RING_RADIUS_M;
+    // v5 §3: permanent callsigns from the themed pool, shuffled per match
+    // (suffixes only if a room somehow outgrows the pool)
+    const pool = [...C.CALLSIGN_POOL].sort(() => Math.random() - 0.5);
+    const callsignFor = (i: number) =>
+      i < pool.length ? pool[i] : `${pool[i % pool.length]}-${Math.floor(i / pool.length) + 1}`;
+    const place = (seat: Seat, angleDeg: number, i: number) => {
+      const [dx, dy] = headingVec(angleDeg);
+      this.sim.addShip(
+        seat.id,
+        dx * ring,
+        dy * ring,
+        norm360(angleDeg + 180), // face the center
+        false,
+        this.mode === "teams" ? seat.team : null,
+        callsignFor(i),
+        seat.archetype
+      );
+    };
+    if (this.mode === "teams") {
+      const spacingDeg = (C.TEAM_SPAWN_SPACING_M / ring) * (180 / Math.PI);
+      let n = 0;
+      for (const team of ["red", "blue"] as Team[]) {
+        const members = this.seats.filter((s) => s.team === team);
+        const base = team === "red" ? 0 : 180; // opposite arcs
+        members.forEach((seat, i) => {
+          place(seat, base + (i - (members.length - 1) / 2) * spacingDeg, n++);
+        });
+      }
+    } else {
+      this.seats.forEach((seat, i) => {
+        place(seat, (360 / this.seats.length) * i, i);
+      });
+    }
   }
 
   // First unused name from the pool wins; a freed callsign is reusable
@@ -135,6 +289,10 @@ export class Match {
     return this.spectators.has(ws);
   }
 
+  hasSeat(ws: WebSocket): boolean {
+    return this.seats.some((s) => s.ws === ws);
+  }
+
   // Presence roster to everyone in the room. Deliberately silent: no
   // transcript entry, no sound, no XO line — the HUD element is the telling.
   private broadcastSpectators(): void {
@@ -142,22 +300,49 @@ export class Match {
       type: "spectators",
       names: [...this.spectators.values()],
     });
-    for (const ws of this.sockets.values()) {
-      if (ws && ws.readyState === ws.OPEN) ws.send(payload);
+    for (const seat of this.seats) {
+      if (seat.ws && seat.ws.readyState === seat.ws.OPEN && !seat.dead) seat.ws.send(payload);
     }
     for (const ws of this.spectators.keys()) {
       if (ws.readyState === ws.OPEN) ws.send(payload);
     }
   }
 
-  private sendStart(id: ShipId): void {
-    const ws = this.sockets.get(id);
-    if (ws && ws.readyState === ws.OPEN) {
-      // terrain travels with start (per-match, static, known to both sides)
-      ws.send(
+  // Roster + config to everyone still in the lobby (pre-launch only).
+  private broadcastLobby(): void {
+    if (this.launched || this.practice) return;
+    const players = this.seats.map((s, i) => ({
+      id: s.id,
+      team: s.team,
+      archetype: s.archetype,
+      connected: s.ws !== null,
+      creator: i === 0,
+    }));
+    for (const [i, seat] of this.seats.entries()) {
+      if (seat.ws && seat.ws.readyState === seat.ws.OPEN) {
+        seat.ws.send(
+          JSON.stringify({
+            type: "lobby",
+            code: this.code,
+            mode: this.mode,
+            you: seat.id,
+            creator: i === 0,
+            maxPlayers: C.MAX_PLAYERS,
+            players,
+          })
+        );
+      }
+    }
+  }
+
+  private sendStart(seat: Seat): void {
+    if (seat.ws && seat.ws.readyState === seat.ws.OPEN) {
+      // terrain travels with start (per-match, static, known to all)
+      seat.ws.send(
         JSON.stringify({
           type: "start",
-          role: id,
+          role: seat.id,
+          team: seat.team,
           practice: this.practice,
           terrain: this.sim.terrain,
         })
@@ -168,64 +353,41 @@ export class Match {
   detach(ws: WebSocket): void {
     if (this.spectators.has(ws)) {
       this.spectators.delete(ws);
+      // a dead captain leaving also frees their seat's socket
+      for (const seat of this.seats) {
+        if (seat.ws === ws) seat.ws = null;
+      }
       this.broadcastSpectators();
       return; // spectators never pause or forfeit anything
     }
-    let left: ShipId | null = null;
-    for (const [id, sock] of this.sockets) {
-      if (sock === ws) {
-        this.sockets.set(id, null);
-        left = id;
-      }
-    }
-    if (!left) return;
+    const seat = this.seats.find((s) => s.ws === ws);
+    if (!seat) return;
+    seat.ws = null;
 
-    if (this.practice || !this.started || this.sim.winner) {
-      // practice, pre-start room, or finished match: nothing to pause
+    if (!this.launched) {
+      // lobby: the seat is simply given up (the creator role passes down)
+      this.seats = this.seats.filter((s) => s !== seat);
+      this.broadcastLobby();
+      return;
+    }
+    if (this.practice || this.sim.winner) {
       if (this.isEmpty()) this.stop();
       return;
     }
 
-    // live 2-player match: pause and give them DISCONNECT_GRACE_S to return
-    this.stop();
-    const remaining: ShipId = left === "A" ? "B" : "A";
-    this.sendTranscript(
-      remaining,
-      "sys",
-      `Opponent lost comms — holding position. They have ${C.DISCONNECT_GRACE_S}s to reconnect.`,
-      true
-    );
-    this.forfeitTimer = setTimeout(() => {
-      this.forfeitTimer = null;
-      if (this.sim.winner) return;
-      this.sim.winner = remaining;
-      const durationS = this.sim.tickCount / C.TICK_RATE_HZ;
-      const ws2 = this.sockets.get(remaining);
-      if (ws2 && ws2.readyState === ws2.OPEN) {
-        ws2.send(
-          JSON.stringify({
-            type: "gameover",
-            youWin: true,
-            winner: remaining,
-            durationS,
-            forfeit: true,
-          })
-        );
-      }
-      this.sendGameoverToSpectators(remaining, durationS, true);
-    }, C.DISCONNECT_GRACE_S * 1000);
+    // v5 §2: the match does NOT pause — the ship becomes a silent ghost
+    // (thrust 0, standing orders suspended) and quietly scuttles if the
+    // captain doesn't return. Nobody is told: a ghost that stops being a
+    // ghost is information nobody earned.
+    this.sim.setGhost(seat.id, true);
   }
 
   isEmpty(): boolean {
-    return [...this.sockets.values()].every((s) => s === null);
+    return this.seats.every((s) => s.ws === null);
   }
 
   destroy(): void {
     this.stop();
-    if (this.forfeitTimer) {
-      clearTimeout(this.forfeitTimer);
-      this.forfeitTimer = null;
-    }
   }
 
   // Physics advances at substep rate; snapshots broadcast at SNAPSHOT_RATE_HZ
@@ -262,9 +424,9 @@ export class Match {
   }
 
   private broadcast(): void {
-    for (const [id, ws] of this.sockets) {
-      if (ws && ws.readyState === ws.OPEN) {
-        ws.send(JSON.stringify({ type: "snapshot", ...this.sim.snapshotFor(id) }));
+    for (const seat of this.seats) {
+      if (!seat.dead && seat.ws && seat.ws.readyState === seat.ws.OPEN) {
+        seat.ws.send(JSON.stringify({ type: "snapshot", ...this.sim.snapshotFor(seat.id) }));
       }
     }
     if (this.spectators.size > 0) {
@@ -279,33 +441,40 @@ export class Match {
   canRematch(): boolean {
     if (!this.sim.winner) return false;
     if (this.practice) return true;
-    return [...this.sockets.values()].every((s) => s !== null);
+    // every captain still connected (dead ones live on as spectators)
+    return this.seats.every((s) => s.ws !== null);
   }
 
   // Fresh sim in the same room ("Rematch" button): same field by default,
-  // or a fresh seed when the players want a new one.
+  // or a fresh seed when the players want a new one. Same seats and picks.
   reset(newField = false): void {
-    this.stop();
-    const seed = newField ? Match.randomSeed() : this.sim.terrain.seed;
-    this.sim = Match.buildSim(this.practice, seed);
-    for (const id of this.sockets.keys()) {
-      this.sendStart(id);
+    this.beginMatch(newField ? Match.randomSeed() : this.sim.terrain.seed);
+  }
+
+  // DEATH -> SPECTATOR (v5 §2): the XO signs off, then the captain's client
+  // flows into the existing spectator pipeline, keeping their seat for the
+  // rematch. Their spectator name is their ship's name (§3 upgrades it to
+  // the callsign).
+  private captainDown(shipId: ShipId, shipCallsign: string): void {
+    const seat = this.seats.find((s) => s.id === shipId);
+    if (!seat) return;
+    this.sendTranscript(seat.id, "sys", "Hull breach — we're done. Abandon ship.", true);
+    this.sendTranscript(seat.id, "xo", "It's been an honor, Captain.");
+    seat.dead = true;
+    if (seat.ws && seat.ws.readyState === seat.ws.OPEN) {
+      const callsign = shipCallsign; // "SPECTATOR — Kestrel" (v5 §3)
+      this.spectators.set(seat.ws, callsign);
+      seat.ws.send(
+        JSON.stringify({
+          type: "start",
+          role: "spectator",
+          callsign,
+          practice: this.practice,
+          terrain: this.sim.terrain,
+        })
+      );
+      this.broadcastSpectators();
     }
-    for (const [ws, callsign] of this.spectators) {
-      if (ws.readyState === ws.OPEN) {
-        ws.send(
-          JSON.stringify({
-            type: "start",
-            role: "spectator",
-            callsign,
-            practice: this.practice,
-            terrain: this.sim.terrain,
-          })
-        );
-      }
-    }
-    if (this.spectators.size > 0) this.broadcastSpectators();
-    this.start();
   }
 
   private routeEvent(ev: SimEvent): void {
@@ -313,38 +482,78 @@ export class Match {
       this.sendTranscript(ev.ship, "xo", ev.reason);
     } else if (ev.kind === "ack") {
       this.sendTranscript(ev.ship, "xo", ev.text);
+    } else if (ev.kind === "death") {
+      this.captainDown(ev.ship, ev.callsign);
+    } else if (ev.kind === "transmission") {
+      // v5 §7: verbatim delivery, attributed to the sender's callsign.
+      // The XO reads it aloud — relayed messages are the game's only
+      // unbounded dynamic TTS (MESSAGE_MAX_CHARS is the cost control).
+      const targets =
+        ev.to === "all"
+          ? this.seats.filter((s) => !s.dead && s.id !== ev.from).map((s) => s.id)
+          : [ev.to];
+      for (const id of targets) {
+        this.sendTranscript(
+          id,
+          "comms",
+          `${ev.fromName}: “${ev.text}”`,
+          false,
+          `Transmission from ${ev.fromName}: ${ev.text}`
+        );
+      }
+    } else if (ev.kind === "scuttle") {
+      // quiet by design: free the seat, tell no one
+      const seat = this.seats.find((s) => s.id === ev.ship);
+      if (seat) seat.dead = true;
     } else if (ev.kind === "gameover") {
       const durationS = this.sim.tickCount / C.TICK_RATE_HZ;
-      for (const [id, ws] of this.sockets) {
-        if (ws && ws.readyState === ws.OPEN) {
-          ws.send(
+      for (const seat of this.seats) {
+        if (seat.ws && seat.ws.readyState === seat.ws.OPEN) {
+          const youWin =
+            this.mode === "teams" ? seat.team === ev.winner : seat.id === ev.winner;
+          seat.ws.send(
             JSON.stringify({
               type: "gameover",
-              youWin: id === ev.winner,
+              youWin,
               winner: ev.winner,
+              winnerName: ev.winnerName,
+              placements: ev.placementNames,
               durationS,
             })
           );
         }
       }
-      this.sendGameoverToSpectators(ev.winner, durationS, false);
+      this.sendGameoverToSpectators(ev.winnerName, ev.placementNames, durationS, false);
     } else if (ev.kind === "ui") {
-      const ws = this.sockets.get(ev.ship);
-      if (ws && ws.readyState === ws.OPEN) {
+      const seat = this.seats.find((s) => s.id === ev.ship);
+      if (seat?.ws && seat.ws.readyState === seat.ws.OPEN) {
         const { kind, ship, ...payload } = ev; // what (+ overlay element/state)
-        ws.send(JSON.stringify({ type: "ui", ...payload }));
+        seat.ws.send(JSON.stringify({ type: "ui", ...payload }));
       }
     } else if (ev.kind === "notice") {
-      const targets: ShipId[] = ev.ship === "all" ? ["A", "B"] : [ev.ship];
+      const targets =
+        ev.ship === "all" ? this.seats.filter((s) => !s.dead).map((s) => s.id) : [ev.ship];
       for (const id of targets) {
         this.sendTranscript(id, "sys", ev.text, ev.alert, ev.speak);
       }
     }
   }
 
-  private sendGameoverToSpectators(winner: ShipId, durationS: number, forfeit: boolean): void {
-    // no youWin: the spectator client banners "SHIP {winner} WINS"
-    const payload = JSON.stringify({ type: "gameover", winner, durationS, forfeit });
+  private sendGameoverToSpectators(
+    winnerName: string,
+    placements: string[],
+    durationS: number,
+    forfeit: boolean
+  ): void {
+    // no youWin: the spectator client banners the winner by name
+    const payload = JSON.stringify({
+      type: "gameover",
+      winner: winnerName,
+      winnerName,
+      placements,
+      durationS,
+      forfeit,
+    });
     for (const ws of this.spectators.keys()) {
       if (ws.readyState === ws.OPEN) ws.send(payload);
     }
@@ -354,12 +563,13 @@ export class Match {
   // digit-word bearings, no "km" — so the voice never garbles numerals and
   // the synthesis cache stays bounded. The transcript always shows `text`.
   sendTranscript(id: ShipId, who: string, text: string, alert = false, speakText?: string): void {
-    const ws = this.sockets.get(id);
+    const seat = this.seats.find((s) => s.id === id);
+    const ws = seat?.ws;
     if (ws && ws.readyState === ws.OPEN) {
       // Ship-AI lines get a voice; skip bookkeeping noise (standing-order
       // trigger logs, dev-harness echoes).
       const speak =
-        (who === "xo" || who === "xo-note" || who === "sys") &&
+        (who === "xo" || who === "xo-note" || who === "sys" || who === "comms") &&
         !text.startsWith("Standing order '") &&
         !text.startsWith("direct");
       const speech = speak ? ensureSpeech(speakText ?? text) : null;
@@ -368,10 +578,10 @@ export class Match {
   }
 
   handleUtterance(ws: WebSocket, text: string, source: "voice" | "typed" = "typed"): void {
-    const id = this.roleOf(ws);
-    if (!id) return;
+    const seat = this.seats.find((s) => s.ws === ws);
+    if (!seat || seat.dead) return; // the dead watch; they don't command
 
-    logUtterance({ room: this.code ?? "practice", ship: id, source, text });
+    logUtterance({ room: this.code ?? "practice", ship: seat.id, source, text });
 
     // Dev harness: raw JSON commands bypass the translator. A single command
     // object or an array of them, exactly as the schema defines.
@@ -379,15 +589,15 @@ export class Match {
       try {
         const parsed = JSON.parse(text);
         const commands: Command[] = Array.isArray(parsed) ? parsed : [parsed];
-        this.sim.enqueue(id, commands);
-        this.sendTranscript(id, "sys", `direct: ${commands.map((c) => c.verb).join(", ")}`);
+        this.sim.enqueue(seat.id, commands);
+        this.sendTranscript(seat.id, "sys", `direct: ${commands.map((c) => c.verb).join(", ")}`);
       } catch {
-        this.sendTranscript(id, "sys", "direct command parse error");
+        this.sendTranscript(seat.id, "sys", "direct command parse error");
       }
       return;
     }
 
-    void this.translate(id, text);
+    void this.translate(seat.id, text);
   }
 
   private async translate(id: ShipId, text: string): Promise<void> {
@@ -433,9 +643,7 @@ export class Match {
   }
 
   roleOf(ws: WebSocket): ShipId | null {
-    for (const [id, sock] of this.sockets) {
-      if (sock === ws) return id;
-    }
-    return null;
+    const seat = this.seats.find((s) => s.ws === ws);
+    return seat ? seat.id : null;
   }
 }

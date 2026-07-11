@@ -1,6 +1,7 @@
 # AYE CAPTAIN
 
-Networked 1v1 space combat where you command your ship in plain English —
+Networked multiplayer space combat (up to 8 captains, FFA or teams) where
+you command your ship in plain English —
 typed or spoken. Hold Space and say "flank speed, come left forty"; the
 ship's AI translates your words into structured commands; an authoritative
 server executes them. The fun is turning intent into well-communicated
@@ -13,9 +14,13 @@ ladder: you HEAR ships (bearing only, huge range), you SEE ships (tiered
 contacts, closer), you LOCK ships (closest). You can be silent, or you can
 be going somewhere — not both.
 
-- **Multiplayer**: 1v1 via 4-letter room codes. No accounts, no persistence.
-  Friends can WATCH with the same code — spectators get an omniscient
-  referee view and a callsign (Ghost, Echo, ...); players see who's watching.
+- **Multiplayer**: up to 8 captains via 4-letter room codes — FFA or two
+  teams; the room creator picks the mode and hits LAUNCH; everyone picks a
+  hull. No accounts, no persistence. Dead captains flow into the spectator
+  view; disconnected ships drift as silent ghosts until their captain
+  returns (or 120 s pass). Friends can WATCH with the same code —
+  spectators get an omniscient referee view and a callsign (Ghost,
+  Echo, ...); players see who's watching.
 - **Practice**: solo mode against a drone that patrols the rocks — and
   shoots back.
 - **Input**: voice push-to-talk (hold Space) or typed text.
@@ -26,8 +31,25 @@ be going somewhere — not both.
 
 - **Thrust & helm**: "flank speed", "come left forty", "steer 090", "point
   us at him", "go dark and drift", "all stop" (an autopilot flip-and-burn).
-  Ships drift (Newtonian): turning doesn't change your velocity. "Show me
-  our vector" (or V) draws where you're going and where you could stop.
+  Pointing at a target TRACKS it: the helm keeps the nose on the contact
+  (or down a rumble's bearing — "steer for that rumble") until you give a
+  new heading; lose the contact and the helm holds its last known position
+  and says so. Ships drift (Newtonian): turning doesn't change your
+  velocity. "Show me our vector" (or V) draws where you're going and where
+  you could stop.
+- **Pick a hull**: three archetypes, numbers only. **Corvette** — the
+  ghost: fastest, dimmest, best sensors, 6 decoys, 1 tube, no railgun.
+  **Frigate** — the baseline all-rounder. **Cruiser** — the thunderstorm:
+  160 hull, 3 tubes, deep magazines, and a signature that cannot hide.
+  Enemy archetypes are ID-tier information: below ID every contact is a
+  neutral wedge on the map.
+- **Contacts have names**: your XO designates hostile tracks in acquisition
+  order — "Contact Alpha", "Contact Bravo" (decoys get letters too; you
+  can't tell). At ID range a track resolves to the ship's permanent
+  **callsign** ("Contact Bravo identified: it's Kestrel"). Letters and
+  callsigns are valid targets: "point at Bravo", "lock up Kestrel". A track
+  lost for over a minute can't be correlated — it comes back as a new
+  letter.
 - **Detection**: your drive plume is your signature. A hard-burning ship is
   visible ~234 km out; a dark drifter ~54 km (and unlockable until ~32).
   Contacts have **tiers**: FAINT (a smudge — approximate position, no
@@ -65,12 +87,28 @@ be going somewhere — not both.
   their line. The fuse arms 3 km from the launch point: inside that,
   standoff is part of the weapon and your bird duds past. Tubes reload in
   30 s — a full salvo is FELT; staggered fire is doctrine.
+- **The railgun** (Frigate & Cruiser — a Corvette mounts none): 6 km/s
+  slugs, 25 damage, 6 s recharge, no resupply. **Solution mode** computes a
+  lead against a TRACK-or-better contact and fires instantly — lethal to
+  anything coasting; *any thrust during the slug's flight is a miss*.
+  **Bearing mode** is a manual skill shot. Slugs are pure physics: rocks
+  stop them, PDCs can't, they check no IFF (they WILL hit a teammate in the
+  line of fire), and firing is heard across the map — if you hear rail
+  fire, burn.
 - **Point defense**: automated PDCs engage inbound missiles (8 km) and
   enemy ships at knife range (3 km) while "guns free"; "hold fire" keeps
   you dark. 60 s of ammo, no resupply. Mutual PDC range is a mutual
   mauling. The mounts are **sensor-slaved** — they can't shoot what your
   sensors can't see, so a ballistic torpedo out of a dust shadow may
   arrive with almost no warning.
+- **Probes**: fire-and-drift remote sensors ("probe out, bearing 090") —
+  a 20 s burn, then ~3 minutes of relay: contacts it earns (reduced eyes)
+  and rumbles it hears merge into your map marked "via probe", with the
+  chevron anchored at the probe. Two bearings on one rumble — yours and
+  the probe's — cross into a fix; plotting it is your job, not the XO's.
+  A relayed track can steer the helm and answer questions but never feeds
+  a missile lock. Probes are killable (PDCs, slugs, seekers) and don't
+  reload: corvettes carry 4, frigates 2, cruisers 1.
 - **Countermeasures**: 4 decoys — hotter than a cruising ship but not a
   hard burn, so the doctrine is **break the lock, throttle down, decoy**
   (an uplinked bird ignores decoys; you must orphan it first via rocks,
@@ -78,6 +116,19 @@ be going somewhere — not both.
   (and rumbles like a real drive) for a full minute — fake contacts are a
   strategy. Plus: burning away at range genuinely outruns a torpedo's tank
   now, or dodge late to waste its fuel.
+- **Teams** (room option): teammates share transponders — always on each
+  other's maps at full state, in friendly blue. NOTHING else is shared: no
+  fused sensor picture, no rumbles, no probe feeds — intel moves by
+  tightbeam, on purpose. Guided weapons check IFF (locks, seekers, prox
+  fuses, and PDCs all ignore friendlies) — but rail slugs and collisions
+  check nothing. Physics doesn't read transponders.
+- **Comms**: talk to other captains. "Broadcast: anyone want to team up on
+  the cruiser?" reaches everyone — and flares a comms spike: every captain
+  gets your bearing AND your callsign for 5 s (voiceprint; a broadcast is
+  a flare). "Tightbeam Mako: he's behind the moonlet" is a private whisper
+  — but you need a current track to point the dish (teammates are always
+  reachable). Delivery is verbatim; the receiving XO reads it aloud.
+  10 s per channel between sends, 140 characters.
 - **Propellant is delta-v**: a full tank is 100 s of hard burn — enough to
   reach flank speed and kill it once. It regenerates only inside the region
   with throttle ≤ 20%. Dry tanks = you drift. Turning is free.

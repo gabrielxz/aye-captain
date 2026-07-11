@@ -45,6 +45,16 @@ export function initUI() {
     send({ type: "rematch", newField: true });
   });
 
+  // v5 §2 room lobby controls
+  document.getElementById("btn-mode-ffa").addEventListener("click", () => send({ type: "config", mode: "ffa" }));
+  document.getElementById("btn-mode-teams").addEventListener("click", () => send({ type: "config", mode: "teams" }));
+  document.getElementById("btn-team-red").addEventListener("click", () => send({ type: "team", team: "red" }));
+  document.getElementById("btn-team-blue").addEventListener("click", () => send({ type: "team", team: "blue" }));
+  document.getElementById("btn-launch").addEventListener("click", () => send({ type: "launch" }));
+  for (const btn of document.querySelectorAll("#arch-row button")) {
+    btn.addEventListener("click", () => send({ type: "archetype", archetype: btn.dataset.arch }));
+  }
+
   cmdEl.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
       const text = cmdEl.value.trim();
@@ -148,6 +158,65 @@ export function showLobbyStatus(text) {
   document.getElementById("lobby-status").textContent = text;
 }
 
+// v5 §2: room lobby panel — roster, mode toggle (creator), team picks
+// (teams mode), launch (creator, min 2 captains).
+export function showRoomLobby(msg) {
+  const panel = document.getElementById("room-panel");
+  panel.style.display = "flex";
+  document.getElementById("room-code").textContent = `ROOM ${msg.code}`;
+
+  const roster = document.getElementById("room-roster");
+  roster.innerHTML = "";
+  for (const p of msg.players ?? []) {
+    const row = document.createElement("div");
+    row.className = "seat";
+    const name = document.createElement("span");
+    if (p.id === msg.you) name.className = "you";
+    name.textContent = `SHIP ${p.id} · ${(p.archetype ?? "frigate").toUpperCase()}${p.creator ? " ★" : ""}${p.id === msg.you ? " (you)" : ""}`;
+    const tag = document.createElement("span");
+    if (msg.mode === "teams" && p.team) {
+      tag.className = `team-${p.team}`;
+      tag.textContent = p.team.toUpperCase();
+    } else {
+      tag.textContent = p.connected ? "" : "(lost)";
+    }
+    row.appendChild(name);
+    row.appendChild(tag);
+    roster.appendChild(row);
+  }
+
+  const modeRow = document.getElementById("mode-row");
+  modeRow.style.display = msg.creator ? "flex" : "none";
+  document.getElementById("btn-mode-ffa").classList.toggle("active", msg.mode === "ffa");
+  document.getElementById("btn-mode-teams").classList.toggle("active", msg.mode === "teams");
+
+  const teamRow = document.getElementById("team-row");
+  teamRow.style.display = msg.mode === "teams" ? "flex" : "none";
+  const me = (msg.players ?? []).find((p) => p.id === msg.you);
+  document.getElementById("btn-team-red").classList.toggle("active", me?.team === "red");
+  document.getElementById("btn-team-blue").classList.toggle("active", me?.team === "blue");
+
+  const mine = (msg.players ?? []).find((p) => p.id === msg.you);
+  for (const btn of document.querySelectorAll("#arch-row button")) {
+    btn.classList.toggle("active", mine?.archetype === btn.dataset.arch);
+  }
+
+  const launch = document.getElementById("btn-launch");
+  launch.style.display = msg.creator ? "block" : "none";
+  launch.disabled = (msg.players ?? []).length < 2;
+
+  document.getElementById("room-hint").textContent = msg.creator
+    ? (msg.players ?? []).length < 2
+      ? `share the code — captains join with it (up to ${msg.maxPlayers})`
+      : `${msg.mode === "teams" ? "teams set? " : ""}launch when ready`
+    : "waiting for the room creator to launch...";
+  showLobbyStatus("");
+}
+
+export function hideRoomLobby() {
+  document.getElementById("room-panel").style.display = "none";
+}
+
 function joinMatch(spectate) {
   const code = document.getElementById("join-code").value.trim().toUpperCase();
   if (code.length !== 4) {
@@ -187,7 +256,7 @@ export function setSpectator(callsign) {
 
 // xo-note = a reply-only line: the XO talking, NOT confirming an executed
 // command — rendered distinct so conversation can't masquerade as action
-const WHO_LABEL = { capt: "CAPT", xo: "XO", "xo-note": "XO (note)", sys: "*" };
+const WHO_LABEL = { capt: "CAPT", xo: "XO", "xo-note": "XO (note)", sys: "*", comms: "COMMS" };
 
 export function addTranscript(who, text, alert = false) {
   const div = document.createElement("div");

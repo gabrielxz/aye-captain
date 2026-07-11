@@ -45,8 +45,8 @@ const grantLock = (ship: Ship) => {
   }
   assert(spacingOk, "minimum spacing between all rocks");
   const spawns = [
-    { x: 0, y: -C.SPAWN_DIST_FROM_CENTER_M },
-    { x: 0, y: C.SPAWN_DIST_FROM_CENTER_M },
+    { x: 0, y: -C.SPAWN_RING_RADIUS_M },
+    { x: 0, y: C.SPAWN_RING_RADIUS_M },
   ];
   assert(
     t1.rocks.every((r) =>
