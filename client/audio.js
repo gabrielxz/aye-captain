@@ -210,6 +210,23 @@ export function sfxPing(own) {
   }
 }
 
+// v4.7 §4.2: contact tier ceremony. Promotion = ascending motif, one note
+// per tier reached (faint 1, track 2, id 3); demotion = the same motif
+// descending from the lost tier. Suppressed by the caller during a ping
+// grant window — the return blip is that event's sound.
+const TIER_NOTES = [523, 659, 784]; // C5 E5 G5
+export function sfxTierShift(tier, up) {
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  const n = Math.max(1, Math.min(3, tier));
+  const notes = TIER_NOTES.slice(0, n);
+  if (!up) notes.reverse();
+  notes.forEach((f, i) => {
+    osc("sine", f, t + i * 0.11, 0.14, up ? 0.16 : 0.12);
+    osc("triangle", f / 2, t + i * 0.11, 0.14, 0.05);
+  });
+}
+
 // The diegetic return after OUR ping, scheduled by contact range. An empty
 // ping is the outgoing ping, a long silence, and nothing — that silence is
 // the feedback. Never fired for the enemy's ping.

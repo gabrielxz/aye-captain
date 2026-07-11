@@ -184,6 +184,26 @@ function soundFromSnapshot(snap) {
       audio.sfxPingReturn(audio.PING_RETURN_MS_AT_MAX_RANGE * Math.min(1, nearest / pingListen.rangeM));
     }
   }
+
+  // v4.7 §4.2: tier ceremony. One sting per snapshot (the loudest change
+  // wins) so simultaneous shifts don't chord. Suppressed through the ping
+  // grant window and its expiry edge — a ping mass-promotes and then
+  // mass-drops, and the return blip is that event's sound.
+  const pingQuiet = pingListen && performance.now() < pingListen.until + 1500;
+  if (prevTiers && !pingQuiet) {
+    let best = null; // {tier, up}; promotions outrank demotions
+    for (const cid of new Set([...tiers.keys(), ...prevTiers.keys()])) {
+      const now2 = tiers.get(cid) ?? 0;
+      const was = prevTiers.get(cid) ?? 0;
+      if (now2 > was) {
+        if (!best || !best.up || now2 > best.tier) best = { tier: now2, up: true };
+      } else if (now2 < was) {
+        if (!best) best = { tier: was, up: false };
+        else if (!best.up && was > best.tier) best = { tier: was, up: false };
+      }
+    }
+    if (best) audio.sfxTierShift(best.tier, best.up);
+  }
   prevTiers = tiers;
 
   audio.setThrust(you.thrustOut ?? you.thrust);

@@ -853,8 +853,18 @@ function drawContacts() {
 
   for (const c of snap.contacts ?? []) {
     if (c.tier === 1) {
-      // a smudge: pulsing diffuse blob, deliberately imprecise
-      const [sx, sy] = worldToScreen(c.x, c.y);
+      // a smudge: pulsing diffuse blob, deliberately imprecise.
+      // v4.7 §4.2: slow seeded drift (±6px) on top of the server-noised
+      // fix — the eye should read "this is a guess", not a lock. Smooth
+      // sinusoid, NOT per-frame noise (white noise strobes).
+      let seed = 0;
+      for (let k = 0; k < c.cid.length; k++) seed += c.cid.charCodeAt(k) * 31;
+      const jt = performance.now() / 1000;
+      const jx = 6 * Math.sin(jt * 0.7 + seed);
+      const jy = 6 * Math.sin(jt * 0.53 + seed * 1.7);
+      const [sx0, sy0] = worldToScreen(c.x, c.y);
+      const sx = sx0 + jx;
+      const sy = sy0 + jy;
       const pulse = 10 + Math.sin(performance.now() / 300) * 3;
       const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, pulse * 2);
       grad.addColorStop(0, "rgba(252, 129, 129, 0.35)");
