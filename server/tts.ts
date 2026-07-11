@@ -170,6 +170,15 @@ const STOCK_LINES = [
   // on first use and cached; only the fixed shapes pre-generate)
   "No contact by that name on the board, Captain.",
   "Contact identified — it's a decoy.",
+  // v5 §5: railgun
+  "Solution ready — firing.",
+  "Slug away.",
+  "Rail's recharging.",
+  "Slugs are out.",
+  "No track for a solution, Captain — I can fire on a bearing.",
+  "This boat doesn't mount a railgun, Captain.",
+  "Rail slug connected.",
+  "We just lost a decoy.",
 ];
 
 // Sequential on purpose: ElevenLabs free/low tiers have tight concurrency

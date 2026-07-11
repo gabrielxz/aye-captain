@@ -40,6 +40,7 @@ export interface Command {
     | "set_pdc"
     | "set_lock_target"
     | "fire_missile"
+    | "fire_railgun"
     | "reload_tubes"
     | "deploy_decoy"
     | "maneuver"
@@ -186,6 +187,10 @@ export interface Ship {
   lockDesignation: string | null;
   prevPainted: PaintedState; // enemy's lock on me last tick (edge-triggered notices)
   sigSpikeLaunch: number; // seconds of +SIG_SPIKE_LAUNCH remaining after firing
+  // v5 §5 railgun (frigate/cruiser; corvette carries none)
+  railSlugs: number;
+  railCooldownS: number;
+  sigSpikeRail: number; // seconds of +RAIL_SIG_SPIKE remaining after firing
   droneCooldown: number; // drone-only: seconds until it may fire again
   droneWaypoint: number; // drone-only: index into the patrol route
   droneDodge: -1 | 0 | 1; // drone-only: committed dodge direction (hysteresis)
@@ -275,6 +280,22 @@ export interface Decoy {
   y: number;
   vx: number;
   vy: number;
+  age: number;
+}
+
+// v5 §5: a rail slug — pure ballistics. Constant velocity (shooter's
+// velocity inherited at launch + RAIL_SLUG_SPEED along the firing line),
+// no guidance, no IFF, stopped by rocks and hulls, obliterates ordnance
+// it grazes without stopping. Nothing engages it.
+export interface Slug {
+  id: number;
+  owner: ShipId;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  prevX: number;
+  prevY: number;
   age: number;
 }
 
@@ -394,6 +415,7 @@ export class Sim {
   ships = new Map<ShipId, Ship>();
   missiles: Missile[] = [];
   decoys: Decoy[] = [];
+  slugs: Slug[] = [];
   terrain: Terrain;
   tickCount = 0;
   // Ship id in FFA, team name in Teams mode; set when hostilities end.
@@ -489,6 +511,9 @@ export class Sim {
       propellantTier: 100,
       lock: { target: null, progress: 0, has: false, grace: 0 },
       lockDesignation: null,
+      railSlugs: stats.railSlugs,
+      railCooldownS: 0,
+      sigSpikeRail: 0,
       prevPainted: "none",
       sigSpikeLaunch: 0,
       pingCooldownS: 0,
@@ -539,6 +564,7 @@ export class Sim {
     let sig = statsOf(obj).sigBase + effectiveThrust(obj);
     if (obj.sigSpikeLaunch > 0) sig += C.SIG_SPIKE_LAUNCH;
     if (obj.sigSpikePdc > 0) sig += C.SIG_SPIKE_PDC;
+    if (obj.sigSpikeRail > 0) sig += C.RAIL_SIG_SPIKE;
     return sig;
   }
 
@@ -869,6 +895,87 @@ export class Sim {
         if (ship.lock.target !== shipTarget || shipTarget === null) {
           // new subject: any progress on the old one is void
           ship.lock = { target: shipTarget, progress: 0, has: false, grace: 0 };
+        }
+        return null;
+      }
+      case "fire_railgun": {
+        // v5 §5. SOLUTION: constant-velocity lead on a TRACK-or-better
+        // contact, fired immediately (nothing to hold — slugs can't be
+        // guided). Any thrust during flight breaks the assumption; that's
+        // the weapon. BEARING: manual skill shot, no requirements.
+        const stats = statsOf(ship);
+        if (stats.railguns === 0) return "This boat doesn't mount a railgun, Captain.";
+        if (ship.railCooldownS > 0) return "Rail's recharging.";
+        if (ship.railSlugs <= 0) return "Slugs are out.";
+        const mode = cmd.params.mode === "bearing" ? "bearing" : "solution";
+        let dir: number;
+        if (mode === "bearing") {
+          const raw = cmd.params.bearing_degrees;
+          dir =
+            typeof raw === "number" && Number.isFinite(raw) ? norm360(raw) : ship.facing;
+        } else {
+          // pick the solution subject: an explicit contact ref, else the
+          // nearest tracked hostile. Decoy contacts are legal subjects at
+          // track tier (they show a vector; refusing would unmask them).
+          let tgt: { x: number; y: number; vx: number; vy: number } | null = null;
+          const ref = typeof cmd.params.target === "string" ? cmd.params.target : null;
+          if (ref) {
+            const key = this.resolveContactRef(ship.id, ref);
+            if (!key || key.startsWith("t:")) return "No contact by that name on the board, Captain.";
+            if (key.startsWith("s")) {
+              const t = this.ships.get(key.slice(1));
+              if (t && this.contactOn(ship.id, t.id).tier >= 2) tgt = t;
+            } else {
+              const d = this.decoys.find((k) => `d${k.id}` === key);
+              if (d && this.decoyTierFor(ship, d) >= 2) tgt = d;
+            }
+          } else {
+            tgt = this.nearestTrackedHostile(ship);
+          }
+          if (!tgt) return "No track for a solution, Captain — I can fire on a bearing.";
+          dir = this.railSolutionBearing(ship, tgt.x, tgt.y, tgt.vx, tgt.vy);
+        }
+        const [dx, dy] = headingVec(dir);
+        this.slugs.push({
+          id: this.nextId++,
+          owner: ship.id,
+          x: ship.x,
+          y: ship.y,
+          prevX: ship.x,
+          prevY: ship.y,
+          vx: ship.vx + dx * C.RAIL_SLUG_SPEED_MPS, // inherits shooter velocity
+          vy: ship.vy + dy * C.RAIL_SLUG_SPEED_MPS,
+          age: 0,
+        });
+        ship.railSlugs--;
+        ship.railCooldownS = C.RAIL_COOLDOWN_S;
+        ship.sigSpikeRail = C.RAIL_SIG_SPIKE_S;
+        // the ship owns this voice (stock lines); a translator ack would
+        // double-speak
+        delete cmd.acknowledgement;
+        if (!ship.isDrone) {
+          events.push({
+            kind: "notice",
+            ship: ship.id,
+            text: mode === "solution" ? "Solution ready — firing." : "Slug away.",
+          });
+        }
+        // rail fire is HEARD (no LOS — hearing law): every listener whose
+        // hearing reaches the SPIKED signature gets the bearing call
+        for (const other of this.ships.values()) {
+          if (other.id === ship.id || other.isDrone) continue;
+          const hearing =
+            this.detectionRange(this.signatureOf(ship), other) * C.HEARING_RANGE_MULT;
+          if (dist(other.x, other.y, ship.x, ship.y) > hearing) continue;
+          const brg = bearingTo(other.x, other.y, ship.x, ship.y);
+          const q = fmtBearing((Math.round(brg / 10) * 10) % 360);
+          events.push({
+            kind: "notice",
+            ship: other.id,
+            text: `Rail fire, bearing ${q}.`,
+            speak: `Rail fire, bearing ${spokenBearing(brg)}.`,
+            alert: true,
+          });
         }
         return null;
       }
@@ -1360,7 +1467,7 @@ export class Sim {
   private damageShip(
     target: Ship,
     amount: number,
-    source: "missile" | "rock",
+    source: "missile" | "rock" | "rail",
     events: SimEvent[],
     attackerId: ShipId | null
   ): void {
@@ -1373,10 +1480,11 @@ export class Sim {
       events.push({
         kind: "notice",
         ship: attacker.id,
-        text: "Missile strike on the enemy ship!",
+        text: source === "rail" ? "Rail slug connected." : "Missile strike on the enemy ship!",
       });
     }
-    const word = source === "missile" ? "Missile strike" : "Collision";
+    const word =
+      source === "missile" ? "Missile strike" : source === "rail" ? "Rail slug hit" : "Collision";
     events.push({
       kind: "notice",
       ship: target.id,
@@ -1873,6 +1981,13 @@ export class Sim {
       d.y += d.vy * dt;
       d.age += dt;
     }
+    for (const sl of this.slugs) {
+      sl.prevX = sl.x;
+      sl.prevY = sl.y;
+      sl.x += sl.vx * dt;
+      sl.y += sl.vy * dt;
+      sl.age += dt;
+    }
 
     // 5. resolve weapons: proximity fuses, expiry, seeker locks
     this.resolveWeapons(events, dt);
@@ -2015,6 +2130,43 @@ export class Sim {
     m.x += m.vx * dt;
     m.y += m.vy * dt;
     m.age += dt;
+  }
+
+  // v5 §5: firing solution — the compass bearing whose slug (shooter
+  // velocity inherited + RAIL_SLUG_SPEED along the line) meets a target
+  // holding constant velocity. Relative frame: solve |Δp + Δv·t| = S·t.
+  // No positive-time solution (impossibly fast crosser) = direct bearing.
+  private railSolutionBearing(
+    ship: Ship,
+    tx: number,
+    ty: number,
+    tvx: number,
+    tvy: number
+  ): number {
+    const px = tx - ship.x;
+    const py = ty - ship.y;
+    const dvx = tvx - ship.vx;
+    const dvy = tvy - ship.vy;
+    const S = C.RAIL_SLUG_SPEED_MPS;
+    const a = dvx * dvx + dvy * dvy - S * S;
+    const b = 2 * (px * dvx + py * dvy);
+    const c = px * px + py * py;
+    let t: number | null = null;
+    if (Math.abs(a) < 1e-6) {
+      if (Math.abs(b) > 1e-9) {
+        const t0 = -c / b;
+        if (t0 > 0) t = t0;
+      }
+    } else {
+      const disc = b * b - 4 * a * c;
+      if (disc >= 0) {
+        const sq = Math.sqrt(disc);
+        const roots = [(-b - sq) / (2 * a), (-b + sq) / (2 * a)].filter((r) => r > 0);
+        if (roots.length > 0) t = Math.min(...roots);
+      }
+    }
+    if (t === null) return bearingTo(ship.x, ship.y, tx, ty);
+    return norm360(bearingTo(0, 0, px + dvx * t, py + dvy * t));
   }
 
   // Lead pursuit: bearing to the point where target and missile meet,
@@ -2220,6 +2372,68 @@ export class Sim {
         }
       }
     }
+
+    // --- v5 §5 rail slugs: pure physics, NO IFF (the game's only
+    // friendly-fire vector — a slug does not read transponders). Rocks and
+    // hulls stop a slug; ordnance it grazes is obliterated without
+    // stopping it (rare, glorious). PDCs never engage slugs.
+    const deadSlugs = new Set<number>();
+    for (const sl of this.slugs) {
+      if (sl.age >= C.RAIL_SLUG_LIFETIME_S) {
+        deadSlugs.add(sl.id);
+        continue;
+      }
+      if (this.terrain.rocks.length > 0) {
+        const hit = firstRockHit(sl.prevX, sl.prevY, sl.x, sl.y, this.terrain);
+        if (hit) {
+          deadSlugs.add(sl.id);
+          this.fx.push({ type: "boom", x: sl.prevX + (sl.x - sl.prevX) * hit.t, y: sl.prevY + (sl.y - sl.prevY) * hit.t });
+          continue;
+        }
+      }
+      for (const target of this.ships.values()) {
+        // the OWNER is exempt: the slug is born inside the shooter's own
+        // hit radius, and at 2x max ship speed the shooter can never
+        // re-enter its line afterwards — this is muzzle geometry, not IFF
+        if (target.id === sl.owner) continue;
+        const dMin = segmentMinDist(
+          sl.prevX, sl.prevY, sl.x, sl.y,
+          target.x - target.vx * dt, target.y - target.vy * dt, target.x, target.y
+        );
+        if (dMin <= C.RAIL_HIT_RADIUS_M) {
+          deadSlugs.add(sl.id);
+          this.fx.push({ type: "boom", x: target.x, y: target.y });
+          this.damageShip(target, C.RAIL_DAMAGE, "rail", events, sl.owner);
+          break;
+        }
+      }
+      if (deadSlugs.has(sl.id)) continue;
+      for (const m of this.missiles) {
+        if (deadMissiles.has(m.id)) continue;
+        const dMin = segmentMinDist(
+          sl.prevX, sl.prevY, sl.x, sl.y,
+          m.prevX, m.prevY, m.x, m.y
+        );
+        if (dMin <= C.RAIL_HIT_RADIUS_M) {
+          deadMissiles.add(m.id);
+          this.fx.push({ type: "boom", x: m.x, y: m.y });
+        }
+      }
+      for (const d of this.decoys) {
+        if (deadDecoys.has(d.id)) continue;
+        const dMin = segmentMinDist(
+          sl.prevX, sl.prevY, sl.x, sl.y,
+          d.x - d.vx * dt, d.y - d.vy * dt, d.x, d.y
+        );
+        if (dMin <= C.RAIL_HIT_RADIUS_M) {
+          deadDecoys.add(d.id);
+          this.fx.push({ type: "boom", x: d.x, y: d.y });
+          // own equipment: the decoy's owner always learns (v4.7.1 rule)
+          events.push({ kind: "notice", ship: d.owner, text: "We just lost a decoy." });
+        }
+      }
+    }
+    this.slugs = this.slugs.filter((sl) => !deadSlugs.has(sl.id));
 
     for (const m of this.missiles) {
       if (deadMissiles.has(m.id)) continue;
@@ -2702,6 +2916,8 @@ export class Sim {
     // tube reloads.
     ship.sigSpikeLaunch = Math.max(0, ship.sigSpikeLaunch - dt);
     ship.sigSpikePdc = Math.max(0, ship.sigSpikePdc - dt);
+    ship.sigSpikeRail = Math.max(0, ship.sigSpikeRail - dt);
+    ship.railCooldownS = Math.max(0, ship.railCooldownS - dt);
     // ping timers snap to zero below float dust: 0.1-substep decrements
     // leave ~1e-14 residues, and a residue on pingGrantS would buy a fifth
     // track-tick — exactly enough to complete the lock the design forbids
@@ -3042,7 +3258,7 @@ export class Sim {
       );
     }
     lines.push(
-      `Weapons: PDC posture ${ship.pdcPosture.toUpperCase()} (ammo ${Math.round(ship.pdcAmmoS)}s of fire left), ${this.tubeSummary(ship)}, missiles aboard ${missilesAboard(ship)}/${statsOf(ship).magazine}, decoys ${ship.decoys}/${statsOf(ship).decoys}. Active ping: ${ship.pingCooldownS <= 0 ? "READY (reveals us map-wide for " + C.PING_REVEAL_S + "s)" : `recharging (${Math.ceil(ship.pingCooldownS)}s)`}.`
+      `Weapons: PDC posture ${ship.pdcPosture.toUpperCase()} (ammo ${Math.round(ship.pdcAmmoS)}s of fire left), ${this.tubeSummary(ship)}, missiles aboard ${missilesAboard(ship)}/${statsOf(ship).magazine}, decoys ${ship.decoys}/${statsOf(ship).decoys}. Railgun: ${statsOf(ship).railguns === 0 ? "NOT FITTED (corvette)" : ship.railSlugs <= 0 ? "slugs out" : ship.railCooldownS > 0 ? `recharging (${Math.ceil(ship.railCooldownS)}s), ${ship.railSlugs} slugs` : `READY, ${ship.railSlugs} slugs (solution needs a TRACK; any target thrust during flight = miss)`}. Active ping: ${ship.pingCooldownS <= 0 ? "READY (reveals us map-wide for " + C.PING_REVEAL_S + "s)" : `recharging (${Math.ceil(ship.pingCooldownS)}s)`}.`
     );
     const painted = this.paintedState(ship);
     lines.push(
@@ -3194,8 +3410,17 @@ export class Sim {
       pdc_ship_range_m: C.PDC_SHIP_RANGE_M,
       pdc_note: "automated: engages inbound missiles and knife-range ships while posture=free; hold conserves ammo and stays dark",
     };
+    const rail =
+      statsOf(ship).railguns === 0
+        ? { railgun: "not fitted" }
+        : {
+            railgun: ship.railCooldownS > 0 ? `recharging (${Math.ceil(ship.railCooldownS)}s)` : "ready",
+            rail_slugs: ship.railSlugs,
+            rail_note: "solution mode needs a TRACK-or-better contact; a coasting target is dead, any thrust during flight is a miss. bearing mode is a manual shot.",
+          };
     const weapons = {
       ...pdc,
+      ...rail,
       missiles_remaining: missilesAboard(ship),
       ...tubes,
       own_birds_in_flight: this.missiles
@@ -3450,6 +3675,10 @@ export class Sim {
         painted: this.paintedState(ship),
         decoys: ship.decoys,
         pdc: { posture: ship.pdcPosture, ammoS: Math.round(ship.pdcAmmoS) },
+        rail:
+          statsOf(ship).railguns > 0
+            ? { slugs: ship.railSlugs, cooldownS: Math.ceil(ship.railCooldownS) }
+            : null,
         // revealS: OWNER-ONLY (drives the LIT countdown) — the fog tests pin
         // that it never appears in the enemy's snapshot of this ship
         ping: {
@@ -3490,6 +3719,21 @@ export class Sim {
         ...this.visibleEnemyDecoys(ship).map((d) => ({
           id: d.id, x: d.x, y: d.y, vx: d.vx, vy: d.vy, own: false,
         })),
+      ],
+      // v5 §5: own slugs always; enemy slugs only inside the near-nothing
+      // detection of a driveless projectile (you hear the SHOT, not the round)
+      slugs: [
+        ...this.slugs
+          .filter((sl) => sl.owner === id)
+          .map((sl) => ({ id: sl.id, x: sl.x, y: sl.y, vx: sl.vx, vy: sl.vy, own: true })),
+        ...this.slugs
+          .filter(
+            (sl) =>
+              sl.owner !== id &&
+              dist(ship.x, ship.y, sl.x, sl.y) <= this.detectionRange(C.RAIL_SLUG_SIG, ship) &&
+              this.losClear(ship.x, ship.y, sl.x, sl.y)
+          )
+          .map((sl) => ({ id: sl.id, x: sl.x, y: sl.y, vx: sl.vx, vy: sl.vy, own: false })),
       ],
       fx: this.fx.filter((f) => {
         if (f.type === "pdc") {
@@ -3542,6 +3786,9 @@ export class Sim {
       })),
       decoys: this.decoys.map((d) => ({
         id: d.id, x: d.x, y: d.y, vx: d.vx, vy: d.vy, owner: d.owner, own: d.owner === "A",
+      })),
+      slugs: this.slugs.map((sl) => ({
+        id: sl.id, x: sl.x, y: sl.y, vx: sl.vx, vy: sl.vy, owner: sl.owner, own: sl.owner === "A",
       })),
       fx: this.fx,
     };

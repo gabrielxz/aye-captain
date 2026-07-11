@@ -82,6 +82,14 @@ be going somewhere — not both.
   their line. The fuse arms 3 km from the launch point: inside that,
   standoff is part of the weapon and your bird duds past. Tubes reload in
   30 s — a full salvo is FELT; staggered fire is doctrine.
+- **The railgun** (Frigate & Cruiser — a Corvette mounts none): 6 km/s
+  slugs, 25 damage, 6 s recharge, no resupply. **Solution mode** computes a
+  lead against a TRACK-or-better contact and fires instantly — lethal to
+  anything coasting; *any thrust during the slug's flight is a miss*.
+  **Bearing mode** is a manual skill shot. Slugs are pure physics: rocks
+  stop them, PDCs can't, they check no IFF (they WILL hit a teammate in the
+  line of fire), and firing is heard across the map — if you hear rail
+  fire, burn.
 - **Point defense**: automated PDCs engage inbound missiles (8 km) and
   enemy ships at knife range (3 km) while "guns free"; "hold fire" keeps
   you dark. 60 s of ammo, no resupply. Mutual PDC range is a mutual

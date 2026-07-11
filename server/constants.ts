@@ -104,6 +104,32 @@ export const PING_COOLDOWN_S = 30;
 // can tear open behind rocks/dust without a client-side raycast port.
 export const PING_SHADOW_SAMPLES = 180; // 2 deg resolution
 
+// v5 §5: the railgun (Frigate & Cruiser; the corvette's keel can't take a
+// spinal mount). SOLUTION mode computes constant-velocity lead against a
+// TRACK-or-better contact and fires immediately (no lock timer — the slug
+// can't be guided, so there's nothing to hold): deadly against ballistic
+// targets, and ANY thrust during flight breaks the assumption. This is the
+// designed anti-drifter — every posture now has a predator (missiles
+// punish burners, rails punish coasters, PDCs punish missiles). BEARING
+// mode is a manual skill shot. Slugs are physical: rocks stop them, they
+// can hit missiles/decoys/probes en route, they check NO IFF (the game's
+// only friendly-fire vector), and PDCs cannot engage them.
+// Dodge math for the tuning pair (speed, hit radius): at 60 m/s² a
+// reacting target displaces ~190 m over a 20 km shot (flight ~3.3 s) —
+// dodgeable when alert; a drifter displaces 0.
+export const RAIL_SLUG_SPEED_MPS = 6000; // LINKED: 2x MAX_SPEED_MPS, 2.5x MISSILE_MAX_SPEED_MPS — must far exceed ship speed or the weapon has no envelope
+export const RAIL_HIT_RADIUS_M = 100; // swept-segment collision, MANDATORY (invariant 6)
+export const RAIL_DAMAGE = 25;
+export const RAIL_COOLDOWN_S = 6;
+export const RAIL_SIG_SPIKE = 80; // rail fire is HEARD; "if you hear rail fire, burn"
+export const RAIL_SIG_SPIKE_S = 3;
+// Not in the handoff: slugs need an end. 60 s covers a full map crossing
+// at worst-case closing speeds (6 km/s + inherited 3 km/s = 540 km).
+export const RAIL_SLUG_LIFETIME_S = 60;
+// A slug has no drive — it is nearly invisible in flight (the FIRING is
+// what you hear). Same near-nothing signature as a coasting torpedo.
+export const RAIL_SLUG_SIG = 8;
+
 // Contact tiers, as fractions of the computed detection range:
 export const TIER_FAINT_FRAC = 1.0; // approximate position only, no vector
 export const TIER_TRACK_FRAC = 0.6; // true position + velocity, continuous

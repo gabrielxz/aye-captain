@@ -1088,6 +1088,25 @@ function interpolateById(listKey, id) {
 function drawOrdnance() {
   if (!state.lastSnap) return;
 
+  // v5 §5 rail slugs: a hot hypervelocity streak along the velocity vector
+  for (const sl of state.lastSnap.slugs ?? []) {
+    const ent = interpolateById("slugs", sl.id) ?? sl;
+    const [sx, sy] = worldToScreen(ent.x, ent.y);
+    const sp = Math.hypot(sl.vx, sl.vy) || 1;
+    const trail = Math.max(14, sp * 0.06 * camera.zoom); // ~0.06 s of travel
+    const tx = sx - (sl.vx / sp) * trail;
+    const ty = sy + (sl.vy / sp) * trail;
+    const grad = ctx.createLinearGradient(sx, sy, tx, ty);
+    grad.addColorStop(0, sl.own ? "#e8fff9" : "#ffe8e8");
+    grad.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(tx, ty);
+    ctx.stroke();
+  }
+
   // missiles: small but loud — glow, hot dot, engine trail
   for (const m of state.lastSnap.missiles ?? []) {
     const ent = interpolateById("missiles", m.id);

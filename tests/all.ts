@@ -25,3 +25,4 @@ import "./multiship.test.js";
 import "./matchflow.test.js";
 import "./designation.test.js";
 import "./archetype.test.js";
+import "./rail.test.js";

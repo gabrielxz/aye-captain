@@ -245,6 +245,10 @@ function soundFromSnapshot(snap) {
     }
     // decoy deployed (ours)
     if ((you.decoys ?? 0) < prevAudio.decoys) audio.sfxDecoy();
+    // rail fired (ours): slug count dropped (v5 §5 — reuse the launch thunk)
+    if (you.rail && prevAudio.railSlugs !== null && you.rail.slugs < prevAudio.railSlugs) {
+      audio.sfxLaunch(true);
+    }
     // any hull drop we take: rock hits crunch, weapons fire booms — and
     // either way the camera feels it (v4.7 §4.5)
     if (you.hull < prevAudio.hull) {
@@ -259,6 +263,7 @@ function soundFromSnapshot(snap) {
   );
   prevAudio = {
     tubes: (you.tubes ?? []).map((t) => ({ state: t.state })),
+    railSlugs: you.rail ? you.rail.slugs : null,
     enemyMissiles: new Set((snap.missiles ?? []).filter((m) => !m.own).map((m) => m.id)),
     decoys: you.decoys ?? 0,
     hull: you.hull,
@@ -323,6 +328,18 @@ function updateHUDFromSnapshot(snap) {
       label: "PDC",
       value: `${(you.pdc?.posture ?? "free").toUpperCase()} ${you.pdc?.ammoS ?? 0}s`,
       cls: (you.pdc?.ammoS ?? 0) <= 6 ? "alert" : (you.pdc?.ammoS ?? 0) <= 15 ? "warn" : you.pdc?.posture === "free" ? "good" : "",
+    },
+    {
+      label: "RAIL",
+      // armed classes only (corvettes show a dash)
+      value: you.rail
+        ? you.rail.slugs <= 0
+          ? "OUT"
+          : you.rail.cooldownS > 0
+            ? `${you.rail.cooldownS}s · ${you.rail.slugs}`
+            : `RDY · ${you.rail.slugs}`
+        : "—",
+      cls: you.rail ? (you.rail.slugs <= 0 ? "alert" : you.rail.cooldownS > 0 ? "warn" : "good") : "",
     },
     {
       label: "PING",
