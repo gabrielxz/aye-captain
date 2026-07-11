@@ -1,6 +1,6 @@
 # TODO — next steps
 
-## v5 "The Fleet" (HANDOFF-v5.md) — BUILT on branch v5-the-fleet
+## v5 "The Fleet" (HANDOFF-v5.md) — DEPLOYED 2026-07-11
 
 All ten build-order steps, one release: §1 continuous target tracking
 (+ nearest_rumble), §2 N-ship sim + 8-captain rooms + ghost disconnects
@@ -12,9 +12,10 @@ triangulation, lock firewall), §7 comms (broadcast voiceprint spike /
 tightbeam), §8 teams + IFF (transponders only), §9 schema audit, §10
 docs (Doctrine VI). 659 headless assertions.
 
-- [ ] Deploy: merge v5-the-fleet → main, `fly deploy --ha=false`, verify
-  live, confirm boot pre-generates the new stock lines (one-time TTS
-  cost; watch the ElevenLabs quota that day).
+- [x] Deployed 2026-07-11 — merge 7c431dd, CI green, live protocol
+  verified (room create, archetype pick, callsign assignment, launch).
+  Boot pre-generates ~25 new stock lines into /data/speech (one-time
+  TTS cost; keep an eye on the ElevenLabs quota today).
 - [ ] Playtest watch-list (do NOT pre-tune): does an 8-player FFA hunt
   converge or stall? Rail solution hit rate vs alert targets (the
   190 m dodge margin); is 6 s cooldown / 25 damage the right pressure?

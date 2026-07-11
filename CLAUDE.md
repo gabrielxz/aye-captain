@@ -47,12 +47,14 @@ v4.7.1 + v4.7.2 (same-day playtest patches) are deployed: TTS-safe
 `speak` variants on dynamic notices, own-ordnance fate reports gated on
 `canObserve`, tier vocabulary on the HUD CONTACT row, last-missile
 reload note, 2x rock spin. ALL of v4 through v4.7.2 is LIVE in
-production. CURRENT MILESTONE: `HANDOFF-v5.md` "The Fleet" — ALL TEN
-build-order steps BUILT on branch v5-the-fleet (§1 continuous tracking,
-§2 N-ship rooms/ghosts/death→spectator, §3 callsigns + designations,
-§4 archetypes, §5 railgun, §6 probes, §7 comms, §8 teams/IFF, §9 schema
-audit, §10 docs) — 659 headless assertions green; shipping as ONE release
-(multiplayer plumbing desyncs old clients). v5 design policy: archetypes
+production. **v5 "The Fleet" DEPLOYED 2026-07-11** (merge 7c431dd, CI
+green, live protocol verified: rooms/archetypes/callsigns answering in
+production): all ten HANDOFF-v5.md build-order steps — §1 continuous
+tracking, §2 N-ship rooms/ghosts/death→spectator, §3 callsigns +
+designations, §4 archetypes, §5 railgun, §6 probes, §7 comms, §8
+teams/IFF, §9 schema audit, §10 docs (Doctrine VI) — 661 headless
+assertions. NEXT: the v5 playtest watch-list in TODO.md (do not
+pre-tune). v5 design policy: archetypes
 differ in NUMBERS ONLY — stat blocks, no special abilities (explicitly a
 v5 policy, not permanent doctrine; the railgun loadout row is the first
 sanctioned asymmetry).
