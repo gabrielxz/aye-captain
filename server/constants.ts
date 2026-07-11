@@ -173,11 +173,18 @@ export const COLLISION_LETHAL_AT_MPS = 1500;
 export const COLLISION_RESTITUTION = 0.5; // bounce: reflect + dampen normal component
 export const COLLISION_WARNING_S = 20; // project own velocity this far ahead
 
-// Spawn
-export const SPAWN_DIST_FROM_CENTER_M = 150000; // LINKED to REGION_RADIUS_M (60%): opposite sides, 300 km apart, facing each other, v=0
+// Spawn (v5 §2): captains spawn evenly spaced on a ring, facing center,
+// v=0 — two players land on opposite sides, 300 km apart (the v4 geometry).
+// Teams spawn on opposite arcs, teammates spaced along theirs.
+export const SPAWN_RING_RADIUS_M = 150000; // LINKED to REGION_RADIUS_M (60%)
+export const TEAM_SPAWN_SPACING_M = 40000; // teammate spacing along the team arc
 
-// Match lifecycle
-export const DISCONNECT_GRACE_S = 60; // pause sim awaiting reconnect, then forfeit
+// Match lifecycle (v5 §2)
+export const MAX_PLAYERS = 8; // captains per room; spectators unlimited
+// A disconnected captain's ship becomes a drifting GHOST (thrust 0,
+// standing orders suspended, PDCs on last posture) until reconnect or this
+// timer scuttles it quietly. Replaces the v4 pause-and-forfeit.
+export const DISCONNECT_FORFEIT_S = 120;
 
 // Practice drone (exempt from propellant; thrust exists only as signature).
 // With terrain it patrols waypoints among the rocks and dust (so solo

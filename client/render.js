@@ -939,8 +939,11 @@ function drawContacts() {
     });
   }
 
-  const ghost = snap.ghost;
-  if ((snap.contacts ?? []).length === 0 && ghost) {
+  // v5 §2: one last-known ghost per lost hostile (they draw even while
+  // other hostiles are live contacts — with several enemies both states
+  // coexist). Falls back to the legacy single ghost.
+  const ghosts = snap.ghosts ?? (snap.ghost && (snap.contacts ?? []).length === 0 ? [snap.ghost] : []);
+  for (const ghost of ghosts) {
     drawShip(ghost, "enemy", { ghost: true });
     const [sx, sy] = worldToScreen(ghost.x, ghost.y);
     const age = Math.max(0, snap.tick - ghost.t);
@@ -1039,8 +1042,10 @@ function drawInset(you) {
     ctx.fill();
     ctx.globalAlpha = 1;
   }
-  if ((state.lastSnap.contacts ?? []).length === 0 && state.lastSnap.ghost) {
-    const g = state.lastSnap.ghost;
+  const insetGhosts =
+    state.lastSnap.ghosts ??
+    ((state.lastSnap.contacts ?? []).length === 0 && state.lastSnap.ghost ? [state.lastSnap.ghost] : []);
+  for (const g of insetGhosts) {
     const [ex, ey] = toInset(g.x, g.y);
     ctx.strokeStyle = COLORS.ghost;
     ctx.beginPath();

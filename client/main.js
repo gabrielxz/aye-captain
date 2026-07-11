@@ -1,12 +1,13 @@
 // ws handling + client state store
 import { startRenderLoop, bigBoomAt, showVector, setOverlay, resetOverlays, kickShake, camera } from "./render.js";
-import { initUI, addTranscript, updateHUD, showLobbyStatus, enterGame, showBanner, hideBanner, updateWatching, setSpectator } from "./ui.js";
+import { initUI, addTranscript, updateHUD, showLobbyStatus, enterGame, showBanner, hideBanner, updateWatching, setSpectator, showRoomLobby, hideRoomLobby } from "./ui.js";
 import * as audio from "./audio.js";
 
 export const state = {
   config: null, // {zoneRadius, stt} from server hello
   terrain: null, // {seed, rocks[], dust[]} — arrives with each match start
-  role: null, // "A" | "B" | "spectator"
+  role: null, // seat id ("A".."H") | "spectator"
+  team: null, // "red" | "blue" | null (v5 teams mode)
   callsign: null, // spectator callsign (cosmetic, server-assigned)
   practice: false,
   prevSnap: null, // previous snapshot (for interpolation)
@@ -46,7 +47,9 @@ function handleMessage(msg) {
       break;
     case "start":
       state.role = msg.role;
+      state.team = msg.team ?? null;
       state.callsign = msg.callsign ?? null;
+      hideRoomLobby();
       state.practice = !!msg.practice;
       state.terrain = msg.terrain ?? null;
       state.prevSnap = null;
@@ -111,15 +114,15 @@ function handleMessage(msg) {
       const mins = Math.floor(msg.durationS / 60);
       const secs = Math.round(msg.durationS % 60);
       const timeLine = `match time ${mins}:${String(secs).padStart(2, "0")}`;
+      // v5 §2: banner lists the placements ("A · C · B", winner first)
+      const standings =
+        (msg.placements ?? []).length > 2 ? ` — standings: ${msg.placements.join(" · ")}` : "";
+      const isTeamWin = msg.winner === "red" || msg.winner === "blue";
+      const winnerLabel = isTeamWin ? `${String(msg.winner).toUpperCase()} TEAM WINS` : `SHIP ${msg.winner} WINS`;
       if (state.role === "spectator") {
         audio.sfxBoom(true, false);
-        const loser = (snap?.ships ?? []).find((s) => s.id !== msg.winner);
-        if (loser) bigBoomAt(loser.x, loser.y);
-        showBanner(
-          `SHIP ${msg.winner} WINS`,
-          msg.forfeit ? "opponent never came back — win by forfeit" : timeLine
-        );
-        addTranscript("sys", `ship ${msg.winner} wins — match over`);
+        showBanner(winnerLabel, (msg.forfeit ? "win by forfeit — " : "") + timeLine + standings);
+        addTranscript("sys", `${isTeamWin ? `team ${msg.winner}` : `ship ${msg.winner}`} wins — match over`);
         break;
       }
       audio.sfxBoom(true, !msg.youWin);
@@ -132,15 +135,17 @@ function handleMessage(msg) {
       }
       showBanner(
         msg.youWin ? "VICTORY" : "SHIP LOST",
-        msg.forfeit
-          ? "opponent never came back — win by forfeit"
-          : timeLine
+        (msg.forfeit ? "win by forfeit — " : "") + timeLine + standings
       );
       addTranscript("sys", msg.youWin ? "Enemy ship destroyed. Well fought, Captain." : "Hull breach — we're done. Abandon ship.", !msg.youWin);
       break;
     }
     case "created":
-      showLobbyStatus(`ROOM CODE: ${msg.code} — waiting for opponent...`);
+      showLobbyStatus(`ROOM CODE: ${msg.code}`);
+      break;
+    case "lobby":
+      // v5 §2: roster/config while the room fills; creator launches
+      showRoomLobby(msg);
       break;
     case "error":
       showLobbyStatus(msg.message);

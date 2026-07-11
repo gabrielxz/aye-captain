@@ -14,8 +14,8 @@ const quietDetect = C.SENSOR_BASE_M * (C.SIG_BASE / 100); // ~54 km at v4.3 valu
 // 1. spawn distance: dark ships see nothing — no contacts, no ghost
 {
   const sim = new Sim();
-  sim.addShip("A", 0, -C.SPAWN_DIST_FROM_CENTER_M, 0);
-  sim.addShip("B", 0, C.SPAWN_DIST_FROM_CENTER_M, 180, true);
+  sim.addShip("A", 0, -C.SPAWN_RING_RADIUS_M, 0);
+  sim.addShip("B", 0, C.SPAWN_RING_RADIUS_M, 180, true);
   sim.tick();
   const snap = sim.snapshotFor("A") as any;
   assert(snap.contacts.length === 0 && snap.ghost === null, "300 km apart: no contact data at all");
@@ -106,13 +106,13 @@ const quietDetect = C.SENSOR_BASE_M * (C.SIG_BASE / 100); // ~54 km at v4.3 valu
   // contact, the opening hunt survives the rebase
   const flank = C.SENSOR_BASE_M * ((C.SIG_BASE + 100) / 100);
   assert(flank === 234000, `flank detect is 234 km (got ${flank / 1000})`);
-  assert(2 * C.SPAWN_DIST_FROM_CENTER_M > flank, "spawn separation exceeds flank detect");
+  assert(2 * C.SPAWN_RING_RADIUS_M > flank, "spawn separation exceeds flank detect");
   {
     // real spawn geometry (both ships INSIDE the region — outside it the
     // signature-max rule would light anything up)
     const sim = new Sim();
-    const a = sim.addShip("A", 0, -C.SPAWN_DIST_FROM_CENTER_M, 0);
-    const b = sim.addShip("B", 0, C.SPAWN_DIST_FROM_CENTER_M, 180, false);
+    const a = sim.addShip("A", 0, -C.SPAWN_RING_RADIUS_M, 0);
+    const b = sim.addShip("B", 0, C.SPAWN_RING_RADIUS_M, 180, false);
     b.thrust = 100;
     sim.tick();
     assert(a.contactTier === 0, "full-burner still invisible at spawn range");

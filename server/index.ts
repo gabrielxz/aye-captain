@@ -141,6 +141,28 @@ wss.on("connection", (ws: WebSocket) => {
         matchByWs.set(ws, match);
         break;
       }
+      case "config": {
+        // v5 §2: room creator toggles FFA | Teams pre-launch
+        const match = matchByWs.get(ws);
+        if (match && (msg.mode === "ffa" || msg.mode === "teams")) {
+          match.setMode(ws, msg.mode);
+        }
+        break;
+      }
+      case "team": {
+        const match = matchByWs.get(ws);
+        if (match && (msg.team === "red" || msg.team === "blue")) {
+          match.setTeam(ws, msg.team);
+        }
+        break;
+      }
+      case "launch": {
+        const match = matchByWs.get(ws);
+        if (!match) break;
+        const err = match.launch(ws);
+        if (err) ws.send(JSON.stringify({ type: "error", message: err }));
+        break;
+      }
       case "utterance": {
         const match = matchByWs.get(ws);
         if (match && typeof msg.text === "string") {
@@ -151,15 +173,16 @@ wss.on("connection", (ws: WebSocket) => {
       case "rematch": {
         const match = matchByWs.get(ws);
         if (!match || !match.sim.winner) break;
-        if (match.isSpectator(ws)) break; // only the players call rematch
+        // seated captains only (dead ones kept their seats); pure
+        // spectators never call rematch
+        if (!match.hasSeat(ws)) break;
         if (!match.canRematch()) {
-          ws.send(JSON.stringify({ type: "error", message: "opponent is gone — no rematch" }));
+          ws.send(JSON.stringify({ type: "error", message: "a captain is gone — no rematch" }));
           break;
         }
         match.reset(msg.newField === true); // same field unless asked
         break;
       }
-      // stage 8: create / join
       default:
         break;
     }

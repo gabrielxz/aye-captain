@@ -52,6 +52,17 @@
     #lobby .join-row { display: flex; gap: 8px; }
     #lobby .join-row button { min-width: 100px; }
     #lobby-status { color: var(--warn); min-height: 1.2em; }
+    /* v5 room lobby */
+    #room-panel { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+    #room-panel .room-code { font-size: 22px; letter-spacing: 6px; color: var(--accent); }
+    #room-roster { display: flex; flex-direction: column; gap: 3px; min-width: 240px; }
+    #room-roster .seat { display: flex; justify-content: space-between; gap: 16px; padding: 3px 8px; border: 1px solid #223; }
+    #room-roster .seat .you { color: var(--accent); }
+    #room-roster .seat .team-red { color: #e07a7a; }
+    #room-roster .seat .team-blue { color: #7ab0e0; }
+    #room-controls { display: flex; flex-direction: column; gap: 6px; align-items: center; }
+    #mode-row button.active, #team-row button.active { border-color: var(--accent); color: var(--accent); }
+    #mode-row, #team-row { display: flex; gap: 8px; }
 
     /* ---------- game ---------- */
     #game { flex: 1; display: none; min-height: 0; }
@@ -172,6 +183,24 @@
     <button id="btn-practice">PRACTICE</button>
     <button id="btn-howto">HOW TO PLAY</button>
     <div id="lobby-status"></div>
+
+    <!-- v5 §2: room lobby — roster, mode toggle, team picks, launch -->
+    <div id="room-panel" style="display:none">
+      <div id="room-code" class="room-code"></div>
+      <div id="room-roster"></div>
+      <div id="room-controls">
+        <div id="mode-row" style="display:none">
+          <button id="btn-mode-ffa">FFA</button>
+          <button id="btn-mode-teams">TEAMS</button>
+        </div>
+        <div id="team-row" style="display:none">
+          <button id="btn-team-red">JOIN RED</button>
+          <button id="btn-team-blue">JOIN BLUE</button>
+        </div>
+        <button id="btn-launch" style="display:none">LAUNCH</button>
+      </div>
+      <div id="room-hint" class="sub"></div>
+    </div>
   </div>
 
   <div id="game">

@@ -51,18 +51,14 @@ export function mulberry32(a: number): () => number {
 
 // ---------- generation ----------
 
-// Spawn points must stay clear (see Match: ships spawn at ±SPAWN_DIST on y).
-const SPAWN_POINTS = [
-  { x: 0, y: -C.SPAWN_DIST_FROM_CENTER_M },
-  { x: 0, y: C.SPAWN_DIST_FROM_CENTER_M },
-];
-
 export function generateTerrain(seed: string): Terrain {
   const rand = mulberry32(hashSeed(seed));
   const rocks: Rock[] = [];
 
+  // v5 §2: captains spawn anywhere on the spawn ring, so the whole ring
+  // annulus stays clear of rock (was: two fixed points on the y axis).
   const clearOfSpawns = (x: number, y: number, r: number) =>
-    SPAWN_POINTS.every((s) => Math.hypot(x - s.x, y - s.y) > r + C.ROCK_SPAWN_CLEAR_M);
+    Math.abs(Math.hypot(x, y) - C.SPAWN_RING_RADIUS_M) > r + C.ROCK_SPAWN_CLEAR_M;
   const clearOfRocks = (x: number, y: number, r: number) =>
     rocks.every((o) => Math.hypot(x - o.x, y - o.y) > r + o.r + C.ROCK_MIN_GAP_M);
 
