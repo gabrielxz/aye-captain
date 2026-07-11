@@ -100,7 +100,9 @@ const run = (sim: Sim, ticks: number): SimEvent[] => {
   const b = sim.addShip("B", 0, 30000, 180);
   (sim as any).ships.get("A").pdcPosture = "hold";
   b.pdcPosture = "free";
-  (sim as any).probes.push({ id: 904, owner: "A", idx: 2, bearing: 0, x: 0, y: 26000, prevX: 0, prevY: 26000, vx: 0, vy: 0, age: 0 });
+  // parked (age > burn): stays in the envelope the whole time — a burning
+  // probe exits in ~10 s and made this flaky at ~6%
+  (sim as any).probes.push({ id: 904, owner: "A", idx: 2, bearing: 0, x: 0, y: 26000, prevX: 0, prevY: 26000, vx: 0, vy: 0, age: 30 });
   const evs = run(sim, 40); // kill prob 0.25/s in envelope — 40 s is plenty
   assert((sim as any).probes.length === 0, "PDCs engage the probe");
   assert(evs.some((e) => e.kind === "notice" && e.ship === "A" && /We just lost probe two/.test((e as any).text)),
