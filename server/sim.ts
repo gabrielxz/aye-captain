@@ -144,6 +144,10 @@ export interface Ship {
   // only at ID tier (or a §7 broadcast voiceprint). Tests default it to
   // the ship id.
   callsign: string;
+  // v5 §4: stat block (numbers only — see ARCHETYPES). Tests default to
+  // the frigate, which IS the v4 baseline. An observer learns a hull's
+  // archetype only at ID tier.
+  archetype: C.ArchetypeName;
   // v5 §2 teams: null = FFA (everyone hostile). Two ships are hostile iff
   // ids differ and either has no team or the teams differ.
   team: string | null;
@@ -216,6 +220,15 @@ export interface Ship {
 // reloading tube already contains its missile).
 export function missilesAboard(ship: Ship): number {
   return ship.reserve + ship.tubes.filter((t) => t.loaded || t.reload > 0).length;
+}
+
+// v5 §4: a ship's stat block. All per-archetype numbers flow through here.
+export function statsOf(ship: Ship): C.ArchetypeStats {
+  return C.ARCHETYPES[ship.archetype];
+}
+
+export function hullMaxOf(ship: Ship): number {
+  return ship.isDrone ? C.DRONE_HULL_POINTS : statsOf(ship).hull;
 }
 
 // Thrust the drive actually produces: the setting, or 0 with dry tanks.
@@ -443,11 +456,14 @@ export class Sim {
     facing: number,
     isDrone = false,
     team: string | null = null,
-    callsign: string = id
+    callsign: string = id,
+    archetype: C.ArchetypeName = "frigate"
   ): Ship {
+    const stats = C.ARCHETYPES[archetype];
     const ship: Ship = {
       id,
       callsign,
+      archetype,
       team,
       ghost: false,
       ghostTimerS: 0,
@@ -459,13 +475,13 @@ export class Sim {
       thrust: 0,
       goal: null,
       maneuver: null,
-      hull: isDrone ? C.DRONE_HULL_POINTS : C.HULL_POINTS,
-      // tubes start loaded from the magazine: 6 aboard = 2 loaded + 4 reserve
-      reserve: Math.max(0, C.MISSILE_MAGAZINE - C.TUBE_COUNT),
-      tubes: Array.from({ length: C.TUBE_COUNT }, () => ({ loaded: true, reload: 0 })),
-      decoys: C.DECOY_SUPPLY,
+      hull: isDrone ? C.DRONE_HULL_POINTS : stats.hull,
+      // tubes start loaded from the magazine: frigate = 2 loaded + 4 reserve
+      reserve: Math.max(0, stats.magazine - stats.tubes),
+      tubes: Array.from({ length: stats.tubes }, () => ({ loaded: true, reload: 0 })),
+      decoys: stats.decoys,
       pdcPosture: "free", // default at spawn
-      pdcAmmoS: C.PDC_AMMO_S,
+      pdcAmmoS: stats.pdcAmmoS,
       pdcAmmoTier: 100,
       sigSpikePdc: 0,
       underPdcFire: false,
@@ -520,7 +536,7 @@ export class Sim {
   // transient spikes (missile launch; PDC fire in §6).
   signatureOf(obj: Ship | Decoy): number {
     if (!("thrust" in obj)) return C.DECOY_SIGNATURE;
-    let sig = C.SIG_BASE + effectiveThrust(obj);
+    let sig = statsOf(obj).sigBase + effectiveThrust(obj);
     if (obj.sigSpikeLaunch > 0) sig += C.SIG_SPIKE_LAUNCH;
     if (obj.sigSpikePdc > 0) sig += C.SIG_SPIKE_PDC;
     return sig;
@@ -532,8 +548,11 @@ export class Sim {
   }
 
   // How far away a target of this signature can be seen (LOS permitting).
-  detectionRange(signature: number): number {
-    return C.SENSOR_BASE_M * (signature / 100);
+  // v5 §4: the viewer's sensor suite sets the base — pass the viewer
+  // whenever there is one (the bare form keeps the frigate baseline for
+  // formula notes).
+  detectionRange(signature: number, viewer?: Ship): number {
+    return (viewer ? statsOf(viewer).sensorBase : C.SENSOR_BASE_M) * (signature / 100);
   }
 
   // Contact tier this viewer earns on the enemy ship right now. Every
@@ -548,7 +567,7 @@ export class Sim {
     if (!this.losClear(viewer.x, viewer.y, enemy.x, enemy.y)) return granted as 0 | 2;
     if (!this.insideZone(enemy)) return 3;
     const range = dist(viewer.x, viewer.y, enemy.x, enemy.y);
-    const detect = this.detectionRange(this.signatureOf(enemy));
+    const detect = this.detectionRange(this.signatureOf(enemy), viewer);
     if (detect <= 0) return granted as 0 | 2;
     const frac = range / detect;
     if (frac <= C.TIER_ID_FRAC) return 3;
@@ -871,7 +890,7 @@ export class Sim {
         const rawTubes = cmd.params.tubes;
         if (Array.isArray(rawTubes) && rawTubes.length > 0) {
           requested = [...new Set(rawTubes.map(Number))].filter(
-            (n) => Number.isInteger(n) && n >= 1 && n <= C.TUBE_COUNT
+            (n) => Number.isInteger(n) && n >= 1 && n <= ship.tubes.length
           );
           if (requested.length === 0) return "Helm didn't copy those tube numbers.";
         } else {
@@ -1075,7 +1094,7 @@ export class Sim {
 
     if (C.AUTO_RELOAD && ship.reserve > 0) {
       ship.reserve--;
-      tube.reload = C.TUBE_RELOAD_S;
+      tube.reload = statsOf(ship).tubeReload;
       if (!ship.isDrone) {
         events.push({
           kind: "notice",
@@ -1123,7 +1142,7 @@ export class Sim {
         return nearest ? dist(ship.x, ship.y, nearest.x, nearest.y) : null;
       }
       case "own_hull_percent":
-        return (ship.hull / (ship.isDrone ? C.DRONE_HULL_POINTS : C.HULL_POINTS)) * 100;
+        return (ship.hull / hullMaxOf(ship)) * 100;
       case "own_speed":
         return this.speedOf(ship);
       case "own_missiles_remaining":
@@ -1237,7 +1256,7 @@ export class Sim {
       if (m.owner === ship.id || deadMissiles.has(m.id)) continue;
       const range = dist(ship.x, ship.y, m.x, m.y);
       if (range > C.PDC_RANGE_M) continue;
-      if (range > this.detectionRange(this.missileSignature(m))) continue;
+      if (range > this.detectionRange(this.missileSignature(m), ship)) continue;
       if (!this.losClear(ship.x, ship.y, m.x, m.y)) continue;
       firing = true;
       this.fx.push({ type: "pdc", owner: ship.id, x1: ship.x, y1: ship.y, x2: m.x, y2: m.y });
@@ -1310,7 +1329,7 @@ export class Sim {
   // Ammo warnings at falling 50/25/10/0 percent, re-armed never (no regen).
   private announcePdcAmmo(ship: Ship, events: SimEvent[]): void {
     if (ship.isDrone) return;
-    const pct = (ship.pdcAmmoS / C.PDC_AMMO_S) * 100;
+    const pct = (ship.pdcAmmoS / statsOf(ship).pdcAmmoS) * 100;
     const tier = pct <= 0 ? 0 : pct <= 10 ? 10 : pct <= 25 ? 25 : pct <= 50 ? 50 : 100;
     if (tier < ship.pdcAmmoTier) {
       const lines: Record<number, [string, boolean]> = {
@@ -1333,7 +1352,7 @@ export class Sim {
   // rules already require us to see — the gate passes there by construction.)
   private canObserve(viewer: Ship, x: number, y: number): boolean {
     return (
-      dist(viewer.x, viewer.y, x, y) <= C.SENSOR_BASE_M &&
+      dist(viewer.x, viewer.y, x, y) <= statsOf(viewer).sensorBase &&
       this.losClear(viewer.x, viewer.y, x, y)
     );
   }
@@ -1487,7 +1506,7 @@ export class Sim {
       (m) =>
         m.owner !== ship.id &&
         ((ship.pingGrantS > 0 && ship.pingGrantMissiles.has(m.id)) || // pinged: a coasting bird shows for the window
-          (dist(ship.x, ship.y, m.x, m.y) <= this.detectionRange(this.missileSignature(m)) &&
+          (dist(ship.x, ship.y, m.x, m.y) <= this.detectionRange(this.missileSignature(m), ship) &&
             this.losClear(ship.x, ship.y, m.x, m.y)))
     );
   }
@@ -1501,7 +1520,7 @@ export class Sim {
     const granted =
       viewer.pingGrantS > 0 && viewer.pingGrantDecoys.has(d.id) ? 2 : 0;
     if (!this.losClear(viewer.x, viewer.y, d.x, d.y)) return granted as 0 | 2;
-    const frac = dist(viewer.x, viewer.y, d.x, d.y) / this.detectionRange(C.DECOY_SIGNATURE);
+    const frac = dist(viewer.x, viewer.y, d.x, d.y) / this.detectionRange(C.DECOY_SIGNATURE, viewer);
     if (frac <= C.TIER_ID_FRAC) return 3;
     if (frac <= C.TIER_TRACK_FRAC) return 2;
     if (frac <= C.TIER_FAINT_FRAC) return Math.max(1, granted) as 1 | 2;
@@ -1531,7 +1550,7 @@ export class Sim {
     }
     const out: { key: string; cid: string; bearing: number; loud: number }[] = [];
     const hear = (x: number, y: number, sig: number, key: string) => {
-      if (dist(ship.x, ship.y, x, y) <= this.detectionRange(sig) * C.HEARING_RANGE_MULT) {
+      if (dist(ship.x, ship.y, x, y) <= this.detectionRange(sig, ship) * C.HEARING_RANGE_MULT) {
         let cid = aliases.get(key);
         if (!cid) {
           cid = `r${aliases.size + 1}`;
@@ -2726,7 +2745,7 @@ export class Sim {
     if (ship.goal?.mode === "turn") {
       // relative turn: burn down the signed remaining degrees in the
       // commanded direction — never re-shortened through angDiff
-      const maxStep = C.TURN_RATE_DEG_PER_SEC * dt;
+      const maxStep = statsOf(ship).turn * dt;
       const step = clamp(ship.goal.remaining, -maxStep, maxStep);
       ship.facing = norm360(ship.facing + step);
       ship.goal.remaining -= step; // exact: final step equals the remainder
@@ -2735,7 +2754,7 @@ export class Sim {
       const goalDeg = this.resolveGoal(ship);
       if (goalDeg !== null) {
         const diff = angDiff(ship.facing, goalDeg);
-        const maxStep = C.TURN_RATE_DEG_PER_SEC * dt;
+        const maxStep = statsOf(ship).turn * dt;
         ship.facing = norm360(ship.facing + clamp(diff, -maxStep, maxStep));
       }
     }
@@ -2743,7 +2762,7 @@ export class Sim {
     // accelerate along facing; rotation does NOT change velocity (drift).
     // Output thrust dies with the tank; the throttle SETTING is remembered.
     const effective = effectiveThrust(ship);
-    const accel = (effective / 100) * C.ACCEL_FULL_THRUST_MPS2;
+    const accel = (effective / 100) * statsOf(ship).accel;
     const [fx, fy] = headingVec(ship.facing);
     ship.vx += fx * accel * dt;
     ship.vy += fy * accel * dt;
@@ -2807,7 +2826,7 @@ export class Sim {
       const off = Math.abs(angDiff(ship.facing, retro));
       if (off <= 15) {
         // full burn until one second from stopped, then feather the throttle
-        ship.thrust = clamp(Math.round((speed / C.ACCEL_FULL_THRUST_MPS2) * 100), 5, 100);
+        ship.thrust = clamp(Math.round((speed / statsOf(ship).accel) * 100), 5, 100);
       } else {
         ship.thrust = 0; // still flipping; don't burn off-axis
       }
@@ -2949,7 +2968,7 @@ export class Sim {
         their_heading: Math.round(enemy.facing),
         their_speed_mps: Math.round(Math.hypot(enemy.vx, enemy.vy)),
         ...(tier === 3
-          ? { their_hull: `${enemy.hull}/${enemy.isDrone ? C.DRONE_HULL_POINTS : C.HULL_POINTS}` }
+          ? { their_hull: `${enemy.hull}/${hullMaxOf(enemy)}`, their_archetype: enemy.archetype }
           : {}),
       };
     }
@@ -3003,7 +3022,7 @@ export class Sim {
     const lines: string[] = [];
     const zoneDist = dist(ship.x, ship.y, 0, 0);
     lines.push(
-      `Own ship: heading ${fmtBearing(ship.facing)}, speed ${Math.round(this.speedOf(ship))} m/s, thrust ${Math.round(ship.thrust)}%${effectiveThrust(ship) < ship.thrust ? " (NO output — tanks dry)" : ""}, hull ${ship.hull}/${C.HULL_POINTS}, propellant ${Math.round(ship.propellant)}/${C.PROPELLANT_MAX}.`
+      `Own ship (${ship.archetype.toUpperCase()}): heading ${fmtBearing(ship.facing)}, speed ${Math.round(this.speedOf(ship))} m/s, thrust ${Math.round(ship.thrust)}%${effectiveThrust(ship) < ship.thrust ? " (NO output — tanks dry)" : ""}, hull ${ship.hull}/${hullMaxOf(ship)}, propellant ${Math.round(ship.propellant)}/${C.PROPELLANT_MAX}.`
     );
     lines.push(
       `Position: ${(zoneDist / 1000).toFixed(1)} km from zone center (${this.insideZone(ship) ? "inside" : "OUTSIDE"} the zone)${this.inDust(ship) ? " — INSIDE A DUST CLOUD: sensors blind both ways, no locks" : ""}. Own signature ${Math.round(this.signatureOf(ship))} (detection range others get on us scales with it).`
@@ -3023,7 +3042,7 @@ export class Sim {
       );
     }
     lines.push(
-      `Weapons: PDC posture ${ship.pdcPosture.toUpperCase()} (ammo ${Math.round(ship.pdcAmmoS)}s of fire left), ${this.tubeSummary(ship)}, missiles aboard ${missilesAboard(ship)}/${C.MISSILE_MAGAZINE}, decoys ${ship.decoys}/${C.DECOY_SUPPLY}. Active ping: ${ship.pingCooldownS <= 0 ? "READY (reveals us map-wide for " + C.PING_REVEAL_S + "s)" : `recharging (${Math.ceil(ship.pingCooldownS)}s)`}.`
+      `Weapons: PDC posture ${ship.pdcPosture.toUpperCase()} (ammo ${Math.round(ship.pdcAmmoS)}s of fire left), ${this.tubeSummary(ship)}, missiles aboard ${missilesAboard(ship)}/${statsOf(ship).magazine}, decoys ${ship.decoys}/${statsOf(ship).decoys}. Active ping: ${ship.pingCooldownS <= 0 ? "READY (reveals us map-wide for " + C.PING_REVEAL_S + "s)" : `recharging (${Math.ceil(ship.pingCooldownS)}s)`}.`
     );
     const painted = this.paintedState(ship);
     lines.push(
@@ -3144,7 +3163,7 @@ export class Sim {
       speed_mps: Math.round(this.speedOf(ship)),
       thrust_percent: Math.round(ship.thrust),
       thrust_output: effectiveThrust(ship) < ship.thrust ? "ZERO — tanks dry" : "nominal",
-      hull: `${ship.hull}/${ship.isDrone ? C.DRONE_HULL_POINTS : C.HULL_POINTS}`,
+      hull: `${ship.hull}/${hullMaxOf(ship)}`,
       course_over_ground:
         this.speedOf(ship) > 1
           ? Math.round(bearingTo(0, 0, ship.vx, ship.vy))
@@ -3189,7 +3208,7 @@ export class Sim {
       zone_radius_m: C.REGION_RADIUS_M,
       inside_zone: this.insideZone(ship),
       own_signature: this.signatureOf(ship),
-      sensor_base_m: C.SENSOR_BASE_M,
+      sensor_base_m: statsOf(ship).sensorBase,
       detection_note: "detection range = sensor base x target signature / 100, line of sight permitting",
     };
     const inbound = this.visibleEnemyMissiles(ship);
@@ -3225,7 +3244,7 @@ export class Sim {
         // answered by a server template in match.ts — no LLM call
         return {
           hull: ship.hull,
-          hull_max: ship.isDrone ? C.DRONE_HULL_POINTS : C.HULL_POINTS,
+          hull_max: hullMaxOf(ship),
           propellant: Math.round(ship.propellant),
           tube_summary: this.tubeSummary(ship),
           missiles_aboard: missilesAboard(ship),
@@ -3336,8 +3355,9 @@ export class Sim {
           vy: enemy.vy,
           facing: enemy.facing,
           // status detail is earned at TIER_ID (drives the enemy hull bar)
+          // archetype is ID-tier information (v5 §4)
           ...(st.tier === 3
-            ? { hull: enemy.hull, hullMax: enemy.isDrone ? C.DRONE_HULL_POINTS : C.HULL_POINTS }
+            ? { hull: enemy.hull, hullMax: hullMaxOf(enemy), archetype: enemy.archetype }
             : {}),
         });
       }
@@ -3404,6 +3424,10 @@ export class Sim {
       tick: this.tickCount,
       you: {
         callsign: ship.callsign, // own callsign (v5 §3): HUD badge
+        archetype: ship.archetype, // own stat block is not a secret (v5 §4)
+        hullMax: hullMaxOf(ship),
+        accel: statsOf(ship).accel, // client stop-point projection
+        turnRate: statsOf(ship).turn,
         x: ship.x,
         y: ship.y,
         vx: ship.vx,
@@ -3477,7 +3501,7 @@ export class Sim {
         // explosions are bright: visible anywhere the sensor base could
         // reach an average target, LOS permitting
         return (
-          dist(ship.x, ship.y, f.x, f.y) <= C.SENSOR_BASE_M &&
+          dist(ship.x, ship.y, f.x, f.y) <= statsOf(ship).sensorBase &&
           this.losClear(ship.x, ship.y, f.x, f.y)
         );
       }),
@@ -3504,7 +3528,8 @@ export class Sim {
         facing: s.facing,
         thrustOut: effectiveThrust(s),
         hull: s.hull,
-        hullMax: s.isDrone ? C.DRONE_HULL_POINTS : C.HULL_POINTS,
+        hullMax: hullMaxOf(s),
+        archetype: s.archetype,
         drone: s.isDrone,
       })),
       contacts: [],

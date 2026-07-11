@@ -156,6 +156,14 @@ wss.on("connection", (ws: WebSocket) => {
         }
         break;
       }
+      case "archetype": {
+        // v5 §4: lobby pick (corvette | frigate | cruiser)
+        const match = matchByWs.get(ws);
+        if (match && typeof msg.archetype === "string") {
+          match.setArchetype(ws, msg.archetype as never);
+        }
+        break;
+      }
       case "launch": {
         const match = matchByWs.get(ws);
         if (!match) break;

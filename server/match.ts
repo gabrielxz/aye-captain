@@ -25,6 +25,7 @@ interface Seat {
   id: ShipId;
   ws: WebSocket | null;
   team: Team | null;
+  archetype: C.ArchetypeName; // v5 §4: lobby pick, mirrors allowed
   dead: boolean;
 }
 
@@ -65,7 +66,7 @@ export class Match {
 
   static createPractice(ws: WebSocket): Match {
     const match = new Match(true);
-    match.seats.push({ id: "A", ws, team: null, dead: false });
+    match.seats.push({ id: "A", ws, team: null, archetype: "frigate", dead: false });
     match.launched = true;
     match.sendStart(match.seats[0]);
     match.start();
@@ -87,7 +88,7 @@ export class Match {
   // room; captains join until the creator hits LAUNCH.
   static createRoom(code: string, ws: WebSocket): Match {
     const match = new Match(false, code);
-    match.seats.push({ id: "A", ws, team: null, dead: false });
+    match.seats.push({ id: "A", ws, team: null, archetype: "frigate", dead: false });
     ws.send(JSON.stringify({ type: "created", code }));
     match.broadcastLobby();
     return match;
@@ -113,7 +114,7 @@ export class Match {
       return null;
     }
     if (this.seats.length >= C.MAX_PLAYERS) return "room is full — WATCH to spectate";
-    const seat: Seat = { id: this.nextSeatId(), ws, team: null, dead: false };
+    const seat: Seat = { id: this.nextSeatId(), ws, team: null, archetype: "frigate", dead: false };
     if (this.mode === "teams") seat.team = this.smallerTeam();
     this.seats.push(seat);
     this.broadcastLobby();
@@ -148,6 +149,16 @@ export class Match {
     const seat = this.seats.find((s) => s.ws === ws);
     if (!seat) return;
     seat.team = team;
+    this.broadcastLobby();
+  }
+
+  // A captain picks their archetype (pre-launch; mirrors allowed).
+  setArchetype(ws: WebSocket, archetype: C.ArchetypeName): void {
+    if (this.launched) return;
+    if (!(archetype in C.ARCHETYPES)) return;
+    const seat = this.seats.find((s) => s.ws === ws);
+    if (!seat) return;
+    seat.archetype = archetype;
     this.broadcastLobby();
   }
 
@@ -225,7 +236,8 @@ export class Match {
         norm360(angleDeg + 180), // face the center
         false,
         this.mode === "teams" ? seat.team : null,
-        callsignFor(i)
+        callsignFor(i),
+        seat.archetype
       );
     };
     if (this.mode === "teams") {
@@ -302,6 +314,7 @@ export class Match {
     const players = this.seats.map((s, i) => ({
       id: s.id,
       team: s.team,
+      archetype: s.archetype,
       connected: s.ws !== null,
       creator: i === 0,
     }));

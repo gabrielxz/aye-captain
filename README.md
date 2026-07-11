@@ -32,6 +32,12 @@ be going somewhere — not both.
   and says so. Ships drift (Newtonian): turning doesn't change your
   velocity. "Show me our vector" (or V) draws where you're going and where
   you could stop.
+- **Pick a hull**: three archetypes, numbers only. **Corvette** — the
+  ghost: fastest, dimmest, best sensors, 6 decoys, 1 tube, no railgun.
+  **Frigate** — the baseline all-rounder. **Cruiser** — the thunderstorm:
+  160 hull, 3 tubes, deep magazines, and a signature that cannot hide.
+  Enemy archetypes are ID-tier information: below ID every contact is a
+  neutral wedge on the map.
 - **Contacts have names**: your XO designates hostile tracks in acquisition
   order — "Contact Alpha", "Contact Bravo" (decoys get letters too; you
   can't tell). At ID range a track resolves to the ship's permanent

@@ -39,7 +39,7 @@ function buildSystemPrompt(): string {
     PERSONA,
 
     `## World constants
-- Max speed ${C.MAX_SPEED_MPS} m/s, full-thrust acceleration ${C.ACCEL_FULL_THRUST_MPS2} m/s^2, turn rate ${C.TURN_RATE_DEG_PER_SEC} deg/s.
+- Max speed ${C.MAX_SPEED_MPS} m/s (all hulls). Baseline FRIGATE: acceleration ${C.ACCEL_FULL_THRUST_MPS2} m/s^2, turn ${C.TURN_RATE_DEG_PER_SEC} deg/s. v5 archetypes differ in numbers only — CORVETTE (fast, dim, 1 tube, no railgun), FRIGATE (baseline), CRUISER (heavy hull, 3 tubes, loud). CURRENT SHIP STATE names this hull's archetype; magazine/decoy/tube counts there are authoritative.
 - Ships drift (Newtonian): rotating does not change velocity. Braking = flip 180 and burn. Turning is free (reaction wheels).
 - Propellant: tank ${C.PROPELLANT_MAX}, burns ${C.PROPELLANT_BURN_AT_FULL}/s at 100% thrust (linear). Regenerates ${C.PROPELLANT_REGEN_PER_S}/s ONLY inside the zone with throttle set <= ${C.REGEN_MAX_THRUST_PCT}%. At zero: no thrust output (setting remembered), ship coasts; turning and weapons still work.
 - Detection: contact tiers. FAINT = approximate position only, no vector, cannot lock. TRACK = true position + velocity, lockable. ID = full detail. Detection range = ${C.SENSOR_BASE_M / 1000} km x (target signature / 100), line of sight permitting: a hard-burning ship shows ~${Math.round((C.SENSOR_BASE_M * (C.SIG_BASE + 100)) / 100 / 1000)} km out, a dark drifter ~${Math.round((C.SENSOR_BASE_M * C.SIG_BASE) / 100 / 1000)} km. Rocks and dust clouds block sensors, locks, and seekers. Region radius ${C.REGION_RADIUS_M / 1000} km.
@@ -122,7 +122,9 @@ const TOPICS = [
 function validTubesParam(v: unknown): number[] | null {
   if (!Array.isArray(v) || v.length === 0) return null;
   const tubes = v.map(Number);
-  if (tubes.some((n) => !Number.isInteger(n) || n < 1 || n > 2)) return null;
+  // v5 §4: archetypes carry 1-3 tubes (the sim rejects per-ship overs);
+  // 4 leaves headroom for TUBE_NAMES
+  if (tubes.some((n) => !Number.isInteger(n) || n < 1 || n > 4)) return null;
   return [...new Set(tubes)];
 }
 

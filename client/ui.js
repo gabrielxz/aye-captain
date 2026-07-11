@@ -51,6 +51,9 @@ export function initUI() {
   document.getElementById("btn-team-red").addEventListener("click", () => send({ type: "team", team: "red" }));
   document.getElementById("btn-team-blue").addEventListener("click", () => send({ type: "team", team: "blue" }));
   document.getElementById("btn-launch").addEventListener("click", () => send({ type: "launch" }));
+  for (const btn of document.querySelectorAll("#arch-row button")) {
+    btn.addEventListener("click", () => send({ type: "archetype", archetype: btn.dataset.arch }));
+  }
 
   cmdEl.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
@@ -169,7 +172,7 @@ export function showRoomLobby(msg) {
     row.className = "seat";
     const name = document.createElement("span");
     if (p.id === msg.you) name.className = "you";
-    name.textContent = `SHIP ${p.id}${p.creator ? " ★" : ""}${p.id === msg.you ? " (you)" : ""}`;
+    name.textContent = `SHIP ${p.id} · ${(p.archetype ?? "frigate").toUpperCase()}${p.creator ? " ★" : ""}${p.id === msg.you ? " (you)" : ""}`;
     const tag = document.createElement("span");
     if (msg.mode === "teams" && p.team) {
       tag.className = `team-${p.team}`;
@@ -192,6 +195,11 @@ export function showRoomLobby(msg) {
   const me = (msg.players ?? []).find((p) => p.id === msg.you);
   document.getElementById("btn-team-red").classList.toggle("active", me?.team === "red");
   document.getElementById("btn-team-blue").classList.toggle("active", me?.team === "blue");
+
+  const mine = (msg.players ?? []).find((p) => p.id === msg.you);
+  for (const btn of document.querySelectorAll("#arch-row button")) {
+    btn.classList.toggle("active", mine?.archetype === btn.dataset.arch);
+  }
 
   const launch = document.getElementById("btn-launch");
   launch.style.display = msg.creator ? "block" : "none";

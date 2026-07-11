@@ -307,7 +307,7 @@ function updateHUDFromSnapshot(snap) {
   const idContact = contacts.find((c) => c.tier === 3 && c.hull !== undefined) ?? null;
   const enemyHull = idContact ? `${idContact.hull}/${idContact.hullMax ?? 100}` : "—";
   updateHUD([
-    { label: "SHIP", value: you.callsign ?? state.role ?? "—", cls: "good" },
+    { label: "SHIP", value: `${you.callsign ?? state.role ?? "—"}${you.archetype ? ` · ${you.archetype}` : ""}`, cls: "good" },
     { label: "HULL", value: `${you.hull}`, cls: you.hull <= 35 ? "alert" : you.hull <= 65 ? "warn" : "" },
     { label: "EN HULL", value: enemyHull, cls: idContact && idContact.hull <= (idContact.hullMax ?? 100) / 2 ? "good" : "" },
     { label: "CONTACTS", value: contactsLine, cls: contacts.some((c) => c.tier >= 2) ? "good" : contacts.length ? "warn" : "", full: true },

@@ -61,8 +61,8 @@
     #room-roster .seat .team-red { color: #e07a7a; }
     #room-roster .seat .team-blue { color: #7ab0e0; }
     #room-controls { display: flex; flex-direction: column; gap: 6px; align-items: center; }
-    #mode-row button.active, #team-row button.active { border-color: var(--accent); color: var(--accent); }
-    #mode-row, #team-row { display: flex; gap: 8px; }
+    #mode-row button.active, #team-row button.active, #arch-row button.active { border-color: var(--accent); color: var(--accent); }
+    #mode-row, #team-row, #arch-row { display: flex; gap: 8px; }
 
     /* ---------- game ---------- */
     #game { flex: 1; display: none; min-height: 0; }
@@ -189,6 +189,11 @@
       <div id="room-code" class="room-code"></div>
       <div id="room-roster"></div>
       <div id="room-controls">
+        <div id="arch-row">
+          <button id="btn-arch-corvette" data-arch="corvette" title="the ghost — dim, fast, best eyes, no railgun">CORVETTE</button>
+          <button id="btn-arch-frigate" data-arch="frigate" title="the baseline — balanced loadout, one railgun">FRIGATE</button>
+          <button id="btn-arch-cruiser" data-arch="cruiser" title="the thunderstorm — heavy hull, deep magazines, always audible">CRUISER</button>
+        </div>
         <div id="mode-row" style="display:none">
           <button id="btn-mode-ffa">FFA</button>
           <button id="btn-mode-teams">TEAMS</button>

@@ -24,3 +24,4 @@ import "./ordnance-fog.test.js";
 import "./multiship.test.js";
 import "./matchflow.test.js";
 import "./designation.test.js";
+import "./archetype.test.js";

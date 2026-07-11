@@ -26,10 +26,42 @@ export const EDGE_PULL_CAP_MPS2 = 150;
 
 // Ship. Full tank = 100 s of hard burn = 6000 m/s of delta-v: propellant is
 // a delta-v budget — enough to reach flank speed and kill it once.
-export const MAX_SPEED_MPS = 3000; // LINKED to region size + EDGE_PULL tuning (the missile-speed link was broken deliberately in v4.5)
-export const ACCEL_FULL_THRUST_MPS2 = 60; // ~6g hard burn; top speed in ~50 s
-export const TURN_RATE_DEG_PER_SEC = 20;
-export const HULL_POINTS = 100;
+export const MAX_SPEED_MPS = 3000; // LINKED to region size + EDGE_PULL tuning (the missile-speed link was broken deliberately in v4.5); SHARED across archetypes (identity lives in accel/turn/sig)
+export const ACCEL_FULL_THRUST_MPS2 = 60; // ~6g hard burn; top speed in ~50 s. LINKED: == ARCHETYPES.frigate.accel (the baseline; drone + static prompt use this)
+export const TURN_RATE_DEG_PER_SEC = 20; // LINKED: == ARCHETYPES.frigate.turn
+export const HULL_POINTS = 100; // LINKED: == ARCHETYPES.frigate.hull
+
+// v5 §4: ship archetypes — NUMBERS ONLY for v5 (design policy: stat
+// blocks, no special abilities; the railgun loadout row is the first
+// sanctioned asymmetry). The FRIGATE row IS the v4 baseline — its values
+// are LINKED to the legacy globals below and must never drift from them.
+// Corvette: the ghost — dim, fast-cycling, deception-rich, best eyes, no
+// rail (a railgun is a spinal mount; the corvette's keel can't take one).
+// Cruiser: the thunderstorm — audible at map scale perpetually (sig 45
+// cannot hide; intended), deep magazines, wins by making you come to it.
+// railguns/railSlugs (§5) and probes (§6) are declared here so a loadout
+// is one row; the weapons land in their own build-order steps.
+export type ArchetypeName = "corvette" | "frigate" | "cruiser";
+export interface ArchetypeStats {
+  hull: number;
+  accel: number; // m/s² at full thrust
+  turn: number; // deg/s
+  sigBase: number; // signature of a drifting dark hull
+  sensorBase: number; // m; detection = sensorBase x target sig / 100
+  tubes: number;
+  magazine: number; // missiles aboard total (tubes start loaded from it)
+  tubeReload: number; // s
+  decoys: number;
+  pdcAmmoS: number;
+  railguns: 0 | 1;
+  railSlugs: number;
+  probes: number;
+}
+export const ARCHETYPES: Record<ArchetypeName, ArchetypeStats> = {
+  corvette: { hull: 60, accel: 85, turn: 28, sigBase: 20, sensorBase: 210000, tubes: 1, magazine: 4, tubeReload: 20, decoys: 6, pdcAmmoS: 40, railguns: 0, railSlugs: 0, probes: 4 },
+  frigate:  { hull: 100, accel: 60, turn: 20, sigBase: 30, sensorBase: 180000, tubes: 2, magazine: 6, tubeReload: 30, decoys: 4, pdcAmmoS: 60, railguns: 1, railSlugs: 20, probes: 2 },
+  cruiser:  { hull: 160, accel: 40, turn: 14, sigBase: 45, sensorBase: 160000, tubes: 3, magazine: 9, tubeReload: 30, decoys: 4, pdcAmmoS: 90, railguns: 1, railSlugs: 30, probes: 1 },
+};
 
 // Signature & detection: DETECTION IS THE GAME. Drive plumes are visible
 // across enormous distances; going dark is the only stealth.
@@ -37,7 +69,7 @@ export const HULL_POINTS = 100;
 // v4.3 rebase: SIG_BASE 10 -> 30, SENSOR_BASE_M 165 -> 180 km — playtest
 // showed stealth was FREE (dark = off-switch); dark is now an edge: a
 // drifter is still contact-visible at ~54 km, just not lockable until ~32.
-export const SIG_BASE = 30; // a drifting dark ship
+export const SIG_BASE = 30; // a drifting dark ship. LINKED: == ARCHETYPES.frigate.sigBase
 export const SIG_SPIKE_LAUNCH = 150; // missile launch flash (replaces the flat reveal)
 export const SIG_SPIKE_LAUNCH_S = 5;
 export const SIG_SPIKE_PDC = 50; // PDC firing (used by v4 §6)
@@ -46,7 +78,7 @@ export const MISSILE_SIG_BURNING = 80;
 export const MISSILE_SIG_COASTING = 8; // a ballistic torpedo is nearly invisible. Intended. Terrifying.
 // detection_range = SENSOR_BASE_M x (signature / 100), LOS permitting
 // -> full burn (130) seen at ~234 km; 50% cruise (80) at ~144 km; dark drift (30) at ~54 km
-export const SENSOR_BASE_M = 180000;
+export const SENSOR_BASE_M = 180000; // LINKED: == ARCHETYPES.frigate.sensorBase
 // v4.5 hearing channel: a second, concentric information ring driven by the
 // SAME signature. Beyond detection but within hearing, an emitter produces a
 // RUMBLE: bearing only — no range, no vector, no tier. Rocks/dust do NOT
@@ -93,8 +125,8 @@ export const LOCK_TIME_S = 5; // continuous seconds in cone+range+tracked to acq
 export const LOCK_GRACE_S = 2; // integer: honest at 1 Hz tick; favors lock stability
 
 // Launch tubes
-export const TUBE_COUNT = 2;
-export const TUBE_RELOAD_S = 30; // per tube, tubes reload in parallel (v4.5: a full salvo is FELT — staggered fire is doctrine)
+export const TUBE_COUNT = 2; // LINKED: == ARCHETYPES.frigate.tubes
+export const TUBE_RELOAD_S = 30; // LINKED: == ARCHETYPES.frigate.tubeReload. Per tube, tubes reload in parallel (v4.5: a full salvo is FELT — staggered fire is doctrine)
 export const AUTO_RELOAD = true; // reload_tubes verb is a no-op while true
 
 // PDCs (point-defense cannons; replaced the laser in v4 §6). Automated,
@@ -105,14 +137,14 @@ export const PDC_RANGE_M = 8000; // vs inbound missiles, LOS required
 export const PDC_KILL_PROB_PER_S = 0.25; // per engaged missile, substep-scaled
 export const PDC_SHIP_RANGE_M = 3000; // vs enemy ships, LOS required
 export const PDC_SHIP_DPS = 5; // continuous hull damage
-export const PDC_AMMO_S = 60; // seconds of cumulative fire; no regeneration
+export const PDC_AMMO_S = 60; // seconds of cumulative fire; no regeneration. LINKED: == ARCHETYPES.frigate.pdcAmmoS
 
 // Missiles: burn-and-coast torpedoes. MAGAZINE is everything aboard:
 // TUBE_COUNT start loaded, the rest are reserves (6 total shots per match).
 // Engine is ON whenever (below max speed) OR (turning to track); engine-on
 // drains propellant at 1/s. Dry = BALLISTIC: no accel, no turning, flies its
 // line until lifetime, impact, or PDC kill — still detonates on prox.
-export const MISSILE_MAGAZINE = 6;
+export const MISSILE_MAGAZINE = 6; // LINKED: == ARCHETYPES.frigate.magazine
 // v4.5 retune: engagements actually start 20-50 km (post sensor rebase),
 // which was inside the old 6 km/s missile's no-counterplay zone. 2400 m/s
 // is deliberately BELOW MAX_SPEED_MPS (0.8x): outrunning the burn is a
@@ -148,7 +180,7 @@ export const MISSILE_DAMAGE = 35;
 // faint/track contact to enemy SHIP sensors (~180 km) — strategic deception;
 // it resolves as a decoy only at ID tier. (v4.3 retune 90 -> 100 with the
 // SIG_BASE rebase.)
-export const DECOY_SUPPLY = 4;
+export const DECOY_SUPPLY = 4; // LINKED: == ARCHETYPES.frigate.decoys
 export const DECOY_LIFETIME_S = 60; // v4.5: matches longer missile flights; a decoy drifts convincingly for a full minute as a fake contact
 export const DECOY_SIGNATURE = 100;
 export const DECOY_DRIFT_MPS = 10; // small random drift added on ejection

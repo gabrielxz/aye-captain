@@ -16,8 +16,10 @@ const COLORS = {
   star: "#9fb4c8",
 };
 
-// Which authored design to fly (candidates in client/assets/):
-// "interceptor" | "gunship" | "saucer"
+// v5 §4: shape = archetype (tint = player/side). The three authored
+// designs map straight across; SHIP_DESIGN remains the UNKNOWN-contact
+// wedge fallback key and the pre-v5 default.
+const ARCH_DESIGN = { corvette: "interceptor", frigate: "gunship", cruiser: "saucer" };
 const SHIP_DESIGN = "interceptor";
 const SHIP_LEN_M = 60; // true hull length; far below one pixel at map scale
 const MIN_SHIP_PX = 22; // legibility clamp: never render smaller than this
@@ -44,19 +46,22 @@ const TINTS = {
   enemy: { HULL: "#3f1518", ACCENT: "#fc8181" },
   ghost: { HULL: "#141c26", ACCENT: "#4a5a6a" },
 };
-const sprites = {}; // tint -> Image
+const sprites = {}; // design -> tint -> Image
 
-fetch(`assets/${SHIP_DESIGN}.svg`)
-  .then((r) => r.text())
-  .then((svg) => {
-    for (const [name, tint] of Object.entries(TINTS)) {
-      const tinted = svg.replaceAll("HULL", tint.HULL).replaceAll("ACCENT", tint.ACCENT);
-      const img = new Image();
-      img.src = URL.createObjectURL(new Blob([tinted], { type: "image/svg+xml" }));
-      img.onload = () => (sprites[name] = img);
-    }
-  })
-  .catch(() => {}); // sprite-less fallback triangles still draw
+for (const design of new Set(Object.values(ARCH_DESIGN))) {
+  sprites[design] = {};
+  fetch(`assets/${design}.svg`)
+    .then((r) => r.text())
+    .then((svg) => {
+      for (const [name, tint] of Object.entries(TINTS)) {
+        const tinted = svg.replaceAll("HULL", tint.HULL).replaceAll("ACCENT", tint.ACCENT);
+        const img = new Image();
+        img.src = URL.createObjectURL(new Blob([tinted], { type: "image/svg+xml" }));
+        img.onload = () => (sprites[design][name] = img);
+      }
+    })
+    .catch(() => {}); // sprite-less fallback wedges still draw
+}
 
 function resize() {
   const rect = canvas.parentElement.getBoundingClientRect();
@@ -323,8 +328,10 @@ function drawVectorOverlay(you) {
   // projected stop point for an immediate full-stop maneuver: coast through
   // the retrograde flip, then decelerate at full burn (cheap, educational)
   const prop = state.lastSnap?.you?.propellant ?? 0;
-  const accel = state.config?.accel ?? 60;
-  const turnRate = state.config?.turnRate ?? 20;
+  // v5 §4: own archetype's numbers ride the snapshot; hello-config is the
+  // pre-launch fallback
+  const accel = state.lastSnap?.you?.accel ?? state.config?.accel ?? 60;
+  const turnRate = state.lastSnap?.you?.turnRate ?? state.config?.turnRate ?? 20;
   if (prop > 0) {
     const facing = state.lastSnap?.you?.facing ?? 0;
     const retro = (Math.atan2(-vx, -vy) * 180) / Math.PI;
@@ -620,7 +627,7 @@ function flareColor(pct) {
   return "#b7791f";
 }
 
-function drawShip(ent, kind, { ghost = false, thrust = 0, hull = null, hullMax = 100 } = {}) {
+function drawShip(ent, kind, { ghost = false, thrust = 0, hull = null, hullMax = 100, archetype = null } = {}) {
   const [sx, sy] = worldToScreen(ent.x, ent.y);
   const sizePx = Math.max(MIN_SHIP_PX, SHIP_LEN_M * camera.zoom);
   const r = sizePx / 2;
@@ -635,7 +642,7 @@ function drawShip(ent, kind, { ghost = false, thrust = 0, hull = null, hullMax =
   // legitimately knows ever pass thrust > 0 here (own ship, spectator view)
   // — enemy contacts carry no thrust data, so no plume can leak (v4.7 §4.1).
   if (!ghost && thrust > 0) {
-    const stern = SHIP_STERN[SHIP_DESIGN] ?? { x: 0, y: 0.4 };
+    const stern = SHIP_STERN[ARCH_DESIGN[archetype] ?? SHIP_DESIGN] ?? { x: 0, y: 0.4 };
     const sxp = stern.x * sizePx;
     const syp = stern.y * sizePx;
     const now = performance.now();
@@ -672,13 +679,16 @@ function drawShip(ent, kind, { ghost = false, thrust = 0, hull = null, hullMax =
     }
   }
 
-  const img = sprites[ghost ? "ghost" : kind];
+  // v5 §4: the SHAPE is ID-tier information — a contact without a known
+  // archetype renders as the neutral wedge, never a hull silhouette
+  const design = archetype ? ARCH_DESIGN[archetype] : null;
+  const img = design ? sprites[design]?.[ghost ? "ghost" : kind] : null;
   if (img) {
     if (ghost) ctx.globalAlpha = 0.55;
     ctx.drawImage(img, -r, -r, sizePx, sizePx);
     ctx.globalAlpha = 1;
   } else {
-    // fallback triangle while the sprite loads
+    // neutral wedge: unknown contacts, ghosts of unknowns, sprite loading
     ctx.beginPath();
     ctx.moveTo(0, -r);
     ctx.lineTo(r * 0.7, r);
@@ -759,7 +769,8 @@ function draw() {
     drawShip(you, "own", {
       thrust: state.lastSnap.you.thrustOut ?? state.lastSnap.you.thrust,
       hull: state.lastSnap.you.hull,
-      hullMax: 100,
+      hullMax: state.lastSnap.you.hullMax ?? 100,
+      archetype: state.lastSnap.you.archetype ?? null,
     });
   }
 
@@ -874,6 +885,7 @@ function drawSpectatorShips() {
     const ent = interpolate((sn) => (sn.ships ?? []).find((k) => k.id === s.id) ?? null);
     if (!ent) continue;
     drawShip(ent, s.id === "A" ? "own" : "enemy", {
+      archetype: s.archetype ?? null,
       thrust: s.thrustOut ?? 0,
       hull: s.hull,
       hullMax: s.hullMax ?? 100,
@@ -881,7 +893,7 @@ function drawSpectatorShips() {
     const [sx, sy] = worldToScreen(ent.x, ent.y);
     ctx.fillStyle = s.id === "A" ? COLORS.own : COLORS.enemy;
     ctx.font = "10px monospace";
-    ctx.fillText(s.id, sx + MIN_SHIP_PX / 2 + 5, sy + 3);
+    ctx.fillText(s.callsign ?? s.id, sx + MIN_SHIP_PX / 2 + 5, sy + 3);
   }
 }
 
@@ -936,6 +948,7 @@ function drawContacts() {
     drawShip(ent, "enemy", {
       hull: c.tier === 3 ? (c.hull ?? null) : null,
       hullMax: c.hullMax ?? 100,
+      archetype: c.archetype ?? null, // ID-tier only: below it, the wedge
     });
     if (c.label) {
       // v5 §3: the designation letter (or callsign once identified)
