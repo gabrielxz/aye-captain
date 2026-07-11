@@ -26,6 +26,24 @@ export function initAudio() {
   speechBus = ctx.createGain();
   speechBus.gain.value = 1.0;
   speechBus.connect(master);
+  startHum();
+}
+
+// v4.7 §4.6: hull hum — one filtered noise loop at very low gain, always on
+// once audio is unlocked. True digital silence reads as "audio broke"; the
+// hum is the floor that the absence of the thrust rumble lands against, so
+// going dark becomes a felt state instead of a bug report.
+function startHum() {
+  const src = ctx.createBufferSource();
+  src.buffer = noiseBuffer();
+  src.loop = true;
+  const f = ctx.createBiquadFilter();
+  f.type = "lowpass";
+  f.frequency.value = 64;
+  const g = ctx.createGain();
+  g.gain.value = 0.028;
+  src.connect(f).connect(g).connect(sfxBus);
+  src.start();
 }
 
 let ducked = false;
