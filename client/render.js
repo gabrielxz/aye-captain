@@ -423,6 +423,9 @@ function rockShapes() {
   rockShapeSeed = terrain.seed;
   rockShapeCache = terrain.rocks.map((rock, i) => {
     const rand = mulberry32(1000 + i * 7919);
+    // v4.7 §4.4: slow individual spin, seeded per rock, big bodies slower.
+    // Cosmetic only — the collision circle doesn't care.
+    const spinDps = (rand() - 0.5) * 1.2 * Math.min(1, 1500 / rock.r);
     const n = rock.centerpiece ? 22 : 14;
     const points = [];
     for (let k = 0; k < n; k++) {
@@ -438,7 +441,7 @@ function rockShapes() {
         craters.push({ x: (rand() - 0.5) * 1.1, y: (rand() - 0.5) * 1.1, r: 0.1 + rand() * 0.16 });
       }
     }
-    return { points, craters };
+    return { points, craters, spinDps };
   });
   return rockShapeCache;
 }
@@ -479,6 +482,7 @@ function drawTerrain() {
     const shape = shapes[i];
     ctx.save();
     ctx.translate(sx, sy);
+    ctx.rotate(((shape.spinDps * performance.now()) / 1000) * (Math.PI / 180));
     ctx.beginPath();
     shape.points.forEach(([dx, dy], k) => {
       if (k === 0) ctx.moveTo(dx * rpx, dy * rpx);
