@@ -33,7 +33,7 @@
     },
 
     "set_thrust": {
-      "description": "Set main drive output. Thrust accelerates the ship along its current facing. Persists until changed. THRUST IS SIGNATURE: the drive plume is what enemy sensors see — full burn is visible ~181 km out, 0 = dark and drifting (~16 km). Going dark is the only stealth.",
+      "description": "Set main drive output. Thrust accelerates the ship along its current facing. Persists until changed. THRUST IS SIGNATURE: the drive plume is what enemy sensors see — full burn is visible ~234 km out, 0 = dark and drifting (~54 km, unlockable until much closer). Going dark is the only stealth.",
       "type": "object",
       "required": ["percent"],
       "properties": {
@@ -477,6 +477,30 @@
         ]
       },
       {
+        "captain": "Stop engines",
+        "commands": [
+          { "verb": "set_thrust", "params": { "percent": 0 }, "acknowledgement": "Engines stopped. We keep our drift, Captain." }
+        ]
+      },
+      {
+        "captain": "Spin in a clockwise circle",
+        "commands": [
+          { "verb": "set_heading", "params": { "mode": "relative", "direction": "starboard", "degrees": 360 }, "acknowledgement": "Full rotation starboard — our drift won't change, Captain." }
+        ]
+      },
+      {
+        "captain": "Lock missiles then fire both",
+        "commands": [
+          { "verb": "set_heading", "params": { "mode": "target", "target": "enemy_ship" }, "acknowledgement": "Nose on him — lock building." },
+          { "verb": "set_standing_order", "params": {
+              "label": "salvo on lock",
+              "condition": { "metric": "have_lock", "op": "eq", "value": true },
+              "actions": [ { "verb": "fire_missile", "params": { "tubes": [1, 2] } } ],
+              "repeat": false
+          }, "acknowledgement": "Both tubes fire the moment the lock sets." }
+        ]
+      },
+      {
         "captain": "Sing out if propellant gets down to twenty-five percent",
         "commands": [
           { "verb": "set_standing_order", "params": {
@@ -506,6 +530,9 @@
       "Conditional phrasing ('if', 'when', 'as soon as', 'the moment') always becomes set_standing_order, never immediate execution.",
       "Numeric thresholds encode the DIRECTION of crossing, resolved against CURRENT SHIP STATE: if the current value is below the threshold and climbing toward it ('at X', 'when we reach/hit X'), the trigger is gte; if above and falling ('down to X', 'below X'), it is lte/lt. Never emit an operator the current value already satisfies unless the captain clearly wants immediate action.",
       "Standing-order acknowledgements MUST state the trigger direction aloud — 'when we REACH three hundred' vs 'if we DROP BELOW three hundred' — so a wrong guess is audible at registration, not discovered mid-burn.",
+      "Stopping the ENGINES is not stopping the SHIP: 'stop/cut/kill the engines/thrusters/burn' = set_thrust 0 (drive off, ship keeps drifting). Only stopping the ship itself ('all stop', 'full stop', 'kill our velocity', 'bring us to a stop') is maneuver full_stop. When the captain names the engines, never emit full_stop.",
+      "'Spin'/'rotate'/'pirouette' = a single relative set_heading turn (the helm honors direction and executes the full arc, up to 360). Continuous rotation is not a helm capability — do one turn and say so. Remind the captain when it matters: rotating does not curve the flight path (Newtonian drift).",
+      "There is no 'acquire lock' verb — a lock builds automatically while a TRACK-or-better contact sits in the nose cone; pointing at the target IS 'locking him up'. Sequenced firing intent ('lock then fire', 'get a lock and fire', 'fire once you have him') = set_heading at the target plus a set_standing_order on have_lock — NEVER an immediate fire_missile, which would just reject with no lock yet.",
       "Vague quantities get sensible defaults, stated aloud: 'slow down' -> thrust 25%, 'ease off' -> reduce by ~25 points, 'hard about' -> relative 180.",
       "Acknowledgements are at most 12 words. Every word is spoken aloud by the ship's voice — brevity is a feature.",
       "Continuous tracking ('keep facing him', 'stay pointed at him') is not a helm capability: execute a single set_heading target snapshot and say so — you can point the ship on command; the captain flies the ship.",

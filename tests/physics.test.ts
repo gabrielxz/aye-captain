@@ -81,4 +81,49 @@ const assert = (cond: boolean, msg: string) => {
 // 6. angle helpers
 assert(norm360(-10) === 350, "norm360(-10)=350");
 assert(angDiff(350, 10) === 20, "angDiff shortest arc across north");
+
+// 7. v4.4: relative turns honor the commanded direction and full magnitude
+// (they used to collapse to an absolute goal + shortest arc: "starboard
+// 270" went port 90, and a 360 was a silent no-op)
+{
+  // starboard 270 goes STARBOARD through 180, not the short way port
+  const sim = new Sim();
+  const s = sim.addShip("A", 0, 0, 0);
+  sim.enqueue("A", [{ verb: "set_heading", params: { mode: "relative", direction: "starboard", degrees: 270 } }]);
+  for (let i = 0; i < 5; i++) sim.tick();
+  assert(s.facing === 100, `mid-turn heading on the STARBOARD path (got ${s.facing})`);
+  for (let i = 0; i < 15; i++) sim.tick();
+  assert(s.facing === 270, `settles exactly on 270 (got ${s.facing})`);
+
+  // full 360 pirouette: really rotates, ends where it began, goal consumed
+  const sim2 = new Sim();
+  const s2 = sim2.addShip("A", 0, 0, 45);
+  sim2.enqueue("A", [{ verb: "set_heading", params: { mode: "relative", direction: "starboard", degrees: 360 } }]);
+  let sawOpposite = false;
+  for (let i = 0; i < 25; i++) {
+    sim2.tick();
+    if (Math.abs(angDiff(s2.facing, 225)) < 1e-9) sawOpposite = true;
+  }
+  assert(sawOpposite, "pirouette passes through the opposite heading (really turned)");
+  assert(s2.facing === 45, `pirouette ends back on the original heading (got ${s2.facing})`);
+  assert(s2.goal === null, "completed turn goal is consumed");
+
+  // port turns still go CCW under the new bookkeeping
+  const sim3 = new Sim();
+  const s3 = sim3.addShip("A", 0, 0, 0);
+  sim3.enqueue("A", [{ verb: "set_heading", params: { mode: "relative", direction: "port", degrees: 200 } }]);
+  for (let i = 0; i < 5; i++) sim3.tick();
+  assert(s3.facing === 260, `port 200 turns CCW past the shortest arc (got ${s3.facing})`);
+  for (let i = 0; i < 10; i++) sim3.tick();
+  assert(s3.facing === 160, `port 200 from 000 settles on 160 (got ${s3.facing})`);
+
+  // a fresh heading order still replaces a turn in progress
+  const sim4 = new Sim();
+  const s4 = sim4.addShip("A", 0, 0, 0);
+  sim4.enqueue("A", [{ verb: "set_heading", params: { mode: "relative", direction: "starboard", degrees: 360 } }]);
+  sim4.tick(); sim4.tick(); // 40 deg into the spin
+  sim4.enqueue("A", [{ verb: "set_heading", params: { mode: "absolute", degrees: 0 } }]);
+  for (let i = 0; i < 5; i++) sim4.tick();
+  assert(s4.facing === 0, `new absolute order overrides the spin (got ${s4.facing})`);
+}
 console.log("done");

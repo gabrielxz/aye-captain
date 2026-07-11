@@ -22,9 +22,10 @@ full-stop maneuver, vector overlay + cursor bearing readout, camera
 (zoom/pan/follow/inset). 300+ headless assertions in `tests/`. Live at
 https://aye-captain.fly.dev; Gabriel's online playtest is the open
 milestone item (TODO.md has the watch-list — do not pre-tune its knobs).
-v4.2 (spectator presence) and v4.3 (`HANDOFF-v4.3.md`: standing-order
+v4.2 (spectator presence), v4.3 (`HANDOFF-v4.3.md`: standing-order
 threshold fix, XO welcomes, bearing-only readout, single 50 km ring,
-sensor rebase SIG_BASE 30 / SENSOR_BASE 180 km) ship together.
+sensor rebase SIG_BASE 30 / SENSOR_BASE 180 km) and v4.4 (real relative
+turns; stop-engines / lock-then-fire translator doctrine) are deployed.
 
 ## Commands
 
@@ -153,6 +154,14 @@ Note: on this machine's rootless Docker, `-p` port publishing doesn't route
   orders encode crossing DIRECTION resolved against live state, and XO
   readbacks must speak it; the verbatim bug utterance is a schema example.
   Deferred (TODO.md): ramscoop regen, active ping — do not build yet.
+- v4.4: relative turns are REAL turns — a `turn` heading goal carries
+  signed remaining degrees, so "starboard 270" goes starboard the long way
+  and a 360 pirouette actually happens (they used to collapse to an
+  absolute goal + shortest arc: 360 was a silent no-op). Absolute/target
+  goals still steer shortest-arc. Prompt doctrine: naming the ENGINES
+  ("stop/cut engines") = thrust 0, only stopping the SHIP = full_stop;
+  "lock then fire" = standing order on have_lock, never immediate fire.
+  Every schema example is validator-checked in translator.test.ts.
 - v4.1: the 2 s seeker-reacquire-then-permanently-ballistic rule was
   REMOVED: a target-less autonomous bird holds course and may acquire
   later (blind fire needs long candidate-less flight); only dry fuel ends

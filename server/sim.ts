@@ -50,7 +50,14 @@ export type Maneuver = { type: "full_stop" };
 // Goal heading as stored: ALL orders resolve to an absolute bearing at apply
 // time — target orders snapshot the target's bearing once (no continuous
 // tracking; the captain flies the ship).
-export type HeadingGoal = { mode: "absolute"; degrees: number };
+// absolute: steer shortest-arc to a compass heading (target orders snapshot
+// to this at apply). turn: a RELATIVE turn as signed degrees remaining
+// (+ = starboard/CW, - = port/CCW) — honors the commanded direction even
+// past 180 and makes a full 360 pirouette real instead of a silent no-op
+// (v4.4 fix: norm360(facing + 360) used to collapse to "already there").
+export type HeadingGoal =
+  | { mode: "absolute"; degrees: number }
+  | { mode: "turn"; remaining: number };
 
 export interface Tube {
   loaded: boolean;
@@ -391,10 +398,9 @@ export class Sim {
         const p = cmd.params as unknown as HeadingParams;
         if (p.mode === "relative") {
           const sign = p.direction === "port" ? -1 : 1; // port = CCW
-          ship.goal = {
-            mode: "absolute",
-            degrees: norm360(ship.facing + sign * Math.abs(p.degrees)),
-          };
+          // keep the turn RELATIVE: direction and magnitude survive, so
+          // "starboard 270" goes starboard and "360" is a full rotation
+          ship.goal = { mode: "turn", remaining: sign * Math.abs(p.degrees) };
         } else if (p.mode === "absolute") {
           ship.goal = { mode: "absolute", degrees: norm360(p.degrees) };
         } else if (p.mode === "target") {
@@ -873,9 +879,13 @@ export class Sim {
     }
   }
 
-  // Goal headings are always absolute now (target orders snapshot at apply).
+  // The heading the helm is steering toward (turn goals report their
+  // end-point). Used for state summaries; the physics loop steps the two
+  // goal modes itself.
   private resolveGoal(ship: Ship): number | null {
-    return ship.goal ? ship.goal.degrees : null;
+    if (!ship.goal) return null;
+    if (ship.goal.mode === "turn") return norm360(ship.facing + ship.goal.remaining);
+    return ship.goal.degrees;
   }
 
   // Enemy ordnance uses the same detection math as ships, via its own
@@ -1659,11 +1669,21 @@ export class Sim {
 
     // rotate toward goal at fixed turn rate, clamped (no overshoot).
     // Turning is free (reaction wheels) — no propellant cost.
-    const goalDeg = this.resolveGoal(ship);
-    if (goalDeg !== null) {
-      const diff = angDiff(ship.facing, goalDeg);
+    if (ship.goal?.mode === "turn") {
+      // relative turn: burn down the signed remaining degrees in the
+      // commanded direction — never re-shortened through angDiff
       const maxStep = C.TURN_RATE_DEG_PER_SEC * dt;
-      ship.facing = norm360(ship.facing + clamp(diff, -maxStep, maxStep));
+      const step = clamp(ship.goal.remaining, -maxStep, maxStep);
+      ship.facing = norm360(ship.facing + step);
+      ship.goal.remaining -= step; // exact: final step equals the remainder
+      if (ship.goal.remaining === 0) ship.goal = null;
+    } else {
+      const goalDeg = this.resolveGoal(ship);
+      if (goalDeg !== null) {
+        const diff = angDiff(ship.facing, goalDeg);
+        const maxStep = C.TURN_RATE_DEG_PER_SEC * dt;
+        ship.facing = norm360(ship.facing + clamp(diff, -maxStep, maxStep));
+      }
     }
 
     // accelerate along facing; rotation does NOT change velocity (drift).

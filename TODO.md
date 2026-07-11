@@ -1,6 +1,28 @@
 # TODO — next steps
 
-## v4.3 playtest patch (HANDOFF-v4.3.md) — BUILT, deploying with v4.2
+## v4.4 fix patch — three playtest reports, all reproduced live then fixed
+
+- **"Stop engines" flipped the ship** (translator read it as full_stop):
+  schema rule — naming the ENGINES is thrust 0; only stopping the SHIP is
+  full_stop. Verified: "stop engines" → thrust 0, "all stop" → full_stop.
+- **"Spin in a clockwise circle" affirmed but did nothing**: two layers.
+  Sim: relative turns collapsed to an absolute goal + shortest-arc — 360°
+  normalized to "already there" (silent no-op) and >180° turns went the
+  WRONG way ("starboard 270" turned port 90). Fixed with a real `turn`
+  goal mode carrying signed remaining degrees (physics.test.ts §7).
+  Translator: spin = one relative turn, executed for real now; continuous
+  rotation stays a stated non-capability.
+- **"Lock missiles then fire both" never fired**: translator emitted an
+  IMMEDIATE fire (ack even said "when ready") → rejected at t=0 (no lock
+  yet), lock landed at t=3 with nothing armed. Schema rule + example:
+  sequenced lock-then-fire = standing order on have_lock. Verified live:
+  lock t=3 → salvo t=4 → two strikes.
+- Side fix: stale pre-rebase detection numbers (181/16 km) inside
+  ship_command_schema.json's set_thrust description → 234/54 km.
+- New guard: every schema example must pass the validator
+  (translator.test.ts).
+
+## v4.3 playtest patch (HANDOFF-v4.3.md) — DEPLOYED 2026-07-11 with v4.2
 
 - §1 standing-order bug: CONFIRMED as the translator emitting `lte` for
   "cut thrusters at 300" while below threshold (evaluator was clean —
@@ -23,7 +45,7 @@
   the pinger and paints everyone else. Burn-hot counterpart to passive
   stealth; gives a dark ship a reason to speak.
 
-## v4.2 delta — spectator presence — BUILT, deploying with v4.3
+## v4.2 delta — spectator presence — DEPLOYED 2026-07-11 with v4.3
 
 Lobby WATCH + room code joins as a spectator: omniscient referee view,
 cosmetic callsign from a fixed pool (Ghost, Watcher, Echo, ... , -2 on
@@ -32,8 +54,7 @@ players' top-left map corner (collapses to a count past 3, absent at 0).
 No persistence, no commands, no rematch rights, no transcript/XO noise.
 21 new assertions in `tests/spectator.test.ts`; handbook §SPECTATING added.
 
-- [ ] Deploy v4.2 + v4.3 together (v4.3 changes constants — single release,
-  in-memory matches die on the machine restart anyway)
+- [x] Deploy v4.2 + v4.3 together — commit d331c95, CI green, verified live
 
 ## v4 "The Big Dark" + v4.1 addendum — DEPLOYED 2026-07-11
 

@@ -100,4 +100,29 @@ const assert = (cond: boolean, msg: string) => {
   assert(validateCommand({verb:"query",params:{topic:"enemy"}}) !== null, "query valid");
   assert(validateCommand({verb:"query",params:{topic:"weather"}}) === null, "unknown topic rejected");
 }
+
+// every example the schema teaches the model must itself pass the validator
+// (guards the prompt's few-shot set against schema drift)
+{
+  const { readFileSync } = await import("node:fs");
+  const schema = JSON.parse(readFileSync(new URL("../ship_command_schema.json", import.meta.url), "utf8"));
+  for (const ex of schema.example_translations.examples) {
+    const bad = ex.commands.filter((c: any) => c.verb !== undefined && validateCommand(c) === null);
+    assert(bad.length === 0, `schema example valid: "${ex.captain}"`);
+  }
+}
+
+// v4.4 mappings pinned: the two fix-anchoring examples encode the right verbs
+{
+  const { readFileSync } = await import("node:fs");
+  const schema = JSON.parse(readFileSync(new URL("../ship_command_schema.json", import.meta.url), "utf8"));
+  const byCapt = (t: string) => schema.example_translations.examples.find((e: any) => e.captain === t);
+  const stop = byCapt("Stop engines");
+  assert(stop?.commands[0].verb === "set_thrust" && stop.commands[0].params.percent === 0, "'Stop engines' example is thrust 0, not full_stop");
+  const spin = byCapt("Spin in a clockwise circle");
+  assert(spin?.commands[0].params.degrees === 360 && spin.commands[0].params.direction === "starboard", "spin example is a real 360 starboard turn");
+  const lockFire = byCapt("Lock missiles then fire both");
+  assert(lockFire?.commands.some((c: any) => c.verb === "set_standing_order" && c.params.condition.metric === "have_lock"), "lock-then-fire example arms a have_lock standing order");
+  assert(!lockFire?.commands.some((c: any) => c.verb === "fire_missile"), "lock-then-fire example never fires immediately");
+}
 console.log("done");
