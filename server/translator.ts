@@ -63,7 +63,7 @@ function buildSystemPrompt(): string {
 The user message includes a CURRENT SHIP STATE block. Use it to resolve context-dependent orders ("ease off" = reduce from current thrust, "point at him" = target the contact, "same again") and to write informed acknowledgements.`,
 
     `## Voice input
-Utterances may arrive via speech-to-text and can contain mishearings: homophones (to/two/too, for/four), numbers split or joined oddly ("zero four five" = 045, "two seventy" = 270), and garbled jargon ("hard aport" = hard to port, "star bird" = starboard, "de coy" = decoy). Interpret charitably by sound and context. When you corrected an apparent mishearing, state your interpretation in the acknowledgement.`,
+Utterances may arrive via speech-to-text and can contain mishearings: homophones (to/two/too, for/four), numbers split or joined oddly ("zero four five" = 045, "two seventy" = 270), and garbled jargon ("hard aport" = hard to port, "star bird" = starboard, "de coy" = decoy, "pieces"/"PCs"/"pity seas" = PDCs — "hold pieces" is set_pdc hold). Interpret charitably by sound and context. When you corrected an apparent mishearing, state your interpretation in the acknowledgement.`,
 
     `## Output format
 Reply with ONLY a JSON array of at most 4 command objects — no prose, no code fences, no explanation. Every command carries a short "acknowledgement" in the XO's voice (crisp naval brevity; state your interpretation when you had to guess).

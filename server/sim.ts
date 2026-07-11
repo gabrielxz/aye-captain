@@ -1045,6 +1045,12 @@ export class Sim {
     const current = this.rumblesFor(ship);
     const liveIds = new Set(current.map((r) => r.cid));
 
+    // Spoken bearings quantize to 10° — a rumble is vague by nature, and
+    // exact bearings made every announcement a UNIQUE string, each one a
+    // fresh ElevenLabs synthesis (the playtest burned the whole TTS quota
+    // in a day). 36 buckets x 2 line shapes cache to disk once, forever.
+    // Internal drift tracking stays exact; the chevron shows the true bearing.
+    const spoken = (b: number) => fmtBearing((Math.round(b / 10) * 10) % 360);
     for (const r of current) {
       const st = state.get(r.cid);
       if (!st || (!st.live && st.cooldown <= 0)) {
@@ -1052,7 +1058,7 @@ export class Sim {
         events.push({
           kind: "notice",
           ship: ship.id,
-          text: `Drive rumble, bearing ${fmtBearing(r.bearing)}.`,
+          text: `Drive rumble, bearing ${spoken(r.bearing)}.`,
         });
       } else if (
         st.live &&
@@ -1064,7 +1070,7 @@ export class Sim {
         events.push({
           kind: "notice",
           ship: ship.id,
-          text: `That rumble's drifted to ${fmtBearing(r.bearing)}.`,
+          text: `That rumble's drifted to ${spoken(r.bearing)}.`,
         });
       } else if (!st.live) {
         st.live = true; // back within cooldown: resume silently

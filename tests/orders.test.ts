@@ -209,6 +209,8 @@ const so = (params: any) => ({ verb: "set_standing_order", params } as any);
   assert(/reach/i.test(cmd.acknowledgement), "readback states the trigger direction");
   const rules: string[] = schema.llm_translator_rules.rules;
   assert(rules.some(r => /DIRECTION of crossing/.test(r)), "prompt rule for threshold direction present");
+  assert(rules.some(r => /NEVER claim an action was taken/.test(r)), "reply-only lines may never claim actions (the 'Hold Pieces' phantom)");
+  assert(rules.some(r => /EMIT THE VERB/.test(r)), "if the model can name the action it must emit the command");
   assert(rules.some(r => /trigger direction/.test(r)), "prompt rule for spoken readback direction present");
 }
 console.log("done");

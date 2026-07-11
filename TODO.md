@@ -1,6 +1,19 @@
 # TODO — next steps
 
-## v4.5 "Tempo" (HANDOFF-v4.5.md) — BUILT, not yet deployed
+## v4.6 — phantom-ack fix + TTS quota furnace (playtest report 2026-07-11)
+
+"Hold PDCs" was STT-heard as "Hold Pieces"; the translator emitted a
+REPLY-ONLY element whose text claimed "PDCs holding" — no command ran, HUD
+(truthfully) kept saying FREE. Fixes: (1) schema rule — reply-only lines
+may never claim an action; if the model can name the action it must emit
+the verb; (2) "pieces/PCs" mishearing hint; (3) reply-only lines now
+render as dim-italic "XO (note):" so conversation can't masquerade as an
+executed order; (4) spoken rumble bearings quantize to 10° — exact
+bearings made every announcement a unique ElevenLabs synthesis and burned
+the entire TTS quota in one day (Gabriel has since subscribed to the
+starter tier). Chevrons/internal tracking stay exact.
+
+## v4.5 "Tempo" (HANDOFF-v4.5.md) — DEPLOYED 2026-07-11
 
 Missile retune to real engagement ranges (2400 m/s / 150 m/s² / 3 km
 arming / 30° autonomous cone), 60 s decoys, 30 s reload, steeper edge pull
@@ -10,8 +23,9 @@ rumbles at 2.5× detection, chevrons + low audio, rumble_present metric),
 and the active PING (sensor_ping verb, 150 km / 5 s track / 10 s map-wide
 reveal / 30 s cooldown, ping-cannot-lock pinned). 400+ assertions.
 
-- [ ] Deploy, then playtest: does the hunt phase now converge? Do throttles
-  come up? Is the ping cost honest?
+- [x] Deployed 2026-07-11 (commit 602ff00, CI green, verified live)
+- [ ] Playtest: does the hunt phase now converge? Do throttles come up?
+  Is the ping cost honest?
 
 ## Escalation ladder (held in RESERVE — do not build unprompted)
 

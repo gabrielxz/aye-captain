@@ -28,7 +28,9 @@ sensor rebase SIG_BASE 30 / SENSOR_BASE 180 km) and v4.4 (real relative
 turns; stop-engines / lock-then-fire translator doctrine) are deployed.
 v4.5 "Tempo" (`HANDOFF-v4.5.md`: missile retune to real engagement ranges
 + 3 km arming distance, 30 s reload, 60 s decoys, steeper edge pull, the
-HEARING channel, the active PING) is built.
+HEARING channel, the active PING) and v4.6 (phantom-ack fix: reply-only
+lines never claim actions, render as "XO (note)"; spoken rumble bearings
+quantized to 10° for the TTS cache) are deployed.
 
 ## Commands
 
@@ -168,6 +170,13 @@ Note: on this machine's rootless Docker, `-p` port publishing doesn't route
   orders encode crossing DIRECTION resolved against live state, and XO
   readbacks must speak it; the verbatim bug utterance is a schema example.
   Deferred (TODO.md): ramscoop regen, active ping — do not build yet.
+- v4.6: reply-only translator elements may NEVER claim an action was
+  taken ("PDCs holding" with no verb ran nothing while sounding executed —
+  the invariant-4 loophole); they render as a distinct "XO (note)" line
+  (who: "xo-note"). Spoken rumble bearings quantize to 10° — exact
+  bearings made every announcement a unique ElevenLabs synthesis and
+  drained the whole TTS quota in a day. Dynamic XO lines with unbounded
+  numeric content are a quota hazard: quantize or template them.
 - v4.4: relative turns are REAL turns — a `turn` heading goal carries
   signed remaining degrees, so "starboard 270" goes starboard the long way
   and a 360 pirouette actually happens (they used to collapse to an

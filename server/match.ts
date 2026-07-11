@@ -355,7 +355,7 @@ export class Match {
       // Ship-AI lines get a voice; skip bookkeeping noise (standing-order
       // trigger logs, dev-harness echoes).
       const speak =
-        (who === "xo" || who === "sys") &&
+        (who === "xo" || who === "xo-note" || who === "sys") &&
         !text.startsWith("Standing order '") &&
         !text.startsWith("direct");
       const speech = speak ? ensureSpeech(text) : null;
@@ -393,8 +393,11 @@ export class Match {
       this.sendTranscript(id, "xo", "Say again, Captain?");
       return;
     }
+    // reply-only elements are CONVERSATION, not executed commands — the
+    // client renders them visibly distinct so a phantom "PDCs holding"
+    // can never masquerade as an action acknowledgement (invariant 4)
     for (const reply of result.replies) {
-      this.sendTranscript(id, "xo", reply);
+      this.sendTranscript(id, "xo-note", reply);
     }
 
     // Queries execute immediately against sensor-visible state (read-only);
