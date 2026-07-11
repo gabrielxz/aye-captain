@@ -18,7 +18,8 @@ export type TargetKind =
   | "enemy_ship"
   | "nearest_missile"
   | "nearest_decoy"
-  | "nearest_contact";
+  | "nearest_contact"
+  | "nearest_rumble";
 
 export type HeadingParams =
   | { mode: "relative"; direction: "port" | "starboard"; degrees: number }
@@ -45,22 +46,25 @@ export interface Command {
 
 export type PdcPosture = "free" | "hold";
 
-// Autopilot macros. Unlike continuous tracking (which stays removed), a
-// maneuver has a DEFINED END STATE — it runs, finishes, announces. The
-// executor switches on type so future macros (v5+) are additive.
+// Autopilot macros: a maneuver has a DEFINED END STATE — it runs, finishes,
+// announces. The executor switches on type so future macros (v5+) are
+// additive.
 export type Maneuver = { type: "full_stop" };
 
-// Goal heading as stored: ALL orders resolve to an absolute bearing at apply
-// time — target orders snapshot the target's bearing once (no continuous
-// tracking; the captain flies the ship).
-// absolute: steer shortest-arc to a compass heading (target orders snapshot
-// to this at apply). turn: a RELATIVE turn as signed degrees remaining
-// (+ = starboard/CW, - = port/CCW) — honors the commanded direction even
-// past 180 and makes a full 360 pirouette real instead of a silent no-op
-// (v4.4 fix: norm360(facing + 360) used to collapse to "already there").
+// Goal heading as stored.
+// absolute: steer shortest-arc to a compass heading. turn: a RELATIVE turn
+// as signed degrees remaining (+ = starboard/CW, - = port/CCW) — honors the
+// commanded direction even past 180 and makes a full 360 pirouette real
+// instead of a silent no-op (v4.4 fix: norm360(facing + 360) used to
+// collapse to "already there"). track: CONTINUOUS tracking (v5 §1, a
+// deliberate reversal of the v4 snapshot rule) — the helm re-resolves the
+// target's bearing every tick into `degrees` until the order is replaced;
+// `lost` edge-flags the below-faint fallback to last-known so the XO
+// announces it once, not every tick.
 export type HeadingGoal =
   | { mode: "absolute"; degrees: number }
-  | { mode: "turn"; remaining: number };
+  | { mode: "turn"; remaining: number }
+  | { mode: "track"; target: TargetKind; degrees: number; lost: boolean };
 
 export interface Tube {
   loaded: boolean;
@@ -466,13 +470,20 @@ export class Sim {
         } else if (p.mode === "absolute") {
           ship.goal = { mode: "absolute", degrees: norm360(p.degrees) };
         } else if (p.mode === "target") {
-          // Snapshot: resolve the target's bearing ONCE, now. No continuous
-          // tracking — standing orders re-snapshot at each trigger.
+          // v5 §1: CONTINUOUS tracking — the helm re-resolves the target's
+          // bearing every tick (refreshTrackGoals) until a new heading or
+          // maneuver order replaces this goal.
           const pos = this.resolveTargetPos(ship, p.target);
-          if (!pos) return "No contact to point at, Captain.";
+          if (!pos) {
+            return p.target === "nearest_rumble"
+              ? "No rumble to steer on, Captain."
+              : "No contact to point at, Captain.";
+          }
           ship.goal = {
-            mode: "absolute",
+            mode: "track",
+            target: p.target,
             degrees: bearingTo(ship.x, ship.y, pos.x, pos.y),
+            lost: !pos.live,
           };
         } else {
           return "Helm didn't copy that heading.";
@@ -1055,8 +1066,8 @@ export class Sim {
   }
 
   // The heading the helm is steering toward (turn goals report their
-  // end-point). Used for state summaries; the physics loop steps the two
-  // goal modes itself.
+  // end-point; track goals report the last resolved bearing). Used for
+  // state summaries and the shortest-arc steering branch in stepShip.
   private resolveGoal(ship: Ship): number | null {
     if (!ship.goal) return null;
     if (ship.goal.mode === "turn") return norm360(ship.facing + ship.goal.remaining);
@@ -1240,28 +1251,32 @@ export class Sim {
 
   // Fog-aware: the helm steers by what the sensors show — true position at
   // track or better, the noisy faint fix at tier 1, last-known otherwise.
+  // `live` is false only on the last-known fallback (drives the tracking
+  // XO's "lost him" line); a rumble is bearing-only but live while heard.
   protected resolveTargetPos(
     ship: Ship,
     target: TargetKind
-  ): { x: number; y: number } | null {
-    const enemyShipPos = (): { x: number; y: number } | null => {
+  ): { x: number; y: number; live: boolean } | null {
+    const enemyShipPos = (): { x: number; y: number; live: boolean } | null => {
       const enemy = this.enemyOf(ship.id);
-      if (enemy && ship.contactTier >= 2) return { x: enemy.x, y: enemy.y };
+      if (enemy && ship.contactTier >= 2) return { x: enemy.x, y: enemy.y, live: true };
       if (ship.contactTier === 1 && ship.faintContact) {
-        return { x: ship.faintContact.x, y: ship.faintContact.y };
+        return { x: ship.faintContact.x, y: ship.faintContact.y, live: true };
       }
       if (ship.lastKnownEnemy) {
-        return { x: ship.lastKnownEnemy.x, y: ship.lastKnownEnemy.y };
+        return { x: ship.lastKnownEnemy.x, y: ship.lastKnownEnemy.y, live: false };
       }
       return null;
     };
+    const asLive = (o: { x: number; y: number } | null) =>
+      o ? { x: o.x, y: o.y, live: true } : null;
     switch (target) {
       case "enemy_ship":
         return enemyShipPos();
       case "nearest_missile":
-        return this.nearestOf(ship, this.visibleEnemyMissiles(ship));
+        return asLive(this.nearestOf(ship, this.visibleEnemyMissiles(ship)));
       case "nearest_decoy":
-        return this.nearestOf(ship, this.visibleEnemyDecoys(ship));
+        return asLive(this.nearestOf(ship, this.visibleEnemyDecoys(ship)));
       case "nearest_contact": {
         // the enemy ship if we hold any live contact, else nearest visible
         // ordnance, else last-known ship position
@@ -1270,7 +1285,58 @@ export class Sim {
           ...this.visibleEnemyMissiles(ship),
           ...this.visibleEnemyDecoys(ship),
         ]);
-        return ordnance ?? enemyShipPos();
+        return asLive(ordnance) ?? enemyShipPos();
+      }
+      case "nearest_rumble": {
+        // Bearing-only: "nearest" is unknowable below faint (a rumble has
+        // no range), so LOUDEST stands in as the captain's best proxy. The
+        // resolved point sits far down the bearing — steering only ever
+        // reads the direction.
+        const rumbles = this.rumblesFor(ship);
+        if (rumbles.length === 0) return null;
+        const r = rumbles.reduce((a, b) => (b.loud > a.loud ? b : a));
+        const [dx, dy] = headingVec(r.bearing);
+        return {
+          x: ship.x + dx * C.REGION_RADIUS_M * 2,
+          y: ship.y + dy * C.REGION_RADIUS_M * 2,
+          live: true,
+        };
+      }
+    }
+  }
+
+  // v5 §1: continuous tracking — once per tick, refresh every track goal
+  // against the live sensor picture. A ship-shaped target that drops below
+  // faint falls back to last-known position and the XO says so ONCE (edge,
+  // not spam); reacquisition is announced the same way. A bearing-only or
+  // ordnance target that vanishes outright just holds the last resolved
+  // bearing (missiles die in seconds; a faded rumble leaves nothing better
+  // to steer by).
+  private refreshTrackGoals(ship: Ship, events: SimEvent[]): void {
+    const g = ship.goal;
+    if (!g || g.mode !== "track") return;
+    const pos = this.resolveTargetPos(ship, g.target);
+    if (pos) g.degrees = bearingTo(ship.x, ship.y, pos.x, pos.y);
+    const live = pos !== null && pos.live;
+    if (g.target === "enemy_ship" || g.target === "nearest_contact") {
+      if (!live && !g.lost) {
+        g.lost = true;
+        if (!ship.isDrone) {
+          events.push({
+            kind: "notice",
+            ship: ship.id,
+            text: "Lost him — helm's holding his last known position.",
+          });
+        }
+      } else if (live && g.lost) {
+        g.lost = false;
+        if (!ship.isDrone) {
+          events.push({
+            kind: "notice",
+            ship: ship.id,
+            text: "Contact regained — helm's tracking him again.",
+          });
+        }
       }
     }
   }
@@ -1320,9 +1386,16 @@ export class Sim {
           }
         }
       }
+
+      // 3. continuous tracking: refresh track goals against this tick's
+      // sensor picture (sensors re-evaluated on the previous tick's last
+      // substep, so the picture is current as of the tick boundary)
+      for (const ship of this.ships.values()) {
+        this.refreshTrackGoals(ship, events);
+      }
     }
 
-    // 3. step physics (also: propellant, tube reloads, flash countdown)
+    // 4. step physics (also: propellant, tube reloads, flash countdown)
     for (const ship of this.ships.values()) {
       this.stepShip(ship, events, dt);
       this.applyBounds(ship, events, dt);
@@ -1336,13 +1409,13 @@ export class Sim {
       d.age += dt;
     }
 
-    // 4. resolve weapons: proximity fuses, expiry, seeker locks
+    // 5. resolve weapons: proximity fuses, expiry, seeker locks
     this.resolveWeapons(events, dt);
 
     this.phase = (this.phase + 1) % C.PHYSICS_SUBSTEPS;
     if (this.phase !== 0) return;
 
-    // 5. sensors: per-viewer enemy visibility, last-known tracking, contact
+    // 6. sensors: per-viewer enemy visibility, last-known tracking, contact
     // notices; then ship-to-ship missile locks (needs fresh visibility) and
     // painted warnings (needs both locks updated)
     for (const ship of this.ships.values()) {
@@ -2237,6 +2310,15 @@ export class Sim {
     lines.push(
       `Position: ${(zoneDist / 1000).toFixed(1)} km from zone center (${this.insideZone(ship) ? "inside" : "OUTSIDE"} the zone)${this.inDust(ship) ? " — INSIDE A DUST CLOUD: sensors blind both ways, no locks" : ""}. Own signature ${Math.round(this.signatureOf(ship))} (detection range others get on us scales with it).`
     );
+    if (ship.goal?.mode === "track") {
+      const label =
+        ship.goal.target === "enemy_ship"
+          ? "the enemy contact"
+          : `the ${ship.goal.target.replace(/_/g, " ")}`;
+      lines.push(
+        `Helm: continuously tracking ${label} (nose follows it every tick until a new heading order)${ship.goal.lost ? " — contact LOST, holding its last known bearing" : ""}.`
+      );
+    }
     if (ship.collisionWarnS !== null) {
       lines.push(
         `COLLISION WARNING: rock on our vector, impact in ~${Math.round(ship.collisionWarnS)}s at current velocity.`

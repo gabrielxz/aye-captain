@@ -26,8 +26,12 @@ be going somewhere — not both.
 
 - **Thrust & helm**: "flank speed", "come left forty", "steer 090", "point
   us at him", "go dark and drift", "all stop" (an autopilot flip-and-burn).
-  Ships drift (Newtonian): turning doesn't change your velocity. "Show me
-  our vector" (or V) draws where you're going and where you could stop.
+  Pointing at a target TRACKS it: the helm keeps the nose on the contact
+  (or down a rumble's bearing — "steer for that rumble") until you give a
+  new heading; lose the contact and the helm holds its last known position
+  and says so. Ships drift (Newtonian): turning doesn't change your
+  velocity. "Show me our vector" (or V) draws where you're going and where
+  you could stop.
 - **Detection**: your drive plume is your signature. A hard-burning ship is
   visible ~234 km out; a dark drifter ~54 km (and unlockable until ~32).
   Contacts have **tiers**: FAINT (a smudge — approximate position, no

@@ -161,6 +161,11 @@ const STOCK_LINES = [
   "Drift marker up, Captain.",
   "Drift marker down.",
   "We're not drifting anywhere, Captain — nothing to mark yet.",
+  // v5 §1: continuous tracking
+  "Lost him — helm's holding his last known position.",
+  "Contact regained — helm's tracking him again.",
+  "No contact to point at, Captain.",
+  "No rumble to steer on, Captain.",
 ];
 
 // Sequential on purpose: ElevenLabs free/low tiers have tight concurrency

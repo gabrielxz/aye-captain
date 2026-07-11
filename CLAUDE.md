@@ -46,7 +46,12 @@ v4.7.1 + v4.7.2 (same-day playtest patches) are deployed: TTS-safe
 `speak` variants on dynamic notices, own-ordnance fate reports gated on
 `canObserve`, tier vocabulary on the HUD CONTACT row, last-missile
 reload note, 2x rock spin. ALL of v4 through v4.7.2 is LIVE in
-production. NEXT MILESTONE: `HANDOFF-v5.md` "The Fleet" — not started.
+production. CURRENT MILESTONE: `HANDOFF-v5.md` "The Fleet" — IN PROGRESS,
+shipping as ONE release (multiplayer plumbing desyncs old clients). Build
+order §12; §1 (continuous target tracking restored + nearest_rumble ref)
+is done. v5 design policy: archetypes differ in NUMBERS ONLY — stat
+blocks, no special abilities (explicitly a v5 policy, not permanent
+doctrine; the railgun loadout row is the first sanctioned asymmetry).
 
 ## Commands
 
@@ -132,9 +137,12 @@ Note: on this machine's rootless Docker, `-p` port publishing doesn't route
    mother ship's track, decoy-immune) until the lock breaks or the launcher
    dies — then AUTONOMOUS, one-way, seeker-only, decoy-susceptible. Blind
    fire (guidance "bearing") skips the lock and is autonomous from birth;
-   the translator emits it ONLY on explicit request. Target headings are
-   one-shot snapshots — no continuous tracking code path exists. The
-   full_stop maneuver is fine (defined end state).
+   the translator emits it ONLY on explicit request. Target headings TRACK
+   CONTINUOUSLY (v5 §1, a deliberate reversal of the v4 snapshot rule): a
+   `track` goal re-resolves the bearing every tick until a new heading or
+   maneuver order replaces it; a ship contact that drops below faint falls
+   back to last-known position with a one-time XO notice. The full_stop
+   maneuver is unchanged (defined end state).
 8. Propellant regen gates on the throttle SETTING (not output); signature
    uses EFFECTIVE thrust; drones are exempt from propellant.
 9. Detection: range = SENSOR_BASE_M x signature/100, always LOS-gated

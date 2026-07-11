@@ -57,9 +57,10 @@ const assert = (cond: boolean, msg: string) => {
   assert(s.vx === vx0 && s.vy === vy0, "velocity unchanged while rotating at 0 thrust (drift)");
 }
 
-// 5. target headings are SNAPSHOTS: resolved once at execution, no tracking
-// (target in the TRACK band — 8 km on a quiet ship — so the helm steers by
-// the true position, not a noisy faint fix)
+// 5. target headings TRACK CONTINUOUSLY (v5 §1, deliberate reversal of the
+// v4 snapshot rule): the helm re-resolves the bearing every tick until the
+// order is replaced. Target in the TRACK band — 8 km on a quiet ship — so
+// the helm steers by the true position, not a noisy faint fix.
 {
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 0);
@@ -67,15 +68,64 @@ const assert = (cond: boolean, msg: string) => {
   sim.tick(); // let sensors see B
   sim.enqueue("A", [{ verb: "set_heading", params: { mode: "target", target: "enemy_ship" } }]);
   for (let i = 0; i < 6; i++) sim.tick();
-  assert(Math.abs(angDiff(a.facing, 90)) < 1e-9, `snapshot heading points at B's bearing at order time (facing ${a.facing.toFixed(1)})`);
-  // B relocates; A's goal must NOT follow
+  assert(Math.abs(angDiff(a.facing, 90)) < 1e-9, `tracking heading points at B's bearing (facing ${a.facing.toFixed(1)})`);
+  // B relocates; the SAME order follows without being re-issued
   b.x = 0; b.y = -8000; // now due south
+  for (let i = 0; i < 12; i++) sim.tick();
+  assert(Math.abs(angDiff(a.facing, 180)) < 1e-9, `helm follows the moving target — continuous tracking (facing ${a.facing.toFixed(1)})`);
+  // an explicit heading order replaces the track goal and tracking stops
+  sim.enqueue("A", [{ verb: "set_heading", params: { mode: "absolute", degrees: 0 } }]);
+  for (let i = 0; i < 20; i++) sim.tick();
+  b.x = 8000; b.y = 0; // move B again; nose must NOT follow anymore
   for (let i = 0; i < 10; i++) sim.tick();
-  assert(Math.abs(angDiff(a.facing, 90)) < 1e-9, `heading holds after target moves — no continuous tracking (facing ${a.facing.toFixed(1)})`);
-  // a fresh order re-snapshots
+  assert(Math.abs(angDiff(a.facing, 0)) < 1e-9, `a new heading order replaces tracking (facing ${a.facing.toFixed(1)})`);
+}
+
+// 5b. tracking falls back to LAST KNOWN when the contact drops below faint,
+// and the XO announces the loss exactly once (edge, not spam)
+{
+  const sim = new Sim();
+  const a = sim.addShip("A", 0, 0, 0);
+  const b = sim.addShip("B", 8000, 0, 0); // due east, track band
+  sim.tick();
   sim.enqueue("A", [{ verb: "set_heading", params: { mode: "target", target: "enemy_ship" } }]);
-  for (let i = 0; i < 10; i++) sim.tick();
-  assert(Math.abs(angDiff(a.facing, 180)) < 1e-9, `re-issued order snapshots the new bearing (facing ${a.facing.toFixed(1)})`);
+  for (let i = 0; i < 6; i++) sim.tick();
+  // B vanishes beyond detection (quiet ship ~54 km band; 200 km is gone)
+  b.x = 0; b.y = 200000;
+  const lostNotices: string[] = [];
+  for (let i = 0; i < 10; i++) {
+    for (const e of sim.tick()) {
+      if (e.kind === "notice" && e.ship === "A" && /helm's holding/i.test(e.text)) lostNotices.push(e.text);
+    }
+  }
+  assert(lostNotices.length === 1, `lost-contact fallback announced exactly once (got ${lostNotices.length})`);
+  // helm holds the last-known bearing (east, where B was when last seen)
+  assert(Math.abs(angDiff(a.facing, 90)) < 1e-9, `helm holds last known bearing after losing the contact (facing ${a.facing.toFixed(1)})`);
+}
+
+// 5c. nearest_rumble points the nose down the rumble's bearing (a bearing-
+// only reference: hearing reaches 2.5x detection, so a burning ship at
+// 240 km is heard but not seen)
+{
+  const sim = new Sim();
+  const a = sim.addShip("A", 0, 0, 0);
+  const b = sim.addShip("B", 240000, 0, 0); // due east, beyond detection
+  b.thrust = 100; // burn hard: sig maxes, hearing reaches, detection doesn't
+  sim.tick(); // let hearing pick up the rumble
+  sim.enqueue("A", [{ verb: "set_heading", params: { mode: "target", target: "nearest_rumble" } }]);
+  for (let i = 0; i < 6; i++) sim.tick();
+  assert(Math.abs(angDiff(a.facing, 90)) < 1e-9, `nose points down the rumble bearing (facing ${a.facing.toFixed(1)})`);
+}
+
+// 5d. pointing at a rumble with nothing audible is rejected, not silently
+// accepted
+{
+  const sim = new Sim();
+  sim.addShip("A", 0, 0, 0);
+  sim.tick();
+  sim.enqueue("A", [{ verb: "set_heading", params: { mode: "target", target: "nearest_rumble" } }]);
+  const rejected = sim.tick().some((e) => e.kind === "reject" && e.verb === "set_heading");
+  assert(rejected, "nearest_rumble with no rumble audible is rejected");
 }
 
 // 6. angle helpers

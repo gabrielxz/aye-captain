@@ -68,14 +68,15 @@
           "description": "REQUIRED for mode=relative. port = counterclockwise, starboard = clockwise. The LLM maps 'left'->port, 'right'->starboard."
         },
         "target": {
-          "enum": ["enemy_ship", "nearest_missile", "nearest_decoy", "nearest_contact"],
-          "description": "REQUIRED for mode=target. SNAPSHOT semantics: the server resolves the target's bearing ONCE, at execution, and it becomes a fixed goal heading — the ship does NOT track continuously. Inside standing-order actions, each trigger re-snapshots at trigger time. 'enemy_ship' resolves to the tracked position at tier >= 2, the approximate faint fix at tier 1, or last-known otherwise."
+          "enum": ["enemy_ship", "nearest_missile", "nearest_decoy", "nearest_contact", "nearest_rumble"],
+          "description": "REQUIRED for mode=target. CONTINUOUS tracking: the helm re-resolves the target's bearing every tick and keeps the nose on it until a new heading or maneuver order replaces the goal — 'point at him' and 'keep facing him' are the same order. 'enemy_ship' steers by the tracked position at tier >= 2, the approximate faint fix at tier 1, or last-known otherwise; if the contact drops below faint mid-track the helm holds the last known position and announces it. 'nearest_rumble' points the nose down the loudest rumble's bearing (bearing-only; there is no range below faint)."
         }
       },
       "examples": [
         { "mode": "relative", "direction": "starboard", "degrees": 30 },
         { "mode": "absolute", "degrees": 90 },
-        { "mode": "target", "target": "nearest_missile" }
+        { "mode": "target", "target": "nearest_missile" },
+        { "mode": "target", "target": "nearest_rumble" }
       ]
     },
 
@@ -131,7 +132,7 @@
     },
 
     "maneuver": {
-      "description": "Run an autopilot macro with a defined end state (this does NOT violate the captain-flies-the-ship doctrine; continuous tracking remains removed). full_stop: the helm flips to retrograde, burns at an appropriate throttle, and cuts thrust when speed < 5 m/s; the XO announces start and completion. Cancelled automatically by ANY subsequent set_thrust or set_heading ('belay that' should emit set_thrust with the current setting to take the conn back). Rejected if already stopped.",
+      "description": "Run an autopilot macro with a defined end state. full_stop: the helm flips to retrograde, burns at an appropriate throttle, and cuts thrust when speed < 5 m/s; the XO announces start and completion. Cancelled automatically by ANY subsequent set_thrust or set_heading ('belay that' should emit set_thrust with the current setting to take the conn back). Rejected if already stopped.",
       "type": "object",
       "required": ["type"],
       "properties": {
@@ -395,6 +396,18 @@
         ]
       },
       {
+        "captain": "Keep us pointed at him",
+        "commands": [
+          { "verb": "set_heading", "params": { "mode": "target", "target": "enemy_ship" }, "acknowledgement": "Helm's on him — we'll hold the nose there." }
+        ]
+      },
+      {
+        "captain": "Steer for that rumble",
+        "commands": [
+          { "verb": "set_heading", "params": { "mode": "target", "target": "nearest_rumble" }, "acknowledgement": "Coming onto the rumble's bearing." }
+        ]
+      },
+      {
         "captain": "Guns free — if anything comes at us the PDCs handle it",
         "commands": [
           { "verb": "set_pdc", "params": { "posture": "free" }, "acknowledgement": "PDCs weapons-free." }
@@ -606,7 +619,7 @@
       "A reply-only element (acknowledgement with no verb) must NEVER claim an action was taken — no 'PDCs holding', no 'coming about'. It explains what the ship can and cannot do, or states your interpretation problem. IF YOU CAN NAME THE ACTION, EMIT THE VERB: understanding the intent well enough to describe the action means you emit the command, not a reply.",
       "Vague quantities get sensible defaults, stated aloud: 'slow down' -> thrust 25%, 'ease off' -> reduce by ~25 points, 'hard about' -> relative 180.",
       "Acknowledgements are at most 12 words. Every word is spoken aloud by the ship's voice — brevity is a feature.",
-      "Continuous tracking ('keep facing him', 'stay pointed at him') is not a helm capability: execute a single set_heading target snapshot and say so — you can point the ship on command; the captain flies the ship.",
+      "Continuous tracking IS a helm capability: 'keep facing him', 'stay pointed at him', 'keep the nose on him', 'chase that rumble' all emit a single set_heading mode=target — the helm re-resolves the bearing every tick until a new heading order. Never build a standing order for it; one command does the whole job.",
       "DRIFT vs VECTOR: any request naming the DRIFT ('drift marker', 'show me our drift', 'put our drift on the map') is the persistent overlay — set_overlay. Asking about the VECTOR or the direction of travel ('show me our vector', 'which way are we drifting', 'what's our vector') is a momentary look — show_vector. When in doubt: a request phrased as a STATE ('keep it up', 'leave it on', 'kill/drop it') is set_overlay; a QUESTION is show_vector.",
       "A plain 'fire missile' fires ONE tube (omit the tubes param). Only an explicit salvo ('fire everything', 'both tubes', 'full salvo') uses tubes [1,2].",
       "Blind fire (guidance='bearing') ONLY when the captain explicitly asks for unlocked/blind/bearing fire. A plain 'fire missile' with no lock stays a locked attempt and gets the server's rejection, which offers blind fire as the follow-up."

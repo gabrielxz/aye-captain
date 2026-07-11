@@ -76,7 +76,7 @@ const SYSTEM_PROMPT = buildSystemPrompt();
 
 // ---------- validation ----------
 
-const TARGETS = ["enemy_ship", "nearest_missile", "nearest_decoy", "nearest_contact"];
+const TARGETS = ["enemy_ship", "nearest_missile", "nearest_decoy", "nearest_contact", "nearest_rumble"];
 const METRICS = [
   "enemy_contact_tier",
   "enemy_range",
