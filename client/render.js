@@ -21,6 +21,15 @@ const COLORS = {
 const SHIP_DESIGN = "interceptor";
 const SHIP_LEN_M = 60; // true hull length; far below one pixel at map scale
 const MIN_SHIP_PX = 22; // legibility clamp: never render smaller than this
+
+// v4.7: every ship design declares its stern in normalized hull units
+// (+y = aft, relative to sprite size). The engine plume anchors here —
+// v5 archetypes add an entry and get plumes for free. Nothing else changes.
+const SHIP_STERN = {
+  interceptor: { x: 0, y: 0.42 },
+  gunship: { x: 0, y: 0.46 },
+  saucer: { x: 0, y: 0.38 },
+};
 const VECTOR_SECONDS = 10; // the vector line = this much travel at current velocity
 const MIN_VECTOR_PX = 34; // legibility floor; clears the 22px hull clamp
 const DRIFT_STUB_PX = 26; // drift marker radius from hull center; just outside MIN_SHIP_PX
@@ -614,21 +623,46 @@ function drawShip(ent, kind, { ghost = false, thrust = 0, hull = null, hullMax =
   ctx.translate(sx, sy);
   ctx.rotate(rad); // canvas rotate is clockwise, matching compass headings
 
-  // thrust flare scaled to output %, behind the ship
+  // engine plume anchored at the sprite-declared stern: length, brightness
+  // and flicker follow EFFECTIVE thrust. Only ships whose thrust the viewer
+  // legitimately knows ever pass thrust > 0 here (own ship, spectator view)
+  // — enemy contacts carry no thrust data, so no plume can leak (v4.7 §4.1).
   if (!ghost && thrust > 0) {
-    const flare = r * (0.5 + (thrust / 100) * 1.6);
-    const grad = ctx.createLinearGradient(0, r * 0.8, 0, r * 0.8 + flare);
+    const stern = SHIP_STERN[SHIP_DESIGN] ?? { x: 0, y: 0.4 };
+    const sxp = stern.x * sizePx;
+    const syp = stern.y * sizePx;
+    const now = performance.now();
+    // smooth two-sine flicker, stronger at higher throttle
+    const flicker = 1 + (0.06 + (thrust / 100) * 0.1) * (Math.sin(now / 37) * 0.6 + Math.sin(now / 61) * 0.4);
+    const flare = r * (0.5 + (thrust / 100) * 1.6) * flicker;
+    const grad = ctx.createLinearGradient(sxp, syp, sxp, syp + flare);
     grad.addColorStop(0, flareColor(thrust));
     grad.addColorStop(1, "rgba(0,0,0,0)");
     ctx.beginPath();
-    ctx.moveTo(-r * 0.28, r * 0.8);
-    ctx.lineTo(0, r * 0.8 + flare);
-    ctx.lineTo(r * 0.28, r * 0.8);
+    ctx.moveTo(sxp - r * 0.28, syp);
+    ctx.lineTo(sxp, syp + flare);
+    ctx.lineTo(sxp + r * 0.28, syp);
     ctx.closePath();
     ctx.fillStyle = grad;
-    ctx.globalAlpha = 0.85;
+    ctx.globalAlpha = 0.65 + (thrust / 100) * 0.3;
     ctx.fill();
     ctx.globalAlpha = 1;
+    // exhaust wisps drifting aft (world-space, so they trail properly)
+    if (Math.random() < thrust / 220) {
+      const rad2 = ((ent.facing ?? 0) * Math.PI) / 180;
+      const aftX = Math.sin(rad2 + Math.PI);
+      const aftY = Math.cos(rad2 + Math.PI);
+      const sternM = (syp / camera.zoom) || 30; // stern offset back to meters
+      spawnParticle({
+        x: ent.x + aftX * sternM,
+        y: ent.y + aftY * sternM,
+        vx: aftX * (400 + Math.random() * 500) + (Math.random() - 0.5) * 120,
+        vy: aftY * (400 + Math.random() * 500) + (Math.random() - 0.5) * 120,
+        life: 350 + Math.random() * 350,
+        r0: 1.6 + (thrust / 100) * 1.4,
+        color: flareColor(thrust),
+      });
+    }
   }
 
   const img = sprites[ghost ? "ghost" : kind];
