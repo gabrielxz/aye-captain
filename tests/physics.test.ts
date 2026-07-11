@@ -16,7 +16,7 @@ const assert = (cond: boolean, msg: string) => {
     Math.abs(s.vy - C.ACCEL_FULL_THRUST_MPS2) < 1e-9 && s.vx === 0,
     `1 tick full thrust north => vy=${C.ACCEL_FULL_THRUST_MPS2}`
   );
-  for (let i = 0; i < 40; i++) sim.tick();
+  for (let i = 0; i < Math.ceil(C.MAX_SPEED_MPS / C.ACCEL_FULL_THRUST_MPS2) + 2; i++) sim.tick();
   assert(Math.hypot(s.vx, s.vy) <= C.MAX_SPEED_MPS + 1e-9, "speed clamped to MAX_SPEED");
   assert(Math.abs(Math.hypot(s.vx, s.vy) - C.MAX_SPEED_MPS) < 1e-9, "reaches exactly MAX_SPEED");
 }
@@ -58,16 +58,18 @@ const assert = (cond: boolean, msg: string) => {
 }
 
 // 5. target headings are SNAPSHOTS: resolved once at execution, no tracking
+// (target in the TRACK band — 8 km on a quiet ship — so the helm steers by
+// the true position, not a noisy faint fix)
 {
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 0);
-  const b = sim.addShip("B", 10000, 0, 0); // due east of A
+  const b = sim.addShip("B", 8000, 0, 0); // due east of A, track band
   sim.tick(); // let sensors see B
   sim.enqueue("A", [{ verb: "set_heading", params: { mode: "target", target: "enemy_ship" } }]);
   for (let i = 0; i < 6; i++) sim.tick();
   assert(Math.abs(angDiff(a.facing, 90)) < 1e-9, `snapshot heading points at B's bearing at order time (facing ${a.facing.toFixed(1)})`);
   // B relocates; A's goal must NOT follow
-  b.x = 0; b.y = -10000; // now due south
+  b.x = 0; b.y = -8000; // now due south
   for (let i = 0; i < 10; i++) sim.tick();
   assert(Math.abs(angDiff(a.facing, 90)) < 1e-9, `heading holds after target moves — no continuous tracking (facing ${a.facing.toFixed(1)})`);
   // a fresh order re-snapshots

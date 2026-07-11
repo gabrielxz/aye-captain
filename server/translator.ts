@@ -42,9 +42,9 @@ function buildSystemPrompt(): string {
 - Max speed ${C.MAX_SPEED_MPS} m/s, full-thrust acceleration ${C.ACCEL_FULL_THRUST_MPS2} m/s^2, turn rate ${C.TURN_RATE_DEG_PER_SEC} deg/s.
 - Ships drift (Newtonian): rotating does not change velocity. Braking = flip 180 and burn. Turning is free (reaction wheels).
 - Propellant: tank ${C.PROPELLANT_MAX}, burns ${C.PROPELLANT_BURN_AT_FULL}/s at 100% thrust (linear). Regenerates ${C.PROPELLANT_REGEN_PER_S}/s ONLY inside the zone with throttle set <= ${C.REGEN_MAX_THRUST_PCT}%. At zero: no thrust output (setting remembered), ship coasts; turning and weapons still work.
-- Sensor range ${C.SENSOR_RANGE_M / 1000} km (halved outside the zone). Zone radius ${C.ZONE_RADIUS_M / 1000} km, hard limit ${C.HARD_LIMIT_RADIUS_M / 1000} km.
-- Laser: range ${C.LASER_RANGE_M / 1000} km, ${C.LASER_BEAM_WIDTH_DEG} deg half-angle off boresight, ${C.LASER_COOLDOWN_S}s cooldown, ${C.LASER_DAMAGE} damage; instantly kills missiles/decoys. Fires along current facing.
-- Missiles: ${C.MISSILE_MAGAZINE} aboard total, ${C.TUBE_COUNT} launch tubes (auto-reload ${C.TUBE_RELOAD_S}s each from reserves). FIRING REQUIRES A LOCK: automatic when the enemy is on sensors within ${C.LOCK_RANGE_M / 1000} km and ${C.LOCK_CONE_HALF_ANGLE_DEG} deg of our nose for ${C.LOCK_TIME_S}s continuous. Missiles accelerate at ${C.MISSILE_ACCEL_MPS2} m/s^2 to ${C.MISSILE_MAX_SPEED_MPS} m/s (same top speed as a ship), seeker locks strongest signature in a ${C.MISSILE_ACQ_CONE_DEG} deg cone after ${C.MISSILE_LAUNCH_DELAY_TICKS}s, ${C.MISSILE_DAMAGE} damage, proximity fuse ${C.MISSILE_PROX_FUSE_M} m. Firing produces a launch flash revealing us to the enemy for ${C.LAUNCH_FLASH_REVEAL_S}s.
+- Detection: contact tiers. FAINT = approximate position only, no vector, cannot lock. TRACK = true position + velocity, lockable. ID = full detail. Detection range = ${C.SENSOR_BASE_M / 1000} km x (target signature / 100), line of sight permitting: a hard-burning ship shows ~181 km out, a dark drifter ~16 km. Rocks and dust clouds block sensors, locks, and seekers. Region radius ${C.REGION_RADIUS_M / 1000} km.
+- PDCs (point defense): AUTOMATED, commanded by posture via set_pdc. While FREE they engage inbound missiles within ${C.PDC_RANGE_M / 1000} km (${Math.round(C.PDC_KILL_PROB_PER_S * 100)}%/s kill chance each) and enemy ships within ${C.PDC_SHIP_RANGE_M / 1000} km (${C.PDC_SHIP_DPS} hull/s), line of sight permitting. HOLD silences them (ammo conservation / staying dark). Ammo: ${C.PDC_AMMO_S}s of cumulative fire, NO regeneration. Firing spikes our signature. There is NO laser on this ship — it was traded for the PDC mounts; if the captain calls for the laser, say so in character and offer the PDCs.
+- Missiles: ${C.MISSILE_MAGAZINE} aboard total, ${C.TUBE_COUNT} launch tubes (auto-reload ${C.TUBE_RELOAD_S}s each from reserves). A LOCKED shot (default) requires a TRACK-or-better contact within ${C.LOCK_RANGE_M / 1000} km and ${C.LOCK_CONE_HALF_ANGLE_DEG} deg of our nose held ${C.LOCK_TIME_S}s; the bird then flies UPLINKED — intercept guidance off our track, immune to decoys while we hold the lock. Lose the lock and it goes autonomous (one-way): its own weak seeker (${C.MISSILE_SEEKER_BASE_M / 1000} km base, scales with target signature), decoy-susceptible. BLIND FIRE (guidance "bearing") needs no lock — autonomous from birth, a flushing tool. Missiles accelerate at ${C.MISSILE_ACCEL_MPS2} m/s^2 to ${C.MISSILE_MAX_SPEED_MPS} m/s with ${C.MISSILE_PROPELLANT_S}s of engine, ${C.MISSILE_DAMAGE} damage, proximity fuse ${C.MISSILE_PROX_FUSE_M} m. Firing spikes our signature hugely for ${C.SIG_SPIKE_LAUNCH_S}s — the enemy will likely see the launch flash.
 - Being painted: when the ENEMY is acquiring/holding a lock on us, we know (and can react via the being_painted metric).
 - Decoys: ${C.DECOY_SUPPLY} carried, hot signature for ${C.DECOY_LIFETIME_S}s, attracts missile seekers.
 - Compass headings: 0 = north, 90 = east, clockwise. port = left = counterclockwise, starboard = right = clockwise.
@@ -78,27 +78,33 @@ const SYSTEM_PROMPT = buildSystemPrompt();
 
 const TARGETS = ["enemy_ship", "nearest_missile", "nearest_decoy", "nearest_contact"];
 const METRICS = [
+  "enemy_contact_tier",
   "enemy_range",
-  "enemy_on_sensors",
+  "enemy_bearing_off_nose",
   "missile_inbound",
   "nearest_missile_range",
   "own_hull_percent",
   "own_speed",
   "own_missiles_remaining",
   "own_decoys_remaining",
-  "enemy_bearing_off_nose",
   "distance_from_zone_center",
   "time_elapsed_seconds",
   "have_lock",
   "being_painted",
   "propellant_percent",
+  "pdc_ammo_seconds",
   "tubes_ready",
+  "in_dust",
+  "collision_warning",
 ];
 const OPS = ["lt", "lte", "gt", "gte", "eq"];
 const TOPICS = [
   "enemy",
+  "contacts",
   "own_ship",
   "weapons",
+  "pdc",
+  "terrain",
   "propellant",
   "tubes",
   "damage_report",
@@ -184,13 +190,36 @@ export function validateCommand(raw: unknown, nested = false): Command | null {
       }
       return null;
     }
-    case "fire_laser":
     case "deploy_decoy":
       return out({});
+    case "set_pdc": {
+      if (p.posture !== "free" && p.posture !== "hold") return null;
+      return out({ posture: p.posture });
+    }
+    case "maneuver": {
+      if (p.type !== "full_stop") return null;
+      return out({ type: p.type });
+    }
+    case "show_vector":
+      return out({});
     case "fire_missile": {
-      if (p.tubes === undefined) return out({});
-      const tubes = validTubesParam(p.tubes);
-      return tubes ? out({ tubes }) : null;
+      const clean: Record<string, unknown> = {};
+      if (p.tubes !== undefined) {
+        const tubes = validTubesParam(p.tubes);
+        if (!tubes) return null;
+        clean.tubes = tubes;
+      }
+      if (p.guidance !== undefined) {
+        if (p.guidance !== "locked" && p.guidance !== "bearing") return null;
+        clean.guidance = p.guidance;
+      }
+      if (p.bearing_degrees !== undefined) {
+        // a bearing only means something on a blind shot
+        if (clean.guidance !== "bearing") return null;
+        if (typeof p.bearing_degrees !== "number" || !Number.isFinite(p.bearing_degrees)) return null;
+        clean.bearing_degrees = p.bearing_degrees;
+      }
+      return out(clean);
     }
     case "reload_tubes": {
       if (p.tubes === undefined) return out({});

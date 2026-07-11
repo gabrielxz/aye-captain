@@ -78,13 +78,14 @@ const assert = (cond: boolean, msg: string) => {
 {
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 0);
-  sim.addShip("B", 0, 8000, 180, false);
+  const bT = sim.addShip("B", 0, 8000, 180, false);
+  bT.pdcPosture = "hold"; // tube accounting is under test, not point defense
   for (let i = 0; i < C.LOCK_TIME_S + 1; i++) sim.tick(); // acquire for real
   assert(a.lock.has, "locked for tube tests");
 
   sim.enqueue("A", [{ verb: "fire_missile", params: {} } as any]);
   let ev = sim.tick();
-  assert(!a.tubes[0].loaded && a.tubes[0].reload === C.TUBE_RELOAD_S - 1, "tube one fired, reloading");
+  assert(!a.tubes[0].loaded && Math.abs(a.tubes[0].reload - (C.TUBE_RELOAD_S - 1)) < 1e-9, "tube one fired, reloading");
   assert(ev.some(e => e.kind === "notice" && /Tube one reloading/.test((e as any).text)), "reload-start notice");
   assert(a.reserve === C.MISSILE_MAGAZINE - C.TUBE_COUNT - 1, "reserve decremented by auto-reload");
 
@@ -137,14 +138,16 @@ const assert = (cond: boolean, msg: string) => {
 {
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 0);
-  sim.addShip("B", 0, 9000, 180, false);
+  // target far enough out that the missile reaches max speed before impact
+  sim.addShip("B", 0, 80000, 180, false);
   a.vx = 0; a.vy = 400; // moving north at 400
   (a as any).lock = { progress: C.LOCK_TIME_S, has: true, grace: C.LOCK_GRACE_S };
   sim.enqueue("A", [{ verb: "fire_missile", params: {} } as any]);
   sim.tick();
   const m = (sim as any).missiles[0];
   assert(Math.round(m.speed) === Math.min(400 + C.MISSILE_ACCEL_MPS2, C.MISSILE_MAX_SPEED_MPS), `launch inherits ship's forward speed then accelerates (${Math.round(m.speed)})`);
-  for (let i = 0; i < 3; i++) sim.tick();
+  const rampTicks = Math.ceil((C.MISSILE_MAX_SPEED_MPS - 400) / C.MISSILE_ACCEL_MPS2) + 1;
+  for (let i = 0; i < rampTicks; i++) sim.tick();
   assert(m.speed === C.MISSILE_MAX_SPEED_MPS, "missile speed capped at MISSILE_MAX_SPEED_MPS");
 }
 
@@ -153,6 +156,7 @@ const assert = (cond: boolean, msg: string) => {
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 0);
   const drone = sim.addShip("B", 0, 6000, 180, true);
+  a.pdcPosture = "hold"; // don't let point defense eat the drone's shot mid-test
   (drone as any).lock = { progress: C.LOCK_TIME_S, has: true, grace: C.LOCK_GRACE_S };
   sim.tick();
   const droneShots = (sim as any).missiles.filter((m: any) => m.owner === "B").length;

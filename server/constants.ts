@@ -1,19 +1,49 @@
 // EVERY tunable number lives here. No magic numbers in sim code.
 
-export const TICK_RATE_HZ = 1;
+export const TICK_RATE_HZ = 1; // command tick: queued commands, standing orders, LLM interaction
+// Physics runs PHYSICS_SUBSTEPS times per command tick (10 Hz at 1 Hz ticks).
+// At v4 speeds objects move km per command tick; substeps + swept-segment
+// collision keep fast movers from tunneling through fuses and terrain.
+export const PHYSICS_SUBSTEPS = 10;
+// Snapshots broadcast faster than the command tick so client interpolation
+// stays smooth at high speeds. Commands still process at TICK_RATE_HZ.
+export const SNAPSHOT_RATE_HZ = 4;
 
-// Zone / bounding
-export const ZONE_RADIUS_M = 30000; // "the shroud" — visible ring on map
-export const HARD_LIMIT_RADIUS_M = 45000; // absolute outer boundary, faint ring
-export const OUTSIDE_ZONE_SENSOR_MULT = 0.5; // own sensor range halved outside zone
+// Region ("the shroud" — visible ring on map). No hard wall: outside the
+// region there is no propellant regen, ships read signature-max (tier ID at
+// any range), and a restoring current pulls back toward center. Fiction:
+// the shroud's mass. No ship can be stranded — the pull always eventually
+// returns a derelict.
+export const REGION_RADIUS_M = 250000; // 250 km; crossing time ~2.8 min at flank. LINKED: SPAWN_DIST_FROM_CENTER_M sits at 60% of it
+export const EDGE_PULL_MPS2_PER_50KM = 5; // grows linearly with distance beyond the edge
+export const EDGE_PULL_CAP_MPS2 = 50;
 
-// Ship
-export const MAX_SPEED_MPS = 600; // LINKED: == MISSILE_MAX_SPEED_MPS by design
-export const ACCEL_FULL_THRUST_MPS2 = 25;
+// Ship. Full tank = 100 s of hard burn = 6000 m/s of delta-v: propellant is
+// a delta-v budget — enough to reach flank speed and kill it once.
+export const MAX_SPEED_MPS = 3000; // LINKED to MISSILE_MAX_SPEED_MPS & region size
+export const ACCEL_FULL_THRUST_MPS2 = 60; // ~6g hard burn; top speed in ~50 s
 export const TURN_RATE_DEG_PER_SEC = 20;
 export const HULL_POINTS = 100;
-export const SENSOR_RANGE_M = 12000; // deliberately NOT scaled with the bigger zone: longer hunt phase
-export const SHIP_BASE_SIGNATURE = 40; // signature = 40 + EFFECTIVE thrust% (0 when tanks dry) (range 40–140)
+
+// Signature & detection: DETECTION IS THE GAME. Drive plumes are visible
+// across enormous distances; going dark is the only stealth.
+// ship signature = SIG_BASE + EFFECTIVE thrust% (10..110), plus spikes.
+export const SIG_BASE = 10; // a drifting dark ship
+export const SIG_SPIKE_LAUNCH = 150; // missile launch flash (replaces the flat reveal)
+export const SIG_SPIKE_LAUNCH_S = 5;
+export const SIG_SPIKE_PDC = 50; // PDC firing (used by v4 §6)
+export const SIG_SPIKE_PDC_S = 3;
+export const MISSILE_SIG_BURNING = 80;
+export const MISSILE_SIG_COASTING = 8; // a ballistic torpedo is nearly invisible. Intended. Terrifying.
+// detection_range = SENSOR_BASE_M x (signature / 100), LOS permitting
+// -> full burn (110) seen at ~181 km; 50% cruise at ~99 km; dark drift (10) at ~16.5 km
+export const SENSOR_BASE_M = 165000;
+// Contact tiers, as fractions of the computed detection range:
+export const TIER_FAINT_FRAC = 1.0; // approximate position only, no vector
+export const TIER_TRACK_FRAC = 0.6; // true position + velocity, continuous
+export const TIER_ID_FRAC = 0.3; // + ship status detail
+export const FAINT_POS_NOISE_M = 2000;
+export const FAINT_UPDATE_INTERVAL_S = 5;
 
 // Propellant
 export const PROPELLANT_MAX = 100;
@@ -21,64 +51,100 @@ export const PROPELLANT_BURN_AT_FULL = 1.0; // units/sec at 100% thrust, linear 
 export const PROPELLANT_REGEN_PER_S = 0.33; // only inside zone AND throttle SETTING <= REGEN_MAX_THRUST_PCT
 export const REGEN_MAX_THRUST_PCT = 20;
 
-// Missile lock (required to fire)
+// Missile lock (required to fire). MISSILE LOCK REQUIRES TIER_TRACK OR
+// BETTER — close in, or provoke a burn, before you can shoot.
 export const LOCK_CONE_HALF_ANGLE_DEG = 30;
-export const LOCK_RANGE_M = 10000;
-export const LOCK_TIME_S = 5; // continuous seconds in cone+range+visible to acquire
+export const LOCK_RANGE_M = 80000;
+export const LOCK_TIME_S = 5; // continuous seconds in cone+range+tracked to acquire
 export const LOCK_GRACE_S = 2; // integer: honest at 1 Hz tick; favors lock stability
-export const LAUNCH_FLASH_REVEAL_S = 5; // firing reveals you to the enemy, sensors or not
 
 // Launch tubes
 export const TUBE_COUNT = 2;
 export const TUBE_RELOAD_S = 20; // per tube, tubes reload in parallel
 export const AUTO_RELOAD = true; // reload_tubes verb is a no-op while true
 
-// Laser
-export const LASER_RANGE_M = 5000;
-export const LASER_BEAM_WIDTH_DEG = 6; // half-angle off boresight (4 -> 6 after playtest: visual hits read as misses)
-export const LASER_COOLDOWN_S = 4;
-export const LASER_DAMAGE = 10; // vs ships; instantly destroys missiles/decoys
+// PDCs (point-defense cannons; replaced the laser in v4 §6). Automated,
+// commanded by POSTURE (free|hold). Mutual PDC range is a mutual mauling —
+// closing to knife range is a deterrent by design. Saturation salvos are
+// SUPPOSED to leak: don't tune the kill probability up.
+export const PDC_RANGE_M = 8000; // vs inbound missiles, LOS required
+export const PDC_KILL_PROB_PER_S = 0.25; // per engaged missile, substep-scaled
+export const PDC_SHIP_RANGE_M = 3000; // vs enemy ships, LOS required
+export const PDC_SHIP_DPS = 5; // continuous hull damage
+export const PDC_AMMO_S = 60; // seconds of cumulative fire; no regeneration
 
-// Missiles. MAGAZINE is everything aboard: TUBE_COUNT start loaded, the rest
-// are reserves (6 total shots per match).
+// Missiles: burn-and-coast torpedoes. MAGAZINE is everything aboard:
+// TUBE_COUNT start loaded, the rest are reserves (6 total shots per match).
+// Engine is ON whenever (below max speed) OR (turning to track); engine-on
+// drains propellant at 1/s. Dry = BALLISTIC: no accel, no turning, flies its
+// line until lifetime, impact, or PDC kill — still detonates on prox.
 export const MISSILE_MAGAZINE = 6;
-export const MISSILE_MAX_SPEED_MPS = 600; // LINKED: == MAX_SPEED_MPS — a missile never out-SPEEDs a ship; it wins by geometry, acceleration, turn rate
-export const MISSILE_ACCEL_MPS2 = 150;
-export const MISSILE_TURN_RATE_DPS = 45;
-// false = current model: guidance steers the velocity vector directly, speed
-// ramps from inherited launch speed to max. true = future experiment: missile
-// facing decouples from velocity and thrust burns along facing (Newtonian,
-// much floatier). NOT implemented — stub for a later milestone.
+export const MISSILE_MAX_SPEED_MPS = 6000; // LINKED: 2x MAX_SPEED_MPS
+export const MISSILE_ACCEL_MPS2 = 400; // ~40g
+export const MISSILE_PROPELLANT_S = 25; // engine-on seconds
+export const MISSILE_TURN_RATE_DPS = 45; // ONLY while the engine is on
+// false = guidance steers the velocity vector directly, speed ramps from
+// inherited launch speed to max. true = future experiment: missile facing
+// decouples from velocity and thrust burns along facing (Newtonian, much
+// floatier). NOT implemented — stub for a later milestone.
 export const NEWTONIAN_MISSILES = false;
-export const MISSILE_LIFETIME_S = 45; // self-destructs after
+export const MISSILE_LIFETIME_S = 120; // absolute self-destruct
 export const MISSILE_LAUNCH_DELAY_TICKS = 2; // flies straight, no seeking, during delay
 export const MISSILE_ACQ_CONE_DEG = 60; // half-angle of seeker cone
-export const MISSILE_REACQUIRE_S = 2; // grace period after losing lock
-export const MISSILE_PROX_FUSE_M = 150;
+// Seekers use the standard detection formula with their own (weak) base:
+// seeker detection = MISSILE_SEEKER_BASE_M x target signature / 100, LOS
+// required -> full-burn ship (110) at ~44 km; dark drifter (10) at ~4 km.
+// Blind fire is a flushing tool, not a sniper rifle.
+export const MISSILE_SEEKER_BASE_M = 40000;
+export const MISSILE_PROX_FUSE_M = 200;
 export const MISSILE_DAMAGE = 35;
 
-// Decoys
+// Decoys. Signature sits BETWEEN cruise and full burn (v4.1 retune): a ship
+// at effective thrust <~80% is out-shone by its decoy (spoof works); hotter
+// out-shines it (spoof fails). Doctrine: "break the lock, throttle down,
+// decoy." Side effect to preserve: a drifting decoy reads as an ordinary
+// faint/track contact to enemy SHIP sensors (~148 km) — strategic deception;
+// it resolves as a decoy only at ID tier.
 export const DECOY_SUPPLY = 4;
 export const DECOY_LIFETIME_S = 20;
-export const DECOY_SIGNATURE = 120;
+export const DECOY_SIGNATURE = 90;
 export const DECOY_DRIFT_MPS = 10; // small random drift added on ejection
 
 // Standing orders
 export const STANDING_ORDER_MAX = 6;
 export const STANDING_ORDER_RETRIGGER_COOLDOWN_S = 5; // for repeat:true orders
 
-// Fog of war
-export const ORDNANCE_DETECT_RANGE_M = 6000; // missiles & decoys visible at half sensor range
+// Terrain (generated per match from a seed; see terrain.ts)
+export const ROCK_COUNT = 30; // field rocks, plus ONE centerpiece body
+export const ROCK_RADIUS_MIN_M = 1000;
+export const ROCK_RADIUS_MAX_M = 8000;
+export const CENTERPIECE_RADIUS_M = 15000; // cracked moonlet in the middle third
+export const ROCK_MIN_GAP_M = 8000; // edge-to-edge; keeps fields navigable
+export const ROCK_SPAWN_CLEAR_M = 20000; // no rock this close to a spawn point
+export const DUST_COUNT = 3;
+export const DUST_SIZE_MIN_M = 30000; // full width of a dust ellipse
+export const DUST_SIZE_MAX_M = 60000;
+// Ship-vs-rock impacts: damage = 100 x ((v_impact - HARMLESS) / (LETHAL - HARMLESS))^2
+export const COLLISION_HARMLESS_BELOW_MPS = 50; // gentle bump
+export const COLLISION_LETHAL_AT_MPS = 1500;
+export const COLLISION_RESTITUTION = 0.5; // bounce: reflect + dampen normal component
+export const COLLISION_WARNING_S = 20; // project own velocity this far ahead
 
 // Spawn
-export const SPAWN_DIST_FROM_CENTER_M = 20000; // LINKED to ZONE_RADIUS_M: opposite sides (2/3 of zone radius), facing each other, v=0
+export const SPAWN_DIST_FROM_CENTER_M = 150000; // LINKED to REGION_RADIUS_M (60%): opposite sides, 300 km apart, facing each other, v=0
 
 // Match lifecycle
 export const DISCONNECT_GRACE_S = 60; // pause sim awaiting reconnect, then forfeit
 
-// Practice drone (exempt from propellant; thrust exists only as signature)
-export const DRONE_SPEED_MPS = 100; // slow circle
-export const DRONE_TURN_RATE_DPS = 3; // gentle constant turn
+// Practice drone (exempt from propellant; thrust exists only as signature).
+// With terrain it patrols waypoints among the rocks and dust (so solo
+// players experience LOS play); with no terrain it flies the old circle.
+export const DRONE_SPEED_MPS = 800; // cruise
+export const DRONE_TURN_RATE_DPS = 3; // used only for the no-terrain circle
+export const DRONE_PATROL_TURN_DPS = 12; // waypoint steering agility
+export const DRONE_WAYPOINT_RADIUS_M = 12000; // arrival radius at dust/center waypoints
+export const DRONE_ROCK_SKIM_M = 4000; // rocks are reached at surface + this: the patrol WEAVES the field so pursuers lose LOS (v4.1 §7 verification)
+export const DRONE_AVOID_LOOKAHEAD_S = 10; // rock-dodge projection (short: graze, don't orbit)
 export const DRONE_HULL_POINTS = 60;
 export const DRONE_THRUST_PERCENT = 50; // signature as a ship at 50% thrust
 export const DRONE_FIRES_BACK = true; // reduced aggression: locks + one missile at a time

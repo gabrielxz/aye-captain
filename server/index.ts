@@ -3,7 +3,12 @@ import express from "express";
 import http from "node:http";
 import path from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
-import { ZONE_RADIUS_M, HARD_LIMIT_RADIUS_M, STT_MAX_AUDIO_BYTES } from "./constants.js";
+import {
+  REGION_RADIUS_M,
+  ACCEL_FULL_THRUST_MPS2,
+  TURN_RATE_DEG_PER_SEC,
+  STT_MAX_AUDIO_BYTES,
+} from "./constants.js";
 import { Match } from "./match.js";
 import { sttAvailable, transcribe } from "./stt.js";
 import { getSpeech, pregenStockLines, ttsAvailable } from "./tts.js";
@@ -15,6 +20,11 @@ const clientDir = path.join(import.meta.dirname, "..", "client");
 
 const app = express();
 app.use(express.static(clientDir));
+
+// clean URL for the captain's handbook (deep-linkable anchors inside)
+app.get("/how-to-play", (_req, res) => {
+  res.sendFile(path.join(clientDir, "how-to-play.html"));
+});
 
 // Push-to-talk audio comes here as a raw body; reply is {text}.
 app.post(
@@ -73,8 +83,9 @@ wss.on("connection", (ws: WebSocket) => {
     JSON.stringify({
       type: "hello",
       config: {
-        zoneRadius: ZONE_RADIUS_M,
-        hardLimitRadius: HARD_LIMIT_RADIUS_M,
+        zoneRadius: REGION_RADIUS_M,
+        accel: ACCEL_FULL_THRUST_MPS2, // for the client-side stop-point projection
+        turnRate: TURN_RATE_DEG_PER_SEC,
         stt: sttAvailable(),
       },
     })
@@ -132,7 +143,7 @@ wss.on("connection", (ws: WebSocket) => {
           ws.send(JSON.stringify({ type: "error", message: "opponent is gone — no rematch" }));
           break;
         }
-        match.reset();
+        match.reset(msg.newField === true); // same field unless asked
         break;
       }
       // stage 8: create / join

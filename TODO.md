@@ -1,118 +1,81 @@
 # TODO — next steps
 
-## NEXT MILESTONE: v4 "The Big Dark"
+## v4 "The Big Dark" + v4.1 addendum — BUILT (2026-07-10), awaiting playtest + deploy
 
-`HANDOFF-v4.md` (authored by Gabriel + Claude online, 2026-07-10) is the
-spec: 250 km region, 3 km/s ships, sub-tick physics (10 Hz substeps +
-swept-segment collision EVERYWHERE), sensor/signature/LOS contact tiers,
-terrain, burn-and-coast torpedoes, PDCs replacing the laser, 4 Hz
-snapshots. Read it + CLAUDE.md invariants before starting. Not begun.
+All ten build-order steps of `HANDOFF-v4.md` plus the full `HANDOFF-v4.1.md`
+addendum (sensor-slaved PDCs, blind fire, uplinked/autonomous guidance,
+seeker detection math, decoy retune 90 + fake-contact deception, cursor
+bearing readout) are implemented and committed on branch `v4-big-dark`
+(280 headless assertions green; English-path verified in the browser:
+flank speed, vector overlay, full stop, and "put a torpedo down bearing
+zero four five, fire blind" → bird curving onto 045 with no lock).
 
-## v3 post-release hardening (done, 2026-07-10)
+**Remaining before this milestone is DONE:**
 
-- [x] Voice pipeline: Whisper hallucination defenses (silence gate,
-  padded-window segment filter, phrase blacklist, bias prompt removed),
-  0.8s pre-roll ring capture (fixes clipped onsets), audio ducking on PTT.
-- [x] Translator: bracket-repair for almost-JSON (live specimen became a
-  regression test); raw LLM output now logged on any parse failure/drop.
-- [x] UX: animated PROP bar, hull readouts moved off-map into HUD,
-  XO speech throttle (warnings preempt; chatter text-only under load),
-  laser beam 4→6° (reserved knob, applied on playtest evidence).
-- Diagnostic playbook that worked all night: `data/utterances.jsonl` (or
-  /data on Fly) shows what STT heard; `fly logs` shows translator raw
-  failures; the two together localize any "XO misbehaved" report fast.
+- [ ] Gabriel playtests locally (`npm run dev`) — especially the feel items
+  below.
+- [ ] Deploy as ONE release: merge `v4-big-dark` to main (CI tests+deploys,
+  `--ha=false` baked in). Constants desync old clients mid-match, so don't
+  deploy while a live match matters.
+- [ ] First boot with ELEVENLABS key pre-generates the new v4 stock lines
+  (contact tiers, PDC, collision countdowns, dust, maneuvers) — cache lives
+  on /data, one-time cost.
 
----
+## v4 playtest watch-list (reserved knobs, do NOT pre-tune)
 
-Below: agreed at the end of the v1 build session (2026-07-09), roughly in
-priority order. Items marked (suggested) were proposed by Claude and not
-yet explicitly requested by Gabriel.
+- **Opening hunt**: spawns 300 km apart, dark ships see each other only at
+  ~16.5 km, drone/ships at cruise ~99 km. Is finding each other fun or a
+  slog? Knobs: SENSOR_BASE_M, spawn distance, drone signature.
+- **Faint-fix noise** (2 km, 5 s refresh): enough texture, or annoying?
+- **Lock range 80 km vs detection**: a quiet ship can only be locked inside
+  ~10 km (track band of sig 10) — provoking a burn matters. Working?
+- **PDC kill prob 0.25/s**: spec says saturation salvos are SUPPOSED to
+  leak — resist tuning up (there's a leak-rate test pinning the intent).
+- **"Break lock, then spoof" two-step escape** (v4.1 §3 design
+  consequence, flagged for playtest): does breaking the uplink via
+  rocks/dust/going-dark and THEN decoying the orphaned bird actually land
+  as a learnable doctrine?
+- **Blind fire usefulness**: seeker base 40 km — does firing into dust
+  clouds/shadows ever pay off, or is it pure ammo waste?
+- **Decoy-as-fake-contact**: does dropping a decoy at range actually fool
+  anyone into a chase? (It reads as an ordinary faint contact to ~148 km.)
+- **Propellant as delta-v** (6000 m/s budget): do matches stall dry?
+  EDGE pull returns strays, but a dry drifting duel could be long.
+- **Collision damage curve**: 600 m/s hit = 14 hull. Punchy enough?
+- **Drone patrol at 800 m/s with 12°/s steering**: does it dodge the rocks
+  reliably? (It bounces harmlessly if not — drone takes trivial damage.)
+- **Torpedo terminal dodges**: 45°/s turn at 6 km/s = wide arcs. Verify the
+  "dodge late to waste its fuel" counterplay actually lands.
 
-## Done since v1 (2026-07-09 evening session)
+## Carried over from v3
 
-- [x] **Voice input.** Push-to-talk (hold Space with empty command box).
-  Server-side STT via Groq-hosted `whisper-large-v3-turbo` (`server/stt.ts`,
-  `POST /stt`, OpenAI-compatible — env-swappable provider); Web Speech API
-  fallback when no STT key. Client capture in `client/voice.js`.
-- [x] **Utterance dataset.** Every utterance (voice + typed) appends to
-  `data/utterances.jsonl` (`server/datalog.ts`; `UTTERANCE_LOG` overrides
-  the path). Purpose: mine real player phrasing to refine the STT
-  vocabulary-bias prompt in `stt.ts`.
-- [x] **Deployed to Fly.io** as `aye-captain` (https://aye-captain.fly.dev),
-  single machine (`fly deploy --ha=false` — matches live in memory), 1 GB
-  volume `data` mounted at `/data` for the utterance log.
-- [x] **`git init` + initial commit / GitHub.**
-
-## Done in the v3 "Combat & Soul" session (2026-07-09, late)
-
-- [x] Missile rework: 2 tubes + auto-reload, lock-before-launch (5s/30°/10km,
-  2s grace), painted/RWR warnings, launch flash, accel-ramp flight model
-  (velocity-steering; `NEWTONIAN_MISSILES=false` stub for the floaty version).
-- [x] Speed/map: 600 m/s, accel 25, zone 30km, hard limit 45km, spawn 20km.
-- [x] Propellant: burn 1/s@100%, regen 0.33/s inside zone at ≤20% throttle
-  SETTING, dry = adrift + dim signature; warnings 50/25/10/0.
-- [x] Target headings are snapshots (no continuous tracking).
-- [x] Procedural SFX + ElevenLabs ship voice (persona in `server/persona.ts`,
-  stock-line cache, speech queue with warning priority).
-- [x] SVG ship sprites (3 designs in client/assets, interceptor default),
-  hull bars, particles, explosion tiers, new HUD (PROP/TUBES/LOCK/WARN).
-- [x] Drone fires back (one missile per 90s while locked).
-- [x] Tests 91 → 147 assertions (new lock + propellant suites).
-
-## v3 playtest watch-list (from the build session)
-
-- Point defense is intentionally harder (snapshot headings + 600 m/s
-  missiles). Reserved balance knobs, do NOT pre-tune: standing-order
-  retrigger 5→3s, laser cooldown 4→3s. (Beam width 4→6° APPLIED after
-  first playtest: visually-on-target shots read as clean misses.)
-- Propellant economy is punishing at top speed (one 600 m/s dash + brake ≈
-  half tank). Watch whether matches stall.
-- Softlock possibility: tanks dry OUTSIDE the zone (no regen there, ever) =
-  adrift until the enemy comes hunting; in practice mode only rematch saves
-  you. Acceptable? Watch.
-- Practice-mode opening is a long cruise now (drone spawns 40 km out).
-
-## v2 next
-
-- [ ] **ElevenLabs**: Gabriel creates the account/key, sets
-  `ELEVENLABS_API_KEY` locally + `fly secrets set`; browse the voice library
-  and swap `VOICE_ID` in constants.ts if George doesn't fit.
-- [ ] **Ship design pick**: interceptor is default; gunship + saucer ship in
+- [ ] **Real PvP acceptance test in English** — nobody has fought a full
+  PvP duel to a kill purely by typed/spoken English. Voice makes this easy.
+- [ ] **Refine STT keyword handling** from accumulated `data/utterances.jsonl`
+  (pull from Fly: `fly ssh console -C "cat /data/utterances.jsonl"`).
+  NO bias prompt (see CLAUDE.md) — tune via post-processing if needed.
+- [ ] **Ship design pick**: interceptor is default; gunship + saucer in
   client/assets — swap `SHIP_DESIGN` in render.js.
-- [ ] **Refine STT keyword boosting** from accumulated
-  `data/utterances.jsonl` (pull from Fly:
-  `fly ssh console -C "cat /data/utterances.jsonl"`). Feed real phrasings
-  into `STT_BIAS_PROMPT`.
-
-## Housekeeping
-
-- [ ] **Real PvP acceptance test in English.** The two-browser fight used the
-  raw-JSON dev harness for maneuvers; nobody has yet fought a full PvP duel
-  to a kill purely by typed English. Same plumbing as practice mode (which
-  was verified in English), but do it once for real — voice makes this easy
-  now.
 
 ## Improvements (suggested)
 
-- [ ] **Prompt caching** on the translator's system prompt (it's large and
-  static) to cut per-utterance cost/latency on the Anthropic API.
-- [ ] **Transcript replay on reconnect** — keep a per-ship transcript buffer
-  server-side and replay it when a player reoccupies their seat; currently
-  they rejoin with an empty log.
-- [ ] **Quieter repeat standing orders** — a repeating tracker (e.g. "face
-  contact") logs "triggered" every 5 s and floods the transcript. Log first
-  trigger, then suppress or batch repeats.
-- [ ] **Map zoom control** — laser range (5 km) is ~70 px at full-map zoom;
-  close fights would benefit from a zoom toggle or auto-zoom when the enemy
-  is on sensors.
+- [ ] **Prompt caching** on the translator's system prompt (large, static;
+  the schema grew again in v4) to cut per-utterance cost/latency.
+- [ ] **Transcript replay on reconnect** — currently rejoins with an empty log.
+- [ ] **Quieter repeat standing orders** — repeating triggers log every
+  firing; batch or suppress repeats after the first.
+- [ ] **Contact bearing/range readout in the HUD contact panel** (currently
+  tier badge only; the map shows position).
+- [ ] **Rock-impact crunch heuristic**: client infers a crunch from hull
+  drop while a collision warning was active — could miss unwarned grazes.
 
-## Known quirks (fine for v1, documented here so nobody re-debugs them)
+## Known quirks (documented so nobody re-debugs them)
 
-- Rendered ship icons are ~560 m wide at map scale; a laser beam can visually
-  cross an icon while genuinely missing the 4° hit wedge. Mitigated with
-  "clean miss" transcript lines + impact flashes.
+- Rendered ship icons are clamped to 22 px for legibility; at map scale that
+  is enormously bigger than the 60 m hull — visual overlap ≠ collision.
 - Rootless Docker on the dev machine doesn't route `-p` published ports;
   test containers with `--network host`. Irrelevant to Fly deploys.
-- Missiles fired with the target outside the seeker cone go ballistic after
-  ~2 s and never re-seek (symmetric reacquire window; intended reading of an
-  ambiguous spec).
+- Missiles that lose all seeker candidates go permanently ballistic after
+  2 s (reacquire window) — intended.
+- The automation-driven browser can't synthesize wheel/held-key events the
+  same way a human does; camera testing uses JS-dispatched events.

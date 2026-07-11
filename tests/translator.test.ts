@@ -12,8 +12,8 @@ const assert = (cond: boolean, msg: string) => {
 }
 // 2. code fences stripped
 {
-  const r = parseResponse('```json\n[{"verb":"fire_laser","params":{}}]\n```');
-  assert(!r.failed && r.commands[0]?.verb === "fire_laser", "code fences stripped");
+  const r = parseResponse('```json\n[{"verb":"set_pdc","params":{"posture":"free"}}]\n```');
+  assert(!r.failed && r.commands[0]?.verb === "set_pdc", "code fences stripped");
 }
 // 3. prose around the array
 {
@@ -42,7 +42,7 @@ const assert = (cond: boolean, msg: string) => {
 }
 // 8. max 4 commands enforced
 {
-  const cmds = Array(6).fill('{"verb":"fire_laser","params":{}}').join(",");
+  const cmds = Array(6).fill('{"verb":"set_pdc","params":{"posture":"free"}}').join(",");
   const r = parseResponse(`[${cmds}]`);
   assert(r.commands.length === 4 && r.dropped === 2, "capped at 4 commands");
 }
@@ -50,7 +50,7 @@ const assert = (cond: boolean, msg: string) => {
 {
   const so = {verb:"set_standing_order", params:{label:"missile defense",
     condition:{metric:"missile_inbound",op:"eq",value:true},
-    actions:[{verb:"set_heading",params:{mode:"target",target:"nearest_missile"}},{verb:"fire_laser",params:{}}],
+    actions:[{verb:"set_heading",params:{mode:"target",target:"nearest_missile"}},{verb:"set_pdc",params:{posture:"free"}}],
     repeat:true}};
   assert(validateCommand(so) !== null, "valid standing order");
 }
@@ -58,7 +58,7 @@ const assert = (cond: boolean, msg: string) => {
 {
   const so = {verb:"set_standing_order", params:{
     condition:{metric:"enemy_range",op:"lt",value:3000},
-    actions:[{verb:"set_standing_order",params:{condition:{metric:"own_speed",op:"gt",value:0},actions:[{verb:"fire_laser",params:{}}]}}]}};
+    actions:[{verb:"set_standing_order",params:{condition:{metric:"own_speed",op:"gt",value:0},actions:[{verb:"set_pdc",params:{posture:"free"}}]}}]}};
   assert(validateCommand(so) === null, "nested standing order rejected");
 }
 // 11. cancel form
@@ -68,11 +68,11 @@ const assert = (cond: boolean, msg: string) => {
 }
 // 12. condition groups: all/any 2-3, bad metric rejected
 {
-  const good = {verb:"set_standing_order",params:{condition:{all:[{metric:"enemy_range",op:"lt",value:5000},{metric:"enemy_bearing_off_nose",op:"lt",value:4}]},actions:[{verb:"fire_laser",params:{}}]}};
+  const good = {verb:"set_standing_order",params:{condition:{all:[{metric:"enemy_range",op:"lt",value:5000},{metric:"enemy_bearing_off_nose",op:"lt",value:4}]},actions:[{verb:"set_pdc",params:{posture:"free"}}]}};
   assert(validateCommand(good) !== null, "all-group condition valid");
-  const bad = {verb:"set_standing_order",params:{condition:{metric:"enemy_mood",op:"lt",value:5},actions:[{verb:"fire_laser",params:{}}]}};
+  const bad = {verb:"set_standing_order",params:{condition:{metric:"enemy_mood",op:"lt",value:5},actions:[{verb:"set_pdc",params:{posture:"free"}}]}};
   assert(validateCommand(bad) === null, "unknown metric rejected");
-  const single = {verb:"set_standing_order",params:{condition:{all:[{metric:"enemy_range",op:"lt",value:5000}]},actions:[{verb:"fire_laser",params:{}}]}};
+  const single = {verb:"set_standing_order",params:{condition:{all:[{metric:"enemy_range",op:"lt",value:5000}]},actions:[{verb:"set_pdc",params:{posture:"free"}}]}};
   assert(validateCommand(single) === null, "all-group with 1 comparison rejected");
 }
 // 13. bracket repair: the exact malformed response from the 2026-07-10

@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Ship Command Protocol v3",
+  "title": "Ship Command Protocol v4 — The Big Dark",
   "description": "The contract between the LLM translator and the authoritative game server. The LLM receives natural language from the captain and emits one or more Command objects. The server validates and executes them on its tick. Unknown fields are rejected. This schema is also the source of truth for the LLM's tool/function definitions.",
 
   "definitions": {
@@ -14,10 +14,12 @@
           "enum": [
             "set_thrust",
             "set_heading",
-            "fire_laser",
+            "set_pdc",
             "fire_missile",
             "reload_tubes",
             "deploy_decoy",
+            "maneuver",
+            "show_vector",
             "set_standing_order",
             "query"
           ]
@@ -31,7 +33,7 @@
     },
 
     "set_thrust": {
-      "description": "Set main drive output. Thrust accelerates the ship along its current facing. Persists until changed. NOTE (future): thrust level will drive sensor signature; 0 = dark and drifting.",
+      "description": "Set main drive output. Thrust accelerates the ship along its current facing. Persists until changed. THRUST IS SIGNATURE: the drive plume is what enemy sensors see — full burn is visible ~181 km out, 0 = dark and drifting (~16 km). Going dark is the only stealth.",
       "type": "object",
       "required": ["percent"],
       "properties": {
@@ -65,7 +67,7 @@
         },
         "target": {
           "enum": ["enemy_ship", "nearest_missile", "nearest_decoy", "nearest_contact"],
-          "description": "REQUIRED for mode=target. SNAPSHOT semantics: the server resolves the target's bearing ONCE, at execution, and it becomes a fixed goal heading — the ship does NOT track continuously. Inside standing-order actions, each trigger re-snapshots at trigger time. 'enemy_ship' resolves to last-known position if the enemy is not currently on sensors."
+          "description": "REQUIRED for mode=target. SNAPSHOT semantics: the server resolves the target's bearing ONCE, at execution, and it becomes a fixed goal heading — the ship does NOT track continuously. Inside standing-order actions, each trigger re-snapshots at trigger time. 'enemy_ship' resolves to the tracked position at tier >= 2, the approximate faint fix at tier 1, or last-known otherwise."
         }
       },
       "examples": [
@@ -75,24 +77,35 @@
       ]
     },
 
-    "fire_laser": {
-      "description": "Fire the laser straight along the ship's current facing. Hitscan: hits the FIRST object within beam_width_degrees of the boresight, in range (ship, missile, or decoy). Subject to cooldown; server rejects with 'recharging' if fired early. No ammo limit.",
+    "set_pdc": {
+      "description": "Set the point-defense cannon posture. The PDCs are AUTOMATED: while posture=free they engage inbound enemy missiles (within pdc range, line of sight) and enemy ships at knife range on their own — there is no manual fire command. posture=hold silences them entirely (conserve ammo / stay dark). Ammo is a fixed budget of cumulative fire seconds with NO regeneration; firing spikes our sensor signature. Default posture at spawn: free. NOTE: this ship has NO laser — it was traded for the PDC mounts. 'Fire the laser' and similar get an in-character explanation, not an error.",
       "type": "object",
-      "properties": {},
-      "examples": [ {} ]
+      "required": ["posture"],
+      "properties": {
+        "posture": { "enum": ["free", "hold"] }
+      },
+      "examples": [ { "posture": "hold" }, { "posture": "free" } ]
     },
 
     "fire_missile": {
-      "description": "Launch missile(s) straight ahead. REQUIRES an active missile lock on the enemy ship (lock is automatic: enemy within lock cone+range on sensors for the lock time) — rejected with 'No lock' otherwise. After launch_delay ticks, the seeker locks the strongest signature inside its forward acquisition cone. Missiles accelerate to max speed, can be destroyed by lasers, and detonate on proximity. Firing an empty/reloading tube is rejected.",
+      "description": "Launch missile(s). Default guidance 'locked' REQUIRES an active missile lock (automatic: a TRACK-or-better contact within lock cone+range for the lock time) — rejected with 'No lock' otherwise. A locked bird flies UPLINKED: it steers an intercept off the mother ship's live track and IGNORES DECOYS for as long as the ship holds the lock (and lives); if the lock breaks, the bird goes autonomous (one-way, seeker-only, decoy-susceptible). guidance 'bearing' is BLIND FIRE: no lock needed, the bird launches out the nose and steers itself onto bearing_degrees (or straight ahead if omitted), autonomous from birth — its own weak seeker only grabs what it can detect (a flushing tool, not a sniper rifle). Torpedoes burn hard then coast ballistic; enemy PDCs can shoot them down; they detonate on proximity. Firing an empty/reloading tube is rejected.",
       "type": "object",
       "properties": {
         "tubes": {
           "type": "array",
           "items": { "type": "integer", "minimum": 1, "maximum": 2 },
           "description": "Which launch tubes to fire, 1-based: [1], [2], or [1,2] for a full salvo ('fire everything'). OMIT to fire one missile from the first ready tube (the default for a plain 'fire missile')."
+        },
+        "guidance": {
+          "enum": ["locked", "bearing"],
+          "description": "OMIT for a normal locked shot. Use 'bearing' ONLY when the captain explicitly asks for unlocked/blind/bearing fire ('put a torpedo down bearing 220', 'fire blind into that cloud', 'torpedo out the nose, no lock'). An ambiguous 'fire missile' without a lock must stay a locked attempt (the XO will offer blind fire in the rejection)."
+        },
+        "bearing_degrees": {
+          "type": "number",
+          "description": "Absolute compass bearing for guidance='bearing'. Omit to fire straight out the nose."
         }
       },
-      "examples": [ {}, { "tubes": [1, 2] } ]
+      "examples": [ {}, { "tubes": [1, 2] }, { "guidance": "bearing", "bearing_degrees": 220 } ]
     },
 
     "reload_tubes": {
@@ -110,6 +123,23 @@
 
     "deploy_decoy": {
       "description": "Eject a decoy that inherits the ship's current velocity plus a small random drift. Emits a hot signature for decoy_lifetime_seconds, attracting missile seekers and (future) appearing as a sensor contact. Rejected if decoy supply is empty.",
+      "type": "object",
+      "properties": {},
+      "examples": [ {} ]
+    },
+
+    "maneuver": {
+      "description": "Run an autopilot macro with a defined end state (this does NOT violate the captain-flies-the-ship doctrine; continuous tracking remains removed). full_stop: the helm flips to retrograde, burns at an appropriate throttle, and cuts thrust when speed < 5 m/s; the XO announces start and completion. Cancelled automatically by ANY subsequent set_thrust or set_heading ('belay that' should emit set_thrust with the current setting to take the conn back). Rejected if already stopped.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["full_stop"] }
+      },
+      "examples": [ { "type": "full_stop" } ]
+    },
+
+    "show_vector": {
+      "description": "Draw the ship's velocity vector on the captain's map for a few seconds (a line showing 10 seconds of travel, with a speed label, plus the projected stop point if propellant remains). Purely informational — no effect on the ship. Use when the captain asks 'which way are we drifting', 'show me our vector', etc.",
       "type": "object",
       "properties": {},
       "examples": [ {} ]
@@ -181,23 +211,26 @@
       "properties": {
         "metric": {
           "enum": [
+            "enemy_contact_tier",
             "enemy_range",
-            "enemy_on_sensors",
+            "enemy_bearing_off_nose",
             "missile_inbound",
             "nearest_missile_range",
             "own_hull_percent",
             "own_speed",
             "own_missiles_remaining",
             "own_decoys_remaining",
-            "enemy_bearing_off_nose",
             "distance_from_zone_center",
             "time_elapsed_seconds",
             "have_lock",
             "being_painted",
             "propellant_percent",
-            "tubes_ready"
+            "pdc_ammo_seconds",
+            "tubes_ready",
+            "in_dust",
+            "collision_warning"
           ],
-          "description": "enemy_bearing_off_nose = absolute degrees between our facing and the bearing to the enemy (0 = dead ahead); useful for 'when he's in our sights'. Booleans (use op=eq, value=true/false): missile_inbound, enemy_on_sensors, have_lock (our missile lock on the enemy is held), being_painted (the enemy is acquiring or holds a lock on US). tubes_ready = count of loaded launch tubes (0-2)."
+          "description": "enemy_contact_tier: 0 = no contact, 1 = faint, 2 = track, 3 = id ('if you get a track on him' => gte 2). enemy_range and enemy_bearing_off_nose are KNOWABLE ONLY AT TIER >= 2 — at faint or below the comparison is simply false (unknowable-metric rule). enemy_bearing_off_nose = absolute degrees between our facing and the bearing to the enemy (0 = dead ahead). Booleans (op=eq, value=true/false): missile_inbound (a missile is CURRENTLY detected inbound), have_lock (our missile lock is held), being_painted (the enemy is acquiring or holds a lock on US), in_dust (we are inside a dust cloud), collision_warning (a rock lies on our projected vector). tubes_ready = loaded launch tubes (0-2). pdc_ammo_seconds = seconds of point-defense fire remaining."
         },
         "op": { "enum": ["lt", "lte", "gt", "gte", "eq"] },
         "value": {
@@ -219,8 +252,11 @@
         "topic": {
           "enum": [
             "enemy",
+            "contacts",
             "own_ship",
             "weapons",
+            "pdc",
+            "terrain",
             "propellant",
             "tubes",
             "damage_report",
@@ -229,7 +265,7 @@
             "zone",
             "full_report"
           ],
-          "description": "damage_report is answered by a fixed server template (hull, propellant, tubes, missiles, decoys, laser) with no LLM phrasing — leave its acknowledgement empty."
+          "description": "damage_report is answered by a fixed server template (hull, propellant, tubes, missiles, decoys, PDC) with no LLM phrasing — leave its acknowledgement empty. pdc = point-defense posture, ammo, and envelope."
         }
       },
       "examples": [
@@ -240,56 +276,72 @@
   },
 
   "server_constants_suggested": {
-    "description": "Starting tunables. These live server-side (constants.ts is the source of truth), documented here so the LLM prompt and sim agree on the world's shape. All units abstract: distance in meters, speed in m/s, angles in degrees.",
+    "description": "v4 'The Big Dark' tunables. These live server-side (constants.ts is the source of truth), documented here so the LLM prompt and sim agree on the world's shape. All units abstract: distance in meters, speed in m/s, angles in degrees.",
     "tick_rate_hz": 1,
+    "physics": { "substeps": 10, "snapshot_rate_hz": 4 },
     "map": {
-      "zone_radius_m": 30000,
-      "hard_limit_radius_m": 45000,
-      "outside_zone_effect": "ship fully visible to enemy; own sensor range halved; NO propellant regen (soft tether, hard wall at the limit)"
+      "region_radius_m": 250000,
+      "outside_region_effect": "treated as signature-max (tier ID at any range); NO propellant regen; a restoring current (5 m/s^2 per 50 km beyond, cap 50) pulls back toward center — gravity, not walls"
     },
     "ship": {
-      "max_speed_mps": 600,
-      "accel_at_full_thrust_mps2": 25,
+      "max_speed_mps": 3000,
+      "accel_at_full_thrust_mps2": 60,
       "turn_rate_deg_per_sec": 20,
-      "hull_points": 100,
-      "sensor_range_m": 12000
+      "hull_points": 100
+    },
+    "detection": {
+      "sensor_base_m": 165000,
+      "formula": "detection_range = sensor_base x target_signature / 100, line of sight permitting",
+      "ship_signature": "10 base + effective thrust percent, +150 for 5s after a missile launch, +50 for 3s while PDCs fire",
+      "tiers": "id <= 30% of detection range, track <= 60%, faint <= 100%; faint = approximate position only (2 km noise, 5 s refresh), no vector, no lock",
+      "terrain": "rocks block LOS (sensors, locks, seekers, PDC); dust blocks sensors both ways — inside a cloud you are blind and unseen"
     },
     "propellant": {
       "max": 100,
       "burn_at_full_thrust_per_s": 1.0,
       "regen_per_s": 0.33,
-      "regen_conditions": "inside zone AND throttle setting <= 20%",
-      "empty_effect": "thrust output 0 (setting remembered); turning and weapons unaffected"
+      "regen_conditions": "inside region AND throttle setting <= 20%",
+      "empty_effect": "thrust output 0 (setting remembered); turning and weapons unaffected",
+      "note": "full tank = 100 s of hard burn = 6000 m/s of delta-v: enough to reach flank speed and kill it once"
     },
-    "laser": {
-      "range_m": 5000,
-      "beam_width_degrees": 4,
-      "cooldown_seconds": 4,
-      "damage": 10,
-      "damage_vs_missile": "instant kill"
+    "pdc": {
+      "missile_range_m": 8000,
+      "kill_prob_per_s": 0.25,
+      "ship_range_m": 3000,
+      "ship_dps": 5,
+      "ammo_seconds_of_fire": 60,
+      "notes": "automated by posture (free/hold); never targets decoys or terrain; firing spikes signature"
     },
     "missile": {
       "magazine_total_aboard": 6,
       "launch_tubes": 2,
       "tube_reload_seconds": 20,
-      "max_speed_mps": 600,
-      "acceleration_mps2": 150,
+      "max_speed_mps": 6000,
+      "acceleration_mps2": 400,
+      "engine_seconds": 25,
+      "flight_model": "burn-and-coast: engine on while below max speed or turning; dry = ballistic (no turns), still detonates on proximity",
+      "signature": "80 burning / 8 coasting",
       "launch_delay_ticks": 2,
       "acquisition_cone_degrees": 60,
-      "proximity_fuse_m": 150,
+      "proximity_fuse_m": 200,
+      "lifetime_s": 120,
       "damage": 35
     },
     "missile_lock": {
       "cone_half_angle_degrees": 30,
-      "range_m": 10000,
+      "range_m": 80000,
       "time_to_acquire_s": 5,
       "grace_s": 2,
-      "launch_flash_reveal_s": 5,
-      "notes": "lock requires the enemy on OUR sensors; the target always feels being painted (RWR)"
+      "notes": "LOCK REQUIRES TIER_TRACK OR BETTER — a faint contact cannot be locked; the target always feels being painted (RWR)"
     },
     "decoy": {
       "supply": 4,
-      "lifetime_seconds": 20
+      "lifetime_seconds": 20,
+      "signature": 150
+    },
+    "terrain": {
+      "rocks": "30 x 1-8 km radius + one ~15 km centerpiece; solid (collision damage above 50 m/s, lethal ~1500 m/s)",
+      "dust": "3 elliptical clouds 30-60 km across; no physical presence"
     }
   },
 
@@ -304,38 +356,75 @@
         ]
       },
       {
-        "captain": "Point us at him and fire when ready",
+        "captain": "Point us at him and fire when you have the lock",
         "commands": [
           { "verb": "set_heading", "params": { "mode": "target", "target": "enemy_ship" }, "acknowledgement": "Coming about to face the contact." },
           { "verb": "set_standing_order", "params": {
-              "label": "fire when ready",
-              "condition": { "all": [
-                { "metric": "enemy_bearing_off_nose", "op": "lt", "value": 4 },
-                { "metric": "enemy_range", "op": "lt", "value": 5000 }
-              ]},
-              "actions": [ { "verb": "fire_laser", "params": {} } ],
+              "label": "fire on lock",
+              "condition": { "metric": "have_lock", "op": "eq", "value": true },
+              "actions": [ { "verb": "fire_missile", "params": {} } ],
               "repeat": false
-          }, "acknowledgement": "Guns will fire as she bears." }
+          }, "acknowledgement": "Tube one will fire the moment we have him." }
         ]
       },
       {
-        "captain": "If a missile comes at us, turn into it and shoot it down",
+        "captain": "Guns free — if anything comes at us the PDCs handle it",
         "commands": [
-          { "verb": "set_standing_order", "params": {
-              "label": "missile defense",
-              "condition": { "metric": "missile_inbound", "op": "eq", "value": true },
-              "actions": [
-                { "verb": "set_heading", "params": { "mode": "target", "target": "nearest_missile" } },
-                { "verb": "fire_laser", "params": {} }
-              ],
-              "repeat": true
-          }, "acknowledgement": "Point defense doctrine set, Captain." }
+          { "verb": "set_pdc", "params": { "posture": "free" }, "acknowledgement": "PDCs weapons-free." }
+        ]
+      },
+      {
+        "captain": "Hold PDC fire, we're staying dark",
+        "commands": [
+          { "verb": "set_pdc", "params": { "posture": "hold" }, "acknowledgement": "PDCs holding. Running quiet." }
         ]
       },
       {
         "captain": "Go dark and drift",
         "commands": [
           { "verb": "set_thrust", "params": { "percent": 0 }, "acknowledgement": "Engines cold. Running silent." }
+        ]
+      },
+      {
+        "captain": "If you get a track on him, sing out and point us at him",
+        "commands": [
+          { "verb": "set_standing_order", "params": {
+              "label": "call the track",
+              "condition": { "metric": "enemy_contact_tier", "op": "gte", "value": 2 },
+              "actions": [
+                { "verb": "set_heading", "params": { "mode": "target", "target": "enemy_ship" } }
+              ],
+              "repeat": false
+          }, "acknowledgement": "I'll sing out the moment he firms up." }
+        ]
+      },
+      {
+        "captain": "All stop",
+        "commands": [
+          { "verb": "maneuver", "params": { "type": "full_stop" }, "acknowledgement": "All stop, aye. Flipping to burn." }
+        ]
+      },
+      {
+        "captain": "Which way are we drifting?",
+        "commands": [
+          { "verb": "show_vector", "params": {}, "acknowledgement": "Vector's on your map, Captain." }
+        ]
+      },
+      {
+        "captain": "Any rocks or dust nearby we could hide in?",
+        "commands": [
+          { "verb": "query", "params": { "topic": "terrain" }, "acknowledgement": "" }
+        ]
+      },
+      {
+        "captain": "Warn me if we're about to hit something",
+        "commands": [
+          { "verb": "set_standing_order", "params": {
+              "label": "collision watch",
+              "condition": { "metric": "collision_warning", "op": "eq", "value": true },
+              "actions": [ { "verb": "show_vector", "params": {} } ],
+              "repeat": true
+          }, "acknowledgement": "Collision watch set — I'll flag anything on our vector." }
         ]
       },
       {
@@ -354,6 +443,12 @@
         "captain": "Fire everything!",
         "commands": [
           { "verb": "fire_missile", "params": { "tubes": [1, 2] }, "acknowledgement": "Full salvo away." }
+        ]
+      },
+      {
+        "captain": "Put a torpedo down bearing two two zero, fire blind",
+        "commands": [
+          { "verb": "fire_missile", "params": { "guidance": "bearing", "bearing_degrees": 220 }, "acknowledgement": "Bird away on two-two-zero, running blind." }
         ]
       },
       {
@@ -390,7 +485,8 @@
       "Vague quantities get sensible defaults, stated aloud: 'slow down' -> thrust 25%, 'ease off' -> reduce by ~25 points, 'hard about' -> relative 180.",
       "Acknowledgements are at most 12 words. Every word is spoken aloud by the ship's voice — brevity is a feature.",
       "Continuous tracking ('keep facing him', 'stay pointed at him') is not a helm capability: execute a single set_heading target snapshot and say so — you can point the ship on command; the captain flies the ship.",
-      "A plain 'fire missile' fires ONE tube (omit the tubes param). Only an explicit salvo ('fire everything', 'both tubes', 'full salvo') uses tubes [1,2]."
+      "A plain 'fire missile' fires ONE tube (omit the tubes param). Only an explicit salvo ('fire everything', 'both tubes', 'full salvo') uses tubes [1,2].",
+      "Blind fire (guidance='bearing') ONLY when the captain explicitly asks for unlocked/blind/bearing fire. A plain 'fire missile' with no lock stays a locked attempt and gets the server's rejection, which offers blind fire as the follow-up."
     ]
   }
 }

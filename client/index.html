@@ -70,8 +70,9 @@
       border-bottom: 1px solid var(--line); color: var(--dim); font-size: 11px;
     }
     #topbar input[type="range"] {
-      flex: 1; accent-color: var(--accent); height: 2px;
+      width: 90px; accent-color: var(--accent); height: 2px;
     }
+    #controls-hint { flex: 1; letter-spacing: 0.5px; }
 
     #hud {
       border-bottom: 1px solid var(--line); padding: 8px 10px;
@@ -125,11 +126,16 @@
     #banner.active { display: flex; }
     #banner h2 { font-size: 26px; letter-spacing: 6px; font-weight: normal; }
     #banner .detail { color: var(--dim); }
+    #banner .banner-buttons { display: flex; gap: 10px; }
     #banner button {
       background: none; border: 1px solid var(--line); color: var(--fg);
       font: inherit; padding: 8px 22px; cursor: pointer; letter-spacing: 2px;
     }
     #banner button:hover { border-color: var(--accent); color: var(--accent); }
+    #banner-howto {
+      color: var(--dim); text-decoration: none; font-size: 12px; letter-spacing: 2px;
+    }
+    #banner-howto:hover { color: var(--accent); }
   </style>
 </head>
 <body>
@@ -142,6 +148,7 @@
       <button id="btn-join">JOIN</button>
     </div>
     <button id="btn-practice">PRACTICE</button>
+    <button id="btn-howto">HOW TO PLAY</button>
     <div id="lobby-status"></div>
   </div>
 
@@ -151,11 +158,16 @@
       <div id="banner">
         <h2 id="banner-title"></h2>
         <div class="detail" id="banner-detail"></div>
-        <button id="btn-rematch">REMATCH</button>
+        <div class="banner-buttons">
+          <button id="btn-rematch">REMATCH — SAME FIELD</button>
+          <button id="btn-rematch-new">REMATCH — NEW FIELD</button>
+        </div>
+        <a id="banner-howto" href="/how-to-play" target="_blank" rel="noopener">HOW TO PLAY &nearr;</a>
       </div>
     </div>
     <div id="side">
       <div id="topbar">
+        <span id="controls-hint">ENTER type &middot; SPACE talk &middot; WHEEL zoom &middot; DRAG/WASD pan &middot; F follow &middot; M map &middot; V vector</span>
         <span>VOL</span>
         <input type="range" id="vol" min="0" max="1" step="0.05" />
       </div>
@@ -164,7 +176,7 @@
       <div id="cmd-row">
         <span id="cmd-prompt">&gt;</span>
         <input id="cmd" autocomplete="off" spellcheck="false"
-               placeholder="orders, captain? — hold SPACE to talk" />
+               placeholder="orders, captain? — ENTER to type, hold SPACE to talk" />
         <span id="mic">&#9679; REC</span>
       </div>
     </div>

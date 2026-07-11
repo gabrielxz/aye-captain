@@ -97,15 +97,55 @@ function noise(t0, dur, peak, filterFreq, filterEnd = null, type = "lowpass") {
 
 // ---------- one-shot SFX ----------
 
-export function sfxLaser(own) {
+// PDC burst: rapid staccato brrrt — the signature sound of the boat.
+// Rate-limited internally so per-substep tracer fx don't stack bursts.
+let lastPdc = { own: 0, enemy: 0 };
+export function sfxPdc(own) {
+  if (!ctx) return;
+  const key = own ? "own" : "enemy";
+  const now = performance.now();
+  if (now - lastPdc[key] < 450) return;
+  lastPdc[key] = now;
+  const t = ctx.currentTime;
+  const rounds = 7;
+  for (let i = 0; i < rounds; i++) {
+    const rt = t + i * 0.055;
+    if (own) {
+      noise(rt, 0.035, 0.3, 2400, 700, "bandpass");
+      osc("square", 190, rt, 0.03, 0.22, 120);
+    } else {
+      noise(rt, 0.03, 0.13, 1500, 500, "bandpass");
+      osc("square", 140, rt, 0.025, 0.1, 90);
+    }
+  }
+}
+
+// Rock impact: low grinding crunch.
+export function sfxCrunch() {
   if (!ctx) return;
   const t = ctx.currentTime;
-  if (own) {
-    osc("sawtooth", 1400, t, 0.18, 0.35, 180);
-    osc("square", 2100, t, 0.08, 0.12, 500);
-  } else {
-    osc("sawtooth", 900, t, 0.15, 0.14, 140);
+  noise(t, 0.5, 0.6, 300, 60);
+  osc("triangle", 70, t, 0.35, 0.5, 30);
+  osc("square", 45, t + 0.08, 0.25, 0.3, 25);
+}
+
+// Collision-warning klaxon: two-tone whoop, repeated by the caller's state.
+let klaxonTimer = null;
+export function setCollisionKlaxon(on) {
+  if (!!klaxonTimer === !!on) return;
+  if (!on) {
+    clearInterval(klaxonTimer);
+    klaxonTimer = null;
+    return;
   }
+  if (!ctx) return;
+  const whoop = () => {
+    const t = ctx.currentTime;
+    osc("sawtooth", 400, t, 0.28, 0.2, 800);
+    osc("sawtooth", 400, t + 0.34, 0.28, 0.2, 800);
+  };
+  whoop();
+  klaxonTimer = setInterval(whoop, 1400);
 }
 
 export function sfxLaunch(own) {

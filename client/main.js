@@ -1,16 +1,17 @@
 // ws handling + client state store
-import { startRenderLoop, bigBoomAt } from "./render.js";
+import { startRenderLoop, bigBoomAt, showVector } from "./render.js";
 import { initUI, addTranscript, updateHUD, showLobbyStatus, enterGame, showBanner, hideBanner } from "./ui.js";
 import * as audio from "./audio.js";
 
 export const state = {
-  config: null, // {zoneRadius, hardLimitRadius} from server hello
+  config: null, // {zoneRadius, stt} from server hello
+  terrain: null, // {seed, rocks[], dust[]} — arrives with each match start
   role: null, // "A" | "B"
   practice: false,
   prevSnap: null, // previous snapshot (for interpolation)
   lastSnap: null, // latest snapshot
   lastSnapAt: 0, // performance.now() when lastSnap arrived
-  snapIntervalMs: 1000, // measured gap between snapshots
+  snapIntervalMs: 250, // measured gap between snapshots (server sends at 4 Hz)
   fxBuffer: [], // transient effects: {fx, at: performance.now()}
   gameOver: false,
   ws: null,
@@ -45,6 +46,7 @@ function handleMessage(msg) {
     case "start":
       state.role = msg.role;
       state.practice = !!msg.practice;
+      state.terrain = msg.terrain ?? null;
       state.prevSnap = null;
       state.lastSnap = null;
       state.fxBuffer = [];
@@ -56,13 +58,14 @@ function handleMessage(msg) {
     case "snapshot": {
       const now = performance.now();
       if (state.lastSnap) {
-        state.snapIntervalMs = Math.min(2000, Math.max(250, now - state.lastSnapAt));
+        state.snapIntervalMs = Math.min(2000, Math.max(100, now - state.lastSnapAt));
       }
       state.prevSnap = state.lastSnap;
       state.lastSnap = msg;
       state.lastSnapAt = now;
       for (const fx of msg.fx ?? []) {
         state.fxBuffer.push({ fx, at: now });
+        if (fx.type === "pdc") audio.sfxPdc(fx.owner === state.role); // internally rate-limited
       }
       soundFromSnapshot(msg);
       updateHUDFromSnapshot(msg);
@@ -75,8 +78,9 @@ function handleMessage(msg) {
       // terminal explosion on the losing ship
       const snap = state.lastSnap;
       if (snap) {
+        const contact = (snap.contacts ?? [])[0];
         if (!msg.youWin && snap.you) bigBoomAt(snap.you.x, snap.you.y);
-        else if (msg.youWin && snap.enemy?.visible) bigBoomAt(snap.enemy.x, snap.enemy.y);
+        else if (msg.youWin && contact) bigBoomAt(contact.x, contact.y);
       }
       const mins = Math.floor(msg.durationS / 60);
       const secs = Math.round(msg.durationS % 60);
@@ -95,6 +99,9 @@ function handleMessage(msg) {
     case "error":
       showLobbyStatus(msg.message);
       addTranscript("sys", msg.message, true);
+      break;
+    case "ui":
+      if (msg.what === "show_vector") showVector(5000);
       break;
     case "transcript":
       addTranscript(msg.who, msg.text, msg.alert);
@@ -139,14 +146,22 @@ function soundFromSnapshot(snap) {
     }
     // decoy deployed (ours)
     if ((you.decoys ?? 0) < prevAudio.decoys) audio.sfxDecoy();
-    // any hull drop we can see: crunch (ours = received)
-    if (you.hull < prevAudio.hull) audio.sfxBoom(false, true);
+    // any hull drop we take: rock hits crunch, weapons fire booms
+    if (you.hull < prevAudio.hull) {
+      if (prevAudio.collisionWarning !== null) audio.sfxCrunch();
+      else audio.sfxBoom(false, true);
+    }
   }
+  // collision klaxon while an impact is projected inside 10 s
+  audio.setCollisionKlaxon(
+    you.collisionWarning !== null && you.collisionWarning !== undefined && you.collisionWarning <= 10
+  );
   prevAudio = {
     tubes: (you.tubes ?? []).map((t) => ({ state: t.state })),
     enemyMissiles: new Set((snap.missiles ?? []).filter((m) => !m.own).map((m) => m.id)),
     decoys: you.decoys ?? 0,
     hull: you.hull,
+    collisionWarning: you.collisionWarning ?? null,
   };
 }
 
@@ -154,7 +169,6 @@ const TUBE_LABEL = { ready: "RDY", reloading: null, empty: "—" };
 function updateHUDFromSnapshot(snap) {
   const you = snap.you;
   if (!you) return;
-  const laser = you.laserCooldown > 0 ? `${you.laserCooldown.toFixed(0)}s` : "READY";
   const tanksDry = (you.propellant ?? 0) <= 0;
   const tubes = (you.tubes ?? [])
     .map((t, i) => `${i + 1}:${TUBE_LABEL[t.state] ?? `${t.t}s`}`)
@@ -166,11 +180,15 @@ function updateHUDFromSnapshot(snap) {
       : "no lock";
   const painted = you.painted ?? "none";
   const prop = Math.round(you.propellant ?? 0);
-  const en = snap.enemy;
-  const enemyHull = en?.visible && en.hull !== undefined ? `${en.hull}/${en.hullMax ?? 100}` : "—";
+  const contact = (snap.contacts ?? [])[0] ?? null;
+  const TIER_LABEL = { 1: "FAINT", 2: "TRACK", 3: "ID" };
+  const contactLabel = contact ? TIER_LABEL[contact.tier] ?? "?" : snap.ghost ? "ghost" : "—";
+  const enemyHull = contact?.tier === 3 && contact.hull !== undefined ? `${contact.hull}/${contact.hullMax ?? 100}` : "—";
   updateHUD([
     { label: "HULL", value: `${you.hull}`, cls: you.hull <= 35 ? "alert" : you.hull <= 65 ? "warn" : "" },
-    { label: "EN HULL", value: enemyHull, cls: en?.visible && en.hull <= (en.hullMax ?? 100) / 2 ? "good" : "" },
+    { label: "EN HULL", value: enemyHull, cls: contact?.tier === 3 && contact.hull <= (contact.hullMax ?? 100) / 2 ? "good" : "" },
+    { label: "CONTACT", value: contactLabel, cls: contact ? (contact.tier >= 2 ? "good" : "warn") : "" },
+    { label: "SIG", value: `${Math.round(you.signature ?? 0)}`, cls: (you.signature ?? 0) > 100 ? "alert" : (you.signature ?? 0) > 50 ? "warn" : "good" },
     { label: "THRUST", value: `${Math.round(you.thrust)}%${tanksDry && you.thrust > 0 ? " (DRY)" : ""}`, cls: tanksDry && you.thrust > 0 ? "alert" : "" },
     { label: "SPD", value: `${you.speed} m/s` },
     { label: "HDG", value: `${String(Math.round(you.facing) % 360).padStart(3, "0")}` },
@@ -178,8 +196,21 @@ function updateHUDFromSnapshot(snap) {
     { label: "TUBES", value: tubes || "—" },
     { label: "MSL", value: `${you.missiles}` },
     { label: "DECOY", value: `${you.decoys}` },
-    { label: "LASER", value: laser },
-    { label: "ZONE", value: you.insideZone ? "inside" : "OUTSIDE", cls: you.insideZone ? "" : "warn" },
+    {
+      label: "PDC",
+      value: `${(you.pdc?.posture ?? "free").toUpperCase()} ${you.pdc?.ammoS ?? 0}s`,
+      cls: (you.pdc?.ammoS ?? 0) <= 6 ? "alert" : (you.pdc?.ammoS ?? 0) <= 15 ? "warn" : you.pdc?.posture === "free" ? "good" : "",
+    },
+    {
+      label: "ZONE",
+      value: you.inDust ? "IN DUST (blind)" : you.insideZone ? "inside" : "OUTSIDE",
+      cls: you.inDust ? "warn" : you.insideZone ? "" : "warn",
+    },
+    {
+      label: "COLL",
+      value: you.collisionWarning !== null && you.collisionWarning !== undefined ? `impact ${you.collisionWarning}s` : "—",
+      cls: you.collisionWarning === null || you.collisionWarning === undefined ? "" : you.collisionWarning <= 10 ? "alert" : "warn",
+    },
     { label: "LOCK", value: lock, cls: you.lock?.has ? "good" : "" },
     {
       label: "WARN",
