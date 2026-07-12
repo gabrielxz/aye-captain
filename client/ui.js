@@ -169,27 +169,20 @@ export function initUI() {
     el.value = String(getMixVolume(kind));
     el.addEventListener("input", () => setMixVolume(kind, Number(el.value)));
   }
-  // v5.1 §4.3: XO verbosity — one shared state, a cycle button in the
-  // lobby AND the in-match topbar (changeable mid-match by design: six
-  // people at one table need to be able to shut their XOs up live)
+  // v5.1 §4.3: XO verbosity — the in-match topbar cycle button (the
+  // lobby duplicate confused playtesters; mid-match is where it matters:
+  // six people at one table need to shut their XOs up live)
   const VERBOSITY_CYCLE = ["full", "terse", "silent"];
-  const verbosityButtons = [
-    { el: document.getElementById("verbosity"), prefix: "XO: " },
-    { el: document.getElementById("verbosity-lobby"), prefix: "" },
-  ];
+  const verbosityBtn = document.getElementById("verbosity");
   const paintVerbosity = () => {
-    for (const { el, prefix } of verbosityButtons) {
-      if (el) el.textContent = `${prefix}${getVerbosity().toUpperCase()}`;
-    }
+    verbosityBtn.textContent = `XO: ${getVerbosity().toUpperCase()}`;
   };
-  for (const { el } of verbosityButtons) {
-    el?.addEventListener("click", () => {
-      const next =
-        VERBOSITY_CYCLE[(VERBOSITY_CYCLE.indexOf(getVerbosity()) + 1) % VERBOSITY_CYCLE.length];
-      setVerbosity(next);
-      paintVerbosity();
-    });
-  }
+  verbosityBtn.addEventListener("click", () => {
+    const next =
+      VERBOSITY_CYCLE[(VERBOSITY_CYCLE.indexOf(getVerbosity()) + 1) % VERBOSITY_CYCLE.length];
+    setVerbosity(next);
+    paintVerbosity();
+  });
   paintVerbosity();
 }
 

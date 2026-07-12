@@ -24,7 +24,15 @@ const TEAM_TINTS = { red: "#e07a7a", blue: "#7ab0e0" };
 // v5 §4: shape = archetype (tint = player/side). The three authored
 // designs map straight across; SHIP_DESIGN remains the UNKNOWN-contact
 // wedge fallback key and the pre-v5 default.
-const ARCH_DESIGN = { corvette: "interceptor", frigate: "gunship", cruiser: "saucer" };
+// v5.1.1 (playtest): frigate/cruiser silhouettes SWAPPED — the broad
+// weapon-podded gunship reads heavy (that's a cruiser), the slim disc
+// reads mid-weight. Corvette keeps the dart.
+const ARCH_DESIGN = { corvette: "interceptor", frigate: "saucer", cruiser: "gunship" };
+// Mass hierarchy at a glance: sprite size scales with hull class. Pure
+// presentation — the 60 m hull and hit radius are unchanged (visual
+// overlap ≠ collision, as ever). Unknown contacts (no archetype below ID)
+// stay at 1.0, so size leaks nothing fog doesn't already allow.
+const ARCH_SIZE_MULT = { corvette: 0.85, frigate: 1.0, cruiser: 1.3 };
 const SHIP_DESIGN = "interceptor";
 const SHIP_LEN_M = 60; // true hull length; far below one pixel at map scale
 const MIN_SHIP_PX = 22; // legibility clamp: never render smaller than this
@@ -635,7 +643,8 @@ function flareColor(pct) {
 
 function drawShip(ent, kind, { ghost = false, thrust = 0, hull = null, hullMax = 100, archetype = null } = {}) {
   const [sx, sy] = worldToScreen(ent.x, ent.y);
-  const sizePx = Math.max(MIN_SHIP_PX, SHIP_LEN_M * camera.zoom);
+  const sizePx =
+    Math.max(MIN_SHIP_PX, SHIP_LEN_M * camera.zoom) * (ARCH_SIZE_MULT[archetype] ?? 1);
   const r = sizePx / 2;
   const rad = ((ent.facing ?? 0) * Math.PI) / 180;
 

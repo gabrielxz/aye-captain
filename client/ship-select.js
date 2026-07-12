@@ -10,15 +10,18 @@
 const ARCH_META = {
   corvette: {
     design: "interceptor",
+    size: 54,
     doctrine:
-      "You cannot take a hit. You can go dark and you can run. No railgun: nothing you carry fires straight. Win by being where they aren't.",
+      "The knife. Quickest hull, dimmest drive, the best sensors in the game, six decoys to spend. Light armor and no railgun — you can take a hit, not a beating. Pick the moment, strike, be gone.",
   },
   frigate: {
-    design: "gunship",
+    design: "saucer",
+    size: 66,
     doctrine: "Railgun and torpedoes. The only ship that can trade and mean it.",
   },
   cruiser: {
-    design: "saucer",
+    design: "gunship",
+    size: 82,
     doctrine:
       "You are loud and you are slow and they will hear you coming. Make them regret arriving.",
   },
@@ -74,12 +77,16 @@ export function buildShipSelect(container, { archetypes, selected, onPick }) {
     card.className = `arch-card${selected === arch ? " active" : ""}`;
     card.dataset.arch = arch;
 
+    const stage = document.createElement("div");
+    stage.className = "hull"; // fixed-height stage keeps the three cards aligned
     const img = document.createElement("img");
     img.alt = arch;
+    img.style.height = `${meta.size}px`; // mass hierarchy: cruiser draws biggest
     void spriteUrl(meta.design).then((url) => {
       if (url) img.src = url;
     });
-    card.appendChild(img);
+    stage.appendChild(img);
+    card.appendChild(stage);
 
     const h = document.createElement("h3");
     h.textContent = arch.toUpperCase();
