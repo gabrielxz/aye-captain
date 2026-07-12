@@ -1,6 +1,7 @@
 // command box, transcript pane, HUD panels, lobby
 import { send, state } from "./main.js";
 import { createVoice } from "./voice.js";
+import { buildShipSelect } from "./ship-select.js";
 import {
   initAudio,
   setMixVolume,
@@ -70,9 +71,8 @@ export function initUI() {
   document.getElementById("btn-team-red").addEventListener("click", () => send({ type: "team", team: "red" }));
   document.getElementById("btn-team-blue").addEventListener("click", () => send({ type: "team", team: "blue" }));
   document.getElementById("btn-launch").addEventListener("click", () => send({ type: "launch" }));
-  for (const btn of document.querySelectorAll("#arch-row button")) {
-    btn.addEventListener("click", () => send({ type: "archetype", archetype: btn.dataset.arch }));
-  }
+  // v5.1 §6: archetype cards render on demand in showRoomLobby (they need
+  // the hello config's stat blocks, which may not have arrived yet here)
 
   cmdEl.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
@@ -262,9 +262,13 @@ export function showRoomLobby(msg) {
   document.getElementById("btn-team-blue").classList.toggle("active", me?.team === "blue");
 
   const mine = (msg.players ?? []).find((p) => p.id === msg.you);
-  for (const btn of document.querySelectorAll("#arch-row button")) {
-    btn.classList.toggle("active", mine?.archetype === btn.dataset.arch);
-  }
+  // §6: full stat-card select. Rebuilt per lobby broadcast — cheap, and it
+  // keeps the active ring in sync with the server's view of our pick.
+  buildShipSelect(document.getElementById("arch-row"), {
+    archetypes: state.config?.archetypes,
+    selected: mine?.archetype ?? "frigate",
+    onPick: (archetype) => send({ type: "archetype", archetype }),
+  });
 
   const launch = document.getElementById("btn-launch");
   launch.style.display = msg.creator ? "block" : "none";

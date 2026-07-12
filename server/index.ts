@@ -8,6 +8,7 @@ import {
   ACCEL_FULL_THRUST_MPS2,
   TURN_RATE_DEG_PER_SEC,
   STT_MAX_AUDIO_BYTES,
+  ARCHETYPES,
 } from "./constants.js";
 import { Match, sanitizeName } from "./match.js";
 import { sttAvailable, transcribe, SttBusyError } from "./stt.js";
@@ -94,6 +95,9 @@ wss.on("connection", (ws: WebSocket) => {
         accel: ACCEL_FULL_THRUST_MPS2, // for the client-side stop-point projection
         turnRate: TURN_RATE_DEG_PER_SEC,
         stt: sttAvailable(),
+        // v5.1 §6: the select screen renders stat bars straight from the
+        // runtime source of truth — the client never hardcodes a number
+        archetypes: ARCHETYPES,
       },
     })
   );
