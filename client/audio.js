@@ -1,5 +1,6 @@
 // Procedural SFX (Web Audio, no assets) + ship-AI speech queue.
 // Everything routes through one master gain: the VOL slider.
+import { createSpeechScheduler } from "./speech-scheduler.js";
 
 let ctx = null;
 let master = null;
@@ -385,11 +386,10 @@ export function stopContinuous() {
 }
 
 // ---------- ship-AI speech queue ----------
-// One line at a time, never overlapping. Warnings (alert) jump the queue;
-// stale non-alert acknowledgements are dropped rather than played late.
+// One line at a time, never overlapping. Scheduling policy (tiers, the
+// inter-line gap, TTLs, barge-in) lives in speech-scheduler.js — this side
+// is only the WebAudio driver: fetch/decode/play, fade-stop, re-poll timers.
 
-const speechQueue = [];
-let speaking = false;
 const decoded = new Map(); // speech id -> AudioBuffer promise
 
 function fetchSpeech(id) {
@@ -405,63 +405,62 @@ function fetchSpeech(id) {
   return decoded.get(id);
 }
 
-// Battle-tempo throttle: the ear is a scarcer resource than the transcript.
-// - warnings (alert) always speak: they jump ahead of chatter, identical
-//   lines already waiting are deduped, and only the 2 freshest warnings
-//   stay queued (older ones are superseded news)
-// - everything else speaks ONLY when the voice channel is idle — during a
-//   furball the chatter goes text-only instead of piling up
-export function enqueueSpeech(id, alert = false, queued = false) {
-  if (!ctx) return;
-  // three tiers (v5 §7): alerts preempt; `queued` lines (incoming
-  // transmissions) WAIT their turn instead of being dropped; ordinary
-  // acks are dropped when the ship is already talking
-  if (!alert && !queued && (speaking || speechQueue.length > 0)) return;
-  const entry = { id, alert, at: performance.now(), buf: fetchSpeech(id) };
-  if (queued && !alert) {
-    speechQueue.push(entry);
-    void playNext();
-    return;
-  }
-  if (alert) {
-    if (speechQueue.some((e) => e.alert && e.id === id)) return; // dedupe
-    const firstNonAlert = speechQueue.findIndex((e) => !e.alert);
-    if (firstNonAlert === -1) speechQueue.push(entry);
-    else speechQueue.splice(firstNonAlert, 0, entry);
-    // keep only the freshest 2 warnings
-    let alerts = speechQueue.filter((e) => e.alert);
-    while (alerts.length > 2) {
-      speechQueue.splice(speechQueue.indexOf(alerts[0]), 1);
-      alerts = speechQueue.filter((e) => e.alert);
+let lineSrc = null; // currently-playing {src, gain, gen}
+let lineGen = 0; // invalidates onended/decode callbacks after a stop()
+let pollTimer = null;
+
+const sched = createSpeechScheduler({
+  now: () => performance.now(),
+  later: (ms) => {
+    clearTimeout(pollTimer);
+    pollTimer = setTimeout(() => sched.poll(), ms);
+  },
+  start: (id) => {
+    const gen = ++lineGen;
+    void (async () => {
+      const buf = await fetchSpeech(id);
+      if (gen !== lineGen) return; // stopped while decoding
+      if (!buf) {
+        sched.onEnded(); // missing line: over instantly
+        return;
+      }
+      const src = ctx.createBufferSource();
+      const gain = ctx.createGain();
+      src.buffer = buf;
+      src.connect(gain);
+      gain.connect(speechBus);
+      src.onended = () => {
+        if (gen !== lineGen) return; // preempted — the scheduler already moved on
+        lineSrc = null;
+        sched.onEnded();
+      };
+      lineSrc = { src, gain, gen };
+      src.start();
+    })();
+  },
+  stop: (fadeMs) => {
+    lineGen++; // orphan in-flight decode + onended
+    if (lineSrc && ctx) {
+      const { src, gain } = lineSrc;
+      lineSrc = null;
+      gain.gain.setValueAtTime(gain.gain.value, ctx.currentTime);
+      gain.gain.linearRampToValueAtTime(0, ctx.currentTime + fadeMs / 1000);
+      try {
+        src.stop(ctx.currentTime + fadeMs / 1000);
+      } catch {
+        /* already stopped */
+      }
     }
-  } else {
-    speechQueue.push(entry);
-  }
-  void playNext();
+  },
+});
+
+export function enqueueSpeech(id, priority = "news") {
+  if (!ctx) return;
+  sched.enqueue(id, priority);
 }
 
-async function playNext() {
-  if (speaking || speechQueue.length === 0) return;
-  speaking = true;
-  const entry = speechQueue.shift();
-  // anything that sat queued too long is stale news — skip it
-  if (performance.now() - entry.at > (entry.alert ? 6000 : 8000)) {
-    speaking = false;
-    void playNext();
-    return;
-  }
-  const buf = await entry.buf;
-  if (!buf) {
-    speaking = false;
-    void playNext();
-    return;
-  }
-  const src = ctx.createBufferSource();
-  src.buffer = buf;
-  src.connect(speechBus);
-  src.onended = () => {
-    speaking = false;
-    void playNext();
-  };
-  src.start();
+// PTT down: the captain spoke — drop the playing non-critical line, flush
+// chatter. CRITICAL finishes, ducked. See speech-scheduler.js §1.4.
+export function bargeIn() {
+  sched.bargeIn();
 }

@@ -16,6 +16,17 @@ import { ensureSpeech } from "./tts.js";
 export type RoomMode = "ffa" | "teams";
 export type Team = "red" | "blue";
 
+// v5.1 §1.2: three speech tiers replace the old alert boolean. CRITICAL
+// interrupts and ignores the inter-line gap; NEWS queues and respects it;
+// CHATTER plays only into silence. The client scheduler enforces this —
+// the server's job is honest classification.
+export type SpeechPriority = "critical" | "news" | "chatter";
+
+// v5.1 §1.3: acks of commands whose effect is instantly visible on the HUD
+// carry no voice — the throttle moved, the captain watched it move.
+// Rejections of the same verbs DO speak (you can't see a refusal).
+const HUD_VISIBLE_ACK_VERBS = new Set(["set_thrust", "set_heading", "set_pdc", "set_overlay"]);
+
 const SEAT_IDS = ["A", "B", "C", "D", "E", "F", "G", "H"];
 
 // One captain's chair (v5 §2: up to MAX_PLAYERS of these per room).
@@ -72,13 +83,15 @@ export class Match {
     match.start();
     // v4.3 welcome: client is connected (start just went out) and audio is
     // already unlocked — clicking PRACTICE was the user gesture.
-    match.sendTranscript("A", "xo", "Practice range is hot, Captain. Drone's out there somewhere.");
+    match.sendTranscript("A", "xo", "Practice range is hot, Captain. Drone's out there somewhere.", {
+      priority: "chatter",
+    });
     if (!llmAvailable()) {
       match.sendTranscript(
         "A",
         "sys",
         "translator offline: ANTHROPIC_API_KEY not set — only raw JSON commands will work",
-        true
+        { priority: "critical" }
       );
     }
     return match;
@@ -108,7 +121,7 @@ export class Match {
       seat.ws = ws;
       this.sim.setGhost(seat.id, false);
       this.sendStart(seat);
-      this.sendTranscript(seat.id, "sys", "Reconnected. Resuming command.");
+      this.sendTranscript(seat.id, "sys", "Reconnected. Resuming command.", { priority: "chatter" });
       if (!this.sim.winner && !this.running) this.start();
       if (this.spectators.size > 0) this.broadcastSpectators();
       return null;
@@ -213,7 +226,7 @@ export class Match {
         ? "Enemy ships are out there somewhere. Good hunting, Captain."
         : "Enemy ship is out there somewhere. Good hunting, Captain.";
     for (const seat of this.seats) {
-      this.sendTranscript(seat.id, "sys", welcome);
+      this.sendTranscript(seat.id, "sys", welcome, { priority: "chatter" });
     }
   }
 
@@ -458,8 +471,10 @@ export class Match {
   private captainDown(shipId: ShipId, shipCallsign: string): void {
     const seat = this.seats.find((s) => s.id === shipId);
     if (!seat) return;
-    this.sendTranscript(seat.id, "sys", "Hull breach — we're done. Abandon ship.", true);
-    this.sendTranscript(seat.id, "xo", "It's been an honor, Captain.");
+    this.sendTranscript(seat.id, "sys", "Hull breach — we're done. Abandon ship.", {
+      priority: "critical",
+    });
+    this.sendTranscript(seat.id, "xo", "It's been an honor, Captain.", { priority: "news" });
     seat.dead = true;
     if (seat.ws && seat.ws.readyState === seat.ws.OPEN) {
       const callsign = shipCallsign; // "SPECTATOR — Kestrel" (v5 §3)
@@ -479,9 +494,13 @@ export class Match {
 
   private routeEvent(ev: SimEvent): void {
     if (ev.kind === "reject") {
-      this.sendTranscript(ev.ship, "xo", ev.reason);
+      // §1.3: you can't see a refusal — rejections always speak
+      this.sendTranscript(ev.ship, "xo", ev.reason, { priority: "news" });
     } else if (ev.kind === "ack") {
-      this.sendTranscript(ev.ship, "xo", ev.text);
+      this.sendTranscript(ev.ship, "xo", ev.text, {
+        priority: "chatter",
+        noSpeech: HUD_VISIBLE_ACK_VERBS.has(ev.verb),
+      });
     } else if (ev.kind === "death") {
       this.captainDown(ev.ship, ev.callsign);
     } else if (ev.kind === "transmission") {
@@ -493,13 +512,10 @@ export class Match {
           ? this.seats.filter((s) => !s.dead && s.id !== ev.from).map((s) => s.id)
           : [ev.to];
       for (const id of targets) {
-        this.sendTranscript(
-          id,
-          "comms",
-          `${ev.fromName}: “${ev.text}”`,
-          false,
-          `Transmission from ${ev.fromName}: ${ev.text}`
-        );
+        this.sendTranscript(id, "comms", `${ev.fromName}: “${ev.text}”`, {
+          priority: "news", // v5 §7 spec: above acks, below combat warnings
+          speak: `Transmission from ${ev.fromName}: ${ev.text}`,
+        });
       }
     } else if (ev.kind === "scuttle") {
       // quiet by design: free the seat, tell no one
@@ -534,7 +550,11 @@ export class Match {
       const targets =
         ev.ship === "all" ? this.seats.filter((s) => !s.dead).map((s) => s.id) : [ev.ship];
       for (const id of targets) {
-        this.sendTranscript(id, "sys", ev.text, ev.alert, ev.speak);
+        this.sendTranscript(id, "sys", ev.text, {
+          priority: ev.alert ? "critical" : "news",
+          speak: ev.speak,
+          noSpeech: ev.silent,
+        });
       }
     }
   }
@@ -562,18 +582,28 @@ export class Match {
   // speakText (v4.7.1): optional TTS-safe variant of `text` — quantized
   // digit-word bearings, no "km" — so the voice never garbles numerals and
   // the synthesis cache stays bounded. The transcript always shows `text`.
-  sendTranscript(id: ShipId, who: string, text: string, alert = false, speakText?: string): void {
+  sendTranscript(
+    id: ShipId,
+    who: string,
+    text: string,
+    opts: { priority?: SpeechPriority; speak?: string; noSpeech?: boolean } = {}
+  ): void {
     const seat = this.seats.find((s) => s.id === id);
     const ws = seat?.ws;
     if (ws && ws.readyState === ws.OPEN) {
+      const priority = opts.priority ?? "news";
       // Ship-AI lines get a voice; skip bookkeeping noise (standing-order
-      // trigger logs, dev-harness echoes).
+      // trigger logs, dev-harness echoes) and v5.1 §1.3 silent lines
+      // (confirmations of instantly HUD-visible effects).
       const speak =
+        !opts.noSpeech &&
         (who === "xo" || who === "xo-note" || who === "sys" || who === "comms") &&
         !text.startsWith("Standing order '") &&
         !text.startsWith("direct");
-      const speech = speak ? ensureSpeech(speakText ?? text) : null;
-      ws.send(JSON.stringify({ type: "transcript", who, text, alert, ...(speech ? { speech } : {}) }));
+      const speech = speak ? ensureSpeech(opts.speak ?? text) : null;
+      ws.send(
+        JSON.stringify({ type: "transcript", who, text, priority, ...(speech ? { speech } : {}) })
+      );
     }
   }
 
@@ -590,9 +620,11 @@ export class Match {
         const parsed = JSON.parse(text);
         const commands: Command[] = Array.isArray(parsed) ? parsed : [parsed];
         this.sim.enqueue(seat.id, commands);
-        this.sendTranscript(seat.id, "sys", `direct: ${commands.map((c) => c.verb).join(", ")}`);
+        this.sendTranscript(seat.id, "sys", `direct: ${commands.map((c) => c.verb).join(", ")}`, {
+          priority: "chatter",
+        });
       } catch {
-        this.sendTranscript(seat.id, "sys", "direct command parse error");
+        this.sendTranscript(seat.id, "sys", "direct command parse error", { priority: "news" });
       }
       return;
     }
@@ -604,14 +636,14 @@ export class Match {
     const result = await translateUtterance(text, this.sim.stateSummaryFor(id));
 
     if (result.failed) {
-      this.sendTranscript(id, "xo", "Say again, Captain?");
+      this.sendTranscript(id, "xo", "Say again, Captain?", { priority: "news" });
       return;
     }
     // reply-only elements are CONVERSATION, not executed commands — the
     // client renders them visibly distinct so a phantom "PDCs holding"
     // can never masquerade as an action acknowledgement (invariant 4)
     for (const reply of result.replies) {
-      this.sendTranscript(id, "xo-note", reply);
+      this.sendTranscript(id, "xo-note", reply, { priority: "chatter" });
     }
 
     // Queries execute immediately against sensor-visible state (read-only);
@@ -633,13 +665,14 @@ export class Match {
         "xo",
         `Hull ${data.hull} of ${data.hull_max}. Propellant ${data.propellant}. ` +
           `${String(data.tube_summary).charAt(0).toUpperCase()}${String(data.tube_summary).slice(1)}. ` +
-          `${data.missiles_aboard} missiles aboard, ${data.decoys} decoys, PDC ${data.pdc_posture} with ${data.pdc_ammo_s}s of fire.`
+          `${data.missiles_aboard} missiles aboard, ${data.decoys} decoys, PDC ${data.pdc_posture} with ${data.pdc_ammo_s}s of fire.`,
+        { priority: "news" } // an answer is information the captain asked for
       );
       return;
     }
     const line = await phraseQueryAnswer(question, topic, data);
     // Fallback: template the raw data if the phrasing call fails.
-    this.sendTranscript(id, "xo", line ?? `${topic}: ${JSON.stringify(data)}`);
+    this.sendTranscript(id, "xo", line ?? `${topic}: ${JSON.stringify(data)}`, { priority: "news" });
   }
 
   roleOf(ws: WebSocket): ShipId | null {

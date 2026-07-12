@@ -1,7 +1,7 @@
 // command box, transcript pane, HUD panels, lobby
 import { send, state } from "./main.js";
 import { createVoice } from "./voice.js";
-import { initAudio, setVolume, getVolume, sfxClick, duck } from "./audio.js";
+import { initAudio, setVolume, getVolume, sfxClick, duck, bargeIn } from "./audio.js";
 
 const lobbyEl = document.getElementById("lobby");
 const gameEl = document.getElementById("game");
@@ -120,6 +120,9 @@ function initVoice() {
       micEl.classList.toggle("transcribing", mode === "transcribing");
       micEl.textContent = mode === "transcribing" ? "···" : "● REC";
       duck(mode === "listening"); // quiet the ship while the captain talks
+      // v5.1 §1.4: he doesn't just get quieter — he stops. The playing
+      // non-critical line is dropped and chatter flushed; CRITICAL finishes.
+      if (mode === "listening") bargeIn();
       if (mode === "idle") cmdEl.value = "";
     },
     onFinal: (text) => {

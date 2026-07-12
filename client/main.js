@@ -163,9 +163,9 @@ function handleMessage(msg) {
       else if (msg.what === "overlay") setOverlay(msg.element, msg.state === "on");
       break;
     case "transcript":
-      addTranscript(msg.who, msg.text, msg.alert);
+      addTranscript(msg.who, msg.text, msg.priority === "critical");
       // incoming transmissions queue (above acks, below combat warnings)
-      if (msg.speech) audio.enqueueSpeech(msg.speech, !!msg.alert, msg.who === "comms");
+      if (msg.speech) audio.enqueueSpeech(msg.speech, msg.priority ?? "news");
       break;
     default:
       console.log("unhandled message", msg);

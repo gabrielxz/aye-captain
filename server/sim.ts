@@ -349,10 +349,14 @@ export type Fx =
 
 export type SimEvent =
   | { kind: "reject"; ship: ShipId; verb: string; reason: string }
-  | { kind: "ack"; ship: ShipId; text: string }
+  // verb rides along so the match can apply the v5.1 §1.3 ack rule: acks of
+  // commands whose effect is instantly HUD-visible get no voice
+  | { kind: "ack"; ship: ShipId; verb: string; text: string }
   // speak: optional TTS-safe variant (quantized digit-word bearings, no
-  // abbreviations); the transcript displays `text`, the voice says `speak`
-  | { kind: "notice"; ship: ShipId | "all"; text: string; alert?: boolean; speak?: string }
+  // abbreviations); the transcript displays `text`, the voice says `speak`.
+  // silent: transcript-only — never synthesized (v5.1 §1.3: confirmations
+  // of instantly-visible effects, e.g. the drift-marker toggle)
+  | { kind: "notice"; ship: ShipId | "all"; text: string; alert?: boolean; speak?: string; silent?: boolean }
   | { kind: "ui"; ship: ShipId; what: "show_vector" } // client-side overlay triggers
   // persistent client-side overlay toggles (v4.7): pure ui, no sim state.
   // v5 adds ELEMENT values (probe markers, designations), not new events.
@@ -942,7 +946,7 @@ export class Sim {
               : this.speedOf(ship) < 5
                 ? "We're not drifting anywhere, Captain — nothing to mark yet."
                 : "Drift marker up, Captain.";
-          events.push({ kind: "notice", ship: ship.id, text });
+          events.push({ kind: "notice", ship: ship.id, text, silent: true });
         }
         return null;
       }
@@ -1565,7 +1569,7 @@ export class Sim {
         if (reason) {
           events.push({ kind: "reject", ship: ship.id, verb: action.verb, reason });
         } else if (action.acknowledgement) {
-          events.push({ kind: "ack", ship: ship.id, text: action.acknowledgement });
+          events.push({ kind: "ack", ship: ship.id, verb: action.verb, text: action.acknowledgement });
         }
       }
       if (order.repeat) {
@@ -2275,7 +2279,7 @@ export class Sim {
             events.push({ kind: "reject", ship: id, verb: cmd.verb, reason });
           } else if (cmd.acknowledgement) {
             // acknowledgements go out only for commands that actually executed
-            events.push({ kind: "ack", ship: id, text: cmd.acknowledgement });
+            events.push({ kind: "ack", ship: id, verb: cmd.verb, text: cmd.acknowledgement });
           }
         }
       }
