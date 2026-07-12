@@ -31,3 +31,4 @@ import "./comms.test.js";
 import "./teams.test.js";
 import "./stt.test.js";
 import "./speech.test.js";
+import "./announce.test.js";
