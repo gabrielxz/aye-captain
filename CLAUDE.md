@@ -119,7 +119,8 @@ Note: on this machine's rootless Docker, `-p` port publishing doesn't route
   contact rendering, starfield, tinted SVG sprites with min-px clamp),
   `ui.js` (lobby/transcript/HUD/banner; focus: map owns keys, Enter/backtick
   focuses the box, Esc returns), `voice.js` (push-to-talk: 0.8 s pre-roll
-  ring -> /stt, Web Speech fallback), `audio.js` (procedural SFX — PDC
+  ring -> /stt, Web Speech fallback; hold Space, or on coarse-pointer
+  devices the #ptt HOLD button in the cmd row — same start/stop path), `audio.js` (procedural SFX — PDC
   brrrt, crunch, klaxon, thrust, RWR — and the speech queue), `assets/*.svg`.
 
 ## Invariants (do not break)
