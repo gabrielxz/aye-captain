@@ -132,7 +132,8 @@ be going somewhere — not both.
   10 s per channel between sends, 140 characters.
 - **Propellant is delta-v**: a full tank is 100 s of hard burn — enough to
   reach flank speed and kill it once. It regenerates only inside the region
-  with throttle ≤ 20%. Dry tanks = you drift. Turning is free.
+  with throttle ≤ 20% (the HUD's PROP row shows ⟳ while harvesting, ✕ when
+  the gate is closed). Dry tanks = you drift. Turning is free.
 - **Terrain**: 30 asteroids plus a centerpiece moonlet (solid — collision
   warnings sound 20 s out, hitting one above ~50 m/s hurts, ~1.5 km/s is
   lethal) and 3 dust clouds (sensor shadows). Same field on rematch, or ask

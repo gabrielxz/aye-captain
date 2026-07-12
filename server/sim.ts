@@ -3674,7 +3674,15 @@ export class Sim {
     const lines: string[] = [];
     const zoneDist = dist(ship.x, ship.y, 0, 0);
     lines.push(
-      `Own ship (${ship.archetype.toUpperCase()}): heading ${fmtBearing(ship.facing)}, speed ${Math.round(this.speedOf(ship))} m/s, thrust ${Math.round(ship.thrust)}%${effectiveThrust(ship) < ship.thrust ? " (NO output — tanks dry)" : ""}, hull ${ship.hull}/${hullMaxOf(ship)}, propellant ${Math.round(ship.propellant)}/${C.PROPELLANT_MAX}.`
+      `Own ship (${ship.archetype.toUpperCase()}): heading ${fmtBearing(ship.facing)}, speed ${Math.round(this.speedOf(ship))} m/s, thrust ${Math.round(ship.thrust)}%${effectiveThrust(ship) < ship.thrust ? " (NO output — tanks dry)" : ""}, hull ${ship.hull}/${hullMaxOf(ship)}, propellant ${Math.round(ship.propellant)}/${C.PROPELLANT_MAX}${
+        ship.propellant < 50 && !ship.isDrone
+          ? ` (ramscoop ${
+              this.insideZone(ship) && ship.thrust <= C.REGEN_MAX_THRUST_PCT
+                ? "REGENERATING"
+                : `NOT regenerating — needs: inside the zone AND throttle setting <= ${C.REGEN_MAX_THRUST_PCT}%`
+            })`
+          : ""
+      }.`
     );
     lines.push(
       `Position: ${(zoneDist / 1000).toFixed(1)} km from zone center (${this.insideZone(ship) ? "inside" : "OUTSIDE"} the zone)${this.inDust(ship) ? " — INSIDE A DUST CLOUD: sensors blind both ways, no locks" : ""}. Own signature ${Math.round(this.signatureOf(ship))} (detection range others get on us scales with it).`
@@ -4129,6 +4137,9 @@ export class Sim {
         speed: Math.round(this.speedOf(ship)),
         hull: ship.hull,
         propellant: ship.propellant,
+        // playtest 2026-07-12: a dry captain couldn't tell WHY nothing was
+        // recharging (he was outside the zone) — surface the gate's state
+        regen: this.insideZone(ship) && ship.thrust <= C.REGEN_MAX_THRUST_PCT,
         missiles: missilesAboard(ship),
         tubes: ship.tubes.map((t) => ({
           state: t.loaded ? "ready" : t.reload > 0 ? "reloading" : "empty",

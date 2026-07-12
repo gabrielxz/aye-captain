@@ -374,9 +374,10 @@ function scheduleProxTick() {
   proxTimeout = setTimeout(scheduleProxTick, delay);
 }
 
-// Silence continuous layers (game over / disconnect).
+// Silence continuous layers (game over / death→spectator / disconnect).
 export function stopContinuous() {
   setWarning("none");
+  setCollisionKlaxon(false);
   proxDist = null;
   if (thrustNodes && ctx) thrustNodes.g.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.4);
   if (rumbleNodes && ctx) rumbleNodes.g.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.4);

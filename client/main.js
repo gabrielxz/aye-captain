@@ -62,6 +62,10 @@ function handleMessage(msg) {
       updateWatching([]); // fresh roster arrives right behind the start
       setSpectator(msg.role === "spectator" ? msg.callsign : null);
       if (msg.role === "spectator") {
+        // death→spectator arrives as a fresh start: kill the RWR pulse,
+        // klaxon, thrust hum — a ghost has no alarms (playtest 2026-07-12:
+        // the lock pulse clicked through all of spectator mode)
+        audio.stopContinuous();
         // referee framing: whole region, nothing to follow
         camera.follow = false;
         camera.x = 0;
@@ -175,7 +179,16 @@ let prevTiers = null; // cid -> tier from the previous snapshot
 let pingListen = null; // {until, rangeM, done} — set when OUR ping fires
 function soundFromSnapshot(snap) {
   const you = snap.you;
-  if (!you || state.gameOver) return;
+  if (!you || state.gameOver) {
+    // no ship, no alarms — without this, whatever channel was live at the
+    // moment of death latches forever (snapshot-diff stops running)
+    if (prevAudio) {
+      audio.stopContinuous();
+      prevAudio = null;
+      prevTiers = null;
+    }
+    return;
+  }
 
   // v4.7 §3b: sonar return. During the grant window after our own ping,
   // the nearest NEW or PROMOTED contact schedules a range-delayed blip.
@@ -321,7 +334,9 @@ function updateHUDFromSnapshot(snap) {
     { label: "THRUST", value: `${Math.round(you.thrust)}%${tanksDry && you.thrust > 0 ? " (DRY)" : ""}`, cls: tanksDry && you.thrust > 0 ? "alert" : "" },
     { label: "SPD", value: `${you.speed} m/s` },
     { label: "HDG", value: `${String(Math.round(you.facing) % 360).padStart(3, "0")}` },
-    { label: "PROP", value: prop, bar: true, cls: prop <= 10 ? "alert" : prop <= 25 ? "warn" : "" },
+    // ⟳ = ramscoop harvesting, ✕ = regen gated off (outside zone or
+    // throttle > 20%) — the at-a-glance answer to "why isn't fuel coming back"
+    { label: `PROP${prop >= 100 ? "" : you.regen ? " ⟳" : " ✕"}`, value: prop, bar: true, cls: prop <= 10 ? "alert" : prop <= 25 ? "warn" : "" },
     { label: "TUBES", value: tubes || "—" },
     { label: "MSL", value: `${you.missiles}` },
     { label: "DECOY", value: `${you.decoys}` },

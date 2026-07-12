@@ -122,4 +122,21 @@ const assert = (cond: boolean, msg: string) => {
   assert(ev.some(e => e.kind === "notice" && /'fuel guard' triggered/.test((e as any).text)), "propellant_percent standing order fires");
   assert(a.thrust === 10, "fuel guard action applied");
 }
+
+// 7. the snapshot surfaces the regen gate (playtest 2026-07-12: a dry
+// captain couldn't tell WHY nothing was recharging — likely outside the
+// zone; the HUD PROP row now shows ⟳/✕ off this flag)
+{
+  const sim = new Sim();
+  const a = sim.addShip("A", 0, 0, 0);
+  sim.addShip("B", 0, 40000, 180, true);
+  sim.tick();
+  assert((sim.snapshotFor("A") as any).you.regen === true, "regen flag true at zero throttle inside the zone");
+  sim.enqueue("A", [{ verb: "set_thrust", params: { percent: 60 } }]);
+  sim.tick();
+  assert((sim.snapshotFor("A") as any).you.regen === false, "regen flag false above the throttle ceiling");
+  a.thrust = 0;
+  a.x = C.REGION_RADIUS_M + 10000; // beyond the shroud: gate closed at any throttle
+  assert((sim.snapshotFor("A") as any).you.regen === false, "regen flag false outside the zone");
+}
 console.log("done");
