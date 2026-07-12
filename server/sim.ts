@@ -4123,7 +4123,7 @@ export class Sim {
           ? {
               kind: "notice",
               ship: player.id,
-              text: `There's a wreck here alright, Captain — ${w.items.length} pieces worth taking.`,
+              text: `There's a wreck here alright, Captain — ${w.items.length} piece${w.items.length === 1 ? "" : "s"} worth taking.`,
               speak: "There's a wreck here alright, Captain. Worth taking.",
             }
           : {
