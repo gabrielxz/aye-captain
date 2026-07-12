@@ -32,9 +32,19 @@ function submitUtterance(text, source = "typed") {
   historyIdx = history.length;
 }
 
+// v5.1 §5: display-only player name, remembered locally. Rides create/join.
+function playerName() {
+  const el = document.getElementById("player-name");
+  const v = el.value.trim();
+  localStorage.setItem("playerName", v);
+  return v || undefined;
+}
+
 export function initUI() {
+  const nameEl = document.getElementById("player-name");
+  nameEl.value = localStorage.getItem("playerName") ?? "";
   document.getElementById("btn-create").addEventListener("click", () => {
-    send({ type: "create" });
+    send({ type: "create", name: playerName() });
   });
   document.getElementById("btn-join").addEventListener("click", () => joinMatch(false));
   document.getElementById("btn-watch").addEventListener("click", () => joinMatch(true));
@@ -227,7 +237,7 @@ export function showRoomLobby(msg) {
     row.className = "seat";
     const name = document.createElement("span");
     if (p.id === msg.you) name.className = "you";
-    name.textContent = `SHIP ${p.id} · ${(p.archetype ?? "frigate").toUpperCase()}${p.creator ? " ★" : ""}${p.id === msg.you ? " (you)" : ""}`;
+    name.textContent = `SHIP ${p.id} · ${(p.archetype ?? "frigate").toUpperCase()}${p.name ? ` · ${p.name}` : ""}${p.creator ? " ★" : ""}${p.id === msg.you ? " (you)" : ""}`;
     const tag = document.createElement("span");
     if (msg.mode === "teams" && p.team) {
       tag.className = `team-${p.team}`;
@@ -278,7 +288,7 @@ function joinMatch(spectate) {
     showLobbyStatus("room code is 4 letters");
     return;
   }
-  send({ type: spectate ? "spectate" : "join", code });
+  send({ type: spectate ? "spectate" : "join", code, name: playerName() });
 }
 
 // ---------- spectator presence (v4.2) ----------
@@ -385,7 +395,32 @@ export function updateHUD(fields) {
 export function showBanner(title, detail) {
   document.getElementById("banner-title").textContent = title;
   document.getElementById("banner-detail").textContent = detail ?? "";
+  document.getElementById("banner-reveal").innerHTML = ""; // stale reveal never survives
   bannerEl.classList.add("active");
+}
+
+// v5.1 §5.4: the post-match reveal — in a fog-of-war game the reveal at
+// the end is the payoff. Kill ledger first, then the full roster mapping.
+export function showReveal(reveal) {
+  const el = document.getElementById("banner-reveal");
+  el.innerHTML = "";
+  if (!reveal) return;
+  const nameOf = (callsign) => {
+    const r = (reveal.roster ?? []).find((x) => x.callsign === callsign);
+    return r?.name ? `${callsign} (${r.name})` : callsign;
+  };
+  for (const k of reveal.kills ?? []) {
+    const row = document.createElement("div");
+    row.className = "kill";
+    row.textContent = `${k.killer ? nameOf(k.killer) : "misadventure"} → ${nameOf(k.victim)}`;
+    el.appendChild(row);
+  }
+  const named = (reveal.roster ?? []).filter((r) => r.name);
+  if (named.length > 0) {
+    const row = document.createElement("div");
+    row.textContent = named.map((r) => `${r.callsign} = ${r.name}`).join(" · ");
+    el.appendChild(row);
+  }
 }
 
 export function hideBanner() {

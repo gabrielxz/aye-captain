@@ -996,7 +996,9 @@ function drawAllies() {
     const [sx, sy] = worldToScreen(ent.x, ent.y);
     ctx.fillStyle = COLORS.ally;
     ctx.font = "10px monospace";
-    ctx.fillText(t.callsign ?? "", sx + 14, sy - 10);
+    // the name rides the transponder (v5.1 §5.1): teammates see who's flying
+    const allyName = snap.names?.[t.id];
+    ctx.fillText(`${t.callsign ?? ""}${allyName ? ` · ${allyName}` : ""}`, sx + 14, sy - 10);
   }
 }
 

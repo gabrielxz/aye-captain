@@ -9,7 +9,7 @@ import {
   TURN_RATE_DEG_PER_SEC,
   STT_MAX_AUDIO_BYTES,
 } from "./constants.js";
-import { Match } from "./match.js";
+import { Match, sanitizeName } from "./match.js";
 import { sttAvailable, transcribe, SttBusyError } from "./stt.js";
 import { getSpeech, pregenStockLines, ttsAvailable } from "./tts.js";
 
@@ -115,7 +115,7 @@ wss.on("connection", (ws: WebSocket) => {
       case "create": {
         if (matchByWs.has(ws)) return;
         const code = genRoomCode();
-        const match = Match.createRoom(code, ws);
+        const match = Match.createRoom(code, ws, sanitizeName(msg.name));
         rooms.set(code, match);
         matchByWs.set(ws, match);
         break;
@@ -128,7 +128,7 @@ wss.on("connection", (ws: WebSocket) => {
           ws.send(JSON.stringify({ type: "error", message: `no room '${code}'` }));
           return;
         }
-        const err = match.joinOrReconnect(ws);
+        const err = match.joinOrReconnect(ws, sanitizeName(msg.name));
         if (err) {
           ws.send(JSON.stringify({ type: "error", message: err }));
           return;

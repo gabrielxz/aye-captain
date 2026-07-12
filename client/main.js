@@ -1,6 +1,6 @@
 // ws handling + client state store
 import { startRenderLoop, bigBoomAt, showVector, setOverlay, resetOverlays, kickShake, camera } from "./render.js";
-import { initUI, addTranscript, updateHUD, showLobbyStatus, enterGame, showBanner, hideBanner, updateWatching, setSpectator, showRoomLobby, hideRoomLobby } from "./ui.js";
+import { initUI, addTranscript, updateHUD, showLobbyStatus, enterGame, showBanner, showReveal, hideBanner, updateWatching, setSpectator, showRoomLobby, hideRoomLobby } from "./ui.js";
 import * as audio from "./audio.js";
 
 export const state = {
@@ -129,6 +129,7 @@ function handleMessage(msg) {
       if (state.role === "spectator") {
         audio.sfxBoom(true, false);
         showBanner(winnerLabel, (msg.forfeit ? "win by forfeit — " : "") + timeLine + standings);
+        showReveal(msg.reveal);
         addTranscript("sys", `${isTeamWin ? `team ${winnerName}` : winnerName} wins — match over`);
         break;
       }
@@ -144,6 +145,7 @@ function handleMessage(msg) {
         msg.youWin ? "VICTORY" : "SHIP LOST",
         (msg.forfeit ? "win by forfeit — " : "") + timeLine + standings
       );
+      showReveal(msg.reveal); // §5.4: who everyone actually was
       addTranscript("sys", msg.youWin ? "Enemy ship destroyed. Well fought, Captain." : "Hull breach — we're done. Abandon ship.", !msg.youWin);
       break;
     }
@@ -298,7 +300,8 @@ function updateHUDFromSnapshot(snap) {
     // referee panel: just the two hulls (everything else is on the map)
     updateHUD(
       (snap.ships ?? []).map((s) => ({
-        label: `${(s.callsign ?? s.id).toUpperCase()} HULL`,
+        // spectators are omniscient — names ride along (v5.1 §5.1)
+        label: `${(s.callsign ?? s.id).toUpperCase()}${snap.names?.[s.id] ? ` (${snap.names[s.id]})` : ""} HULL`,
         value: `${s.hull}/${s.hullMax}${s.drone ? " (drone)" : ""}`,
         cls: s.hull <= s.hullMax * 0.35 ? "alert" : s.hull <= s.hullMax * 0.65 ? "warn" : "",
       }))

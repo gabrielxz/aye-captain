@@ -332,6 +332,11 @@ export const SPECTATOR_CALLSIGNS = [
 ];
 export const SPECTATOR_NAMES_SHOWN_MAX = 3; // player HUD lists names up to this, then collapses to a count
 
+// v5.1 §5: player names — display-only strings. They ride the transponder
+// (teammates + spectators + the post-match reveal), NEVER the LLM prompt
+// (injection surface), NEVER the TTS (unbounded synth vocabulary).
+export const PLAYER_NAME_MAX_CHARS = 16;
+
 // LLM
 export const LLM_MODEL = "claude-haiku-4-5-20251001";
 export const LLM_TIMEOUT_MS = 5000;
