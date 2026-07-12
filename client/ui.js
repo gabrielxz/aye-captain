@@ -1,7 +1,17 @@
 // command box, transcript pane, HUD panels, lobby
 import { send, state } from "./main.js";
 import { createVoice } from "./voice.js";
-import { initAudio, setVolume, getVolume, sfxClick, duck } from "./audio.js";
+import { buildShipSelect } from "./ship-select.js";
+import {
+  initAudio,
+  setMixVolume,
+  getMixVolume,
+  setVerbosity,
+  getVerbosity,
+  sfxClick,
+  duck,
+  bargeIn,
+} from "./audio.js";
 
 const lobbyEl = document.getElementById("lobby");
 const gameEl = document.getElementById("game");
@@ -23,18 +33,71 @@ function submitUtterance(text, source = "typed") {
   historyIdx = history.length;
 }
 
+// v5.1 §5: display-only player name, remembered locally. Rides create/join.
+function playerName() {
+  const el = document.getElementById("player-name");
+  const v = el.value.trim();
+  localStorage.setItem("playerName", v);
+  return v || undefined;
+}
+
 export function initUI() {
+  const nameEl = document.getElementById("player-name");
+  nameEl.value = localStorage.getItem("playerName") ?? "";
+  nameEl.addEventListener("input", () => localStorage.setItem("playerName", nameEl.value.trim()));
   document.getElementById("btn-create").addEventListener("click", () => {
-    send({ type: "create" });
+    send({ type: "create", name: playerName() });
   });
   document.getElementById("btn-join").addEventListener("click", () => joinMatch(false));
   document.getElementById("btn-watch").addEventListener("click", () => joinMatch(true));
   document.getElementById("join-code").addEventListener("keydown", (e) => {
     if (e.key === "Enter") joinMatch(false);
   });
+  // v5.1 §7.1: PRACTICE opens the select screen — your hull and the
+  // drone's — instead of launching blind
+  const practicePick = {
+    ship: localStorage.getItem("practiceArch") ?? "frigate",
+    drone: localStorage.getItem("practiceDrone") ?? "frigate", // the generalist
+  };
+  const practicePanel = document.getElementById("practice-panel");
+  const buildPracticeCards = () => {
+    buildShipSelect(document.getElementById("practice-arch-row"), {
+      archetypes: state.config?.archetypes,
+      selected: practicePick.ship,
+      onPick: (arch) => {
+        practicePick.ship = arch;
+        localStorage.setItem("practiceArch", arch);
+        buildPracticeCards();
+      },
+    });
+    buildShipSelect(document.getElementById("practice-drone-row"), {
+      archetypes: state.config?.archetypes,
+      selected: practicePick.drone,
+      onPick: (arch) => {
+        practicePick.drone = arch;
+        localStorage.setItem("practiceDrone", arch);
+        buildPracticeCards();
+      },
+    });
+  };
   document.getElementById("btn-practice").addEventListener("click", () => {
-    send({ type: "practice" });
+    buildPracticeCards();
+    practicePanel.style.display = "flex";
   });
+  document.getElementById("btn-practice-back").addEventListener("click", () => {
+    practicePanel.style.display = "none";
+  });
+  document.getElementById("btn-practice-start").addEventListener("click", () => {
+    practicePanel.style.display = "none";
+    send({ type: "practice", archetype: practicePick.ship, droneArchetype: practicePick.drone });
+  });
+
+  // v5.1 §7.2: a way OUT that isn't closing the tab. Reloading drops the
+  // socket; the server's close handler detaches us and tears down empty
+  // rooms — the one already-tested leave path.
+  const toMainMenu = () => location.reload();
+  document.getElementById("btn-mainmenu").addEventListener("click", toMainMenu);
+  document.getElementById("btn-menu").addEventListener("click", toMainMenu);
   document.getElementById("btn-howto").addEventListener("click", () => {
     location.href = "/how-to-play";
   });
@@ -51,9 +114,8 @@ export function initUI() {
   document.getElementById("btn-team-red").addEventListener("click", () => send({ type: "team", team: "red" }));
   document.getElementById("btn-team-blue").addEventListener("click", () => send({ type: "team", team: "blue" }));
   document.getElementById("btn-launch").addEventListener("click", () => send({ type: "launch" }));
-  for (const btn of document.querySelectorAll("#arch-row button")) {
-    btn.addEventListener("click", () => send({ type: "archetype", archetype: btn.dataset.arch }));
-  }
+  // v5.1 §6: archetype cards render on demand in showRoomLobby (they need
+  // the hello config's stat blocks, which may not have arrived yet here)
 
   cmdEl.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
@@ -101,9 +163,34 @@ export function initUI() {
   // Web Audio needs a user gesture before it may play; arm on the first one.
   document.addEventListener("pointerdown", initAudio);
   document.addEventListener("keydown", initAudio);
-  const vol = document.getElementById("vol");
-  vol.value = String(getVolume());
-  vol.addEventListener("input", () => setVolume(Number(vol.value)));
+  // v5.1 §4.2: SFX and VOICE ride separate sliders
+  for (const [id, kind] of [["vol-sfx", "sfx"], ["vol-voice", "voice"]]) {
+    const el = document.getElementById(id);
+    el.value = String(getMixVolume(kind));
+    el.addEventListener("input", () => setMixVolume(kind, Number(el.value)));
+  }
+  // v5.1 §4.3: XO verbosity — one shared state, a cycle button in the
+  // lobby AND the in-match topbar (changeable mid-match by design: six
+  // people at one table need to be able to shut their XOs up live)
+  const VERBOSITY_CYCLE = ["full", "terse", "silent"];
+  const verbosityButtons = [
+    { el: document.getElementById("verbosity"), prefix: "XO: " },
+    { el: document.getElementById("verbosity-lobby"), prefix: "" },
+  ];
+  const paintVerbosity = () => {
+    for (const { el, prefix } of verbosityButtons) {
+      if (el) el.textContent = `${prefix}${getVerbosity().toUpperCase()}`;
+    }
+  };
+  for (const { el } of verbosityButtons) {
+    el?.addEventListener("click", () => {
+      const next =
+        VERBOSITY_CYCLE[(VERBOSITY_CYCLE.indexOf(getVerbosity()) + 1) % VERBOSITY_CYCLE.length];
+      setVerbosity(next);
+      paintVerbosity();
+    });
+  }
+  paintVerbosity();
 }
 
 // Push-to-talk: hold Space while the command box is empty. With text in the
@@ -120,6 +207,9 @@ function initVoice() {
       micEl.classList.toggle("transcribing", mode === "transcribing");
       micEl.textContent = mode === "transcribing" ? "···" : "● REC";
       duck(mode === "listening"); // quiet the ship while the captain talks
+      // v5.1 §1.4: he doesn't just get quieter — he stops. The playing
+      // non-critical line is dropped and chatter flushed; CRITICAL finishes.
+      if (mode === "listening") bargeIn();
       if (mode === "idle") cmdEl.value = "";
     },
     onFinal: (text) => {
@@ -190,7 +280,7 @@ export function showRoomLobby(msg) {
     row.className = "seat";
     const name = document.createElement("span");
     if (p.id === msg.you) name.className = "you";
-    name.textContent = `SHIP ${p.id} · ${(p.archetype ?? "frigate").toUpperCase()}${p.creator ? " ★" : ""}${p.id === msg.you ? " (you)" : ""}`;
+    name.textContent = `SHIP ${p.id} · ${(p.archetype ?? "frigate").toUpperCase()}${p.name ? ` · ${p.name}` : ""}${p.creator ? " ★" : ""}${p.id === msg.you ? " (you)" : ""}`;
     const tag = document.createElement("span");
     if (msg.mode === "teams" && p.team) {
       tag.className = `team-${p.team}`;
@@ -215,9 +305,13 @@ export function showRoomLobby(msg) {
   document.getElementById("btn-team-blue").classList.toggle("active", me?.team === "blue");
 
   const mine = (msg.players ?? []).find((p) => p.id === msg.you);
-  for (const btn of document.querySelectorAll("#arch-row button")) {
-    btn.classList.toggle("active", mine?.archetype === btn.dataset.arch);
-  }
+  // §6: full stat-card select. Rebuilt per lobby broadcast — cheap, and it
+  // keeps the active ring in sync with the server's view of our pick.
+  buildShipSelect(document.getElementById("arch-row"), {
+    archetypes: state.config?.archetypes,
+    selected: mine?.archetype ?? "frigate",
+    onPick: (archetype) => send({ type: "archetype", archetype }),
+  });
 
   const launch = document.getElementById("btn-launch");
   launch.style.display = msg.creator ? "block" : "none";
@@ -241,7 +335,7 @@ function joinMatch(spectate) {
     showLobbyStatus("room code is 4 letters");
     return;
   }
-  send({ type: spectate ? "spectate" : "join", code });
+  send({ type: spectate ? "spectate" : "join", code, name: playerName() });
 }
 
 // ---------- spectator presence (v4.2) ----------
@@ -348,9 +442,46 @@ export function updateHUD(fields) {
 export function showBanner(title, detail) {
   document.getElementById("banner-title").textContent = title;
   document.getElementById("banner-detail").textContent = detail ?? "";
+  document.getElementById("banner-reveal").innerHTML = ""; // stale reveal never survives
   bannerEl.classList.add("active");
+}
+
+// v5.1 §5.4: the post-match reveal — in a fog-of-war game the reveal at
+// the end is the payoff. Kill ledger first, then the full roster mapping.
+export function showReveal(reveal) {
+  const el = document.getElementById("banner-reveal");
+  el.innerHTML = "";
+  if (!reveal) return;
+  const nameOf = (callsign) => {
+    const r = (reveal.roster ?? []).find((x) => x.callsign === callsign);
+    return r?.name ? `${callsign} (${r.name})` : callsign;
+  };
+  for (const k of reveal.kills ?? []) {
+    const row = document.createElement("div");
+    row.className = "kill";
+    row.textContent = `${k.killer ? nameOf(k.killer) : "misadventure"} → ${nameOf(k.victim)}`;
+    el.appendChild(row);
+  }
+  const named = (reveal.roster ?? []).filter((r) => r.name);
+  if (named.length > 0) {
+    const row = document.createElement("div");
+    row.textContent = named.map((r) => `${r.callsign} = ${r.name}`).join(" · ");
+    el.appendChild(row);
+  }
 }
 
 export function hideBanner() {
   bannerEl.classList.remove("active");
+}
+
+// v5.1 §7.3: the rematch ready-up tally ("REMATCH 3/6 — waiting")
+export function showRematchTally(ready, total) {
+  document.getElementById("rematch-status").textContent =
+    ready > 0 ? `REMATCH ${ready}/${total} — waiting for the room` : "";
+}
+
+// v5.1 §7.2: the in-match MENU control (practice + spectators — captains
+// mid-match leave by dying or winning, not by button)
+export function setMenuVisible(on) {
+  document.getElementById("btn-menu").style.display = on ? "" : "none";
 }

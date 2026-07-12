@@ -1,12 +1,33 @@
 // Procedural SFX (Web Audio, no assets) + ship-AI speech queue.
-// Everything routes through one master gain: the VOL slider.
+// Mix (v5.1 §4): SFX and VOICE buses ride separate sliders; the four
+// continuous beds share a group bus with a summed ceiling that ducks
+// under speech; master carries only the push-to-talk duck.
+import { createSpeechScheduler } from "./speech-scheduler.js";
 
 let ctx = null;
 let master = null;
 let sfxBus = null;
 let speechBus = null;
+let bedBus = null; // v5.1 §4.1: every continuous bed routes through here
 
-let volume = Number(localStorage.getItem("vol") ?? 0.7);
+// v5.1 §4.2: SFX and VOICE ride separate sliders (the buses always
+// existed; they were just slaved to one knob). Legacy "vol" seeds both.
+const legacyVol = Number(localStorage.getItem("vol") ?? 0.7);
+const mixVol = {
+  sfx: Number(localStorage.getItem("vol_sfx") ?? legacyVol),
+  voice: Number(localStorage.getItem("vol_voice") ?? legacyVol),
+};
+
+// v5.1 §4.3: XO verbosity — FULL (everything), TERSE (critical + news),
+// SILENT (critical only). Filters speech only; the transcript always logs.
+let verbosity = localStorage.getItem("xo_verbosity") ?? "full";
+export function setVerbosity(v) {
+  verbosity = v;
+  localStorage.setItem("xo_verbosity", v);
+}
+export function getVerbosity() {
+  return verbosity;
+}
 
 // AudioContext needs a user gesture; call from any click/keydown.
 export function initAudio() {
@@ -18,15 +39,46 @@ export function initAudio() {
   if (!AC) return;
   ctx = new AC();
   master = ctx.createGain();
-  master.gain.value = volume;
+  master.gain.value = 1;
   master.connect(ctx.destination);
   sfxBus = ctx.createGain();
-  sfxBus.gain.value = 0.9;
+  sfxBus.gain.value = 0.9 * mixVol.sfx;
   sfxBus.connect(master);
   speechBus = ctx.createGain();
-  speechBus.gain.value = 1.0;
+  speechBus.gain.value = mixVol.voice;
   speechBus.connect(master);
+  bedBus = ctx.createGain();
+  bedBus.gain.value = 1;
+  bedBus.connect(sfxBus);
   startHum();
+}
+
+// ---------- the bed group (v5.1 §4.1) ----------
+// Four continuous beds run at once — thrust rumble, hearing rumble, hull
+// hum, dust hiss — and each was justified alone; nobody summed them. The
+// group gain scales ALL of them down proportionally whenever their summed
+// targets exceed the ceiling, and ducks under XO speech so he never
+// competes with room tone.
+const BED_GAIN_CEILING = 0.22;
+const bedTargets = { hum: 0, thrust: 0, rumble: 0, dust: 0 };
+let speechPlaying = false;
+
+function updateBeds() {
+  if (!bedBus) return;
+  const sum = bedTargets.hum + bedTargets.thrust + bedTargets.rumble + bedTargets.dust;
+  const ceiling = sum > BED_GAIN_CEILING ? BED_GAIN_CEILING / sum : 1;
+  const target = ceiling * (speechPlaying ? 0.35 : 1);
+  bedBus.gain.linearRampToValueAtTime(target, ctx.currentTime + 0.25);
+}
+
+function setBedTarget(name, gain) {
+  bedTargets[name] = gain;
+  updateBeds();
+}
+
+function speechBedDuck(on) {
+  speechPlaying = on;
+  updateBeds();
 }
 
 // v4.7 §4.6: hull hum — one filtered noise loop at very low gain, always on
@@ -42,15 +94,22 @@ function startHum() {
   f.frequency.value = 64;
   const g = ctx.createGain();
   g.gain.value = 0.028;
-  src.connect(f).connect(g).connect(sfxBus);
+  src.connect(f).connect(g).connect(bedBus);
   src.start();
+  setBedTarget("hum", 0.028);
 }
 
 let ducked = false;
-export function setVolume(v) {
-  volume = v;
-  localStorage.setItem("vol", String(v));
-  if (master && !ducked) master.gain.value = v;
+export function setMixVolume(kind, v) {
+  mixVol[kind] = v;
+  localStorage.setItem(kind === "sfx" ? "vol_sfx" : "vol_voice", String(v));
+  if (!ctx) return;
+  if (kind === "sfx") sfxBus.gain.value = 0.9 * v;
+  else speechBus.gain.value = v;
+}
+
+export function getMixVolume(kind) {
+  return mixVol[kind];
 }
 
 // Duck game audio while the captain is talking (push-to-talk held): they
@@ -58,11 +117,7 @@ export function setVolume(v) {
 export function duck(on) {
   ducked = on;
   if (!ctx) return;
-  master.gain.linearRampToValueAtTime(on ? volume * 0.15 : volume, ctx.currentTime + 0.15);
-}
-
-export function getVolume() {
-  return volume;
+  master.gain.linearRampToValueAtTime(on ? 0.15 : 1, ctx.currentTime + 0.15);
 }
 
 // ---------- tiny synth helpers ----------
@@ -147,23 +202,31 @@ export function sfxCrunch() {
   osc("square", 45, t + 0.08, 0.25, 0.3, 25);
 }
 
-// Collision-warning klaxon: two-tone whoop, repeated by the caller's state.
+// Collision-warning klaxon — v5.1 §2.3: the whoop rate is tied to the
+// countdown, accelerating into impact (it BECOMES the prox tick, which is
+// the correct answer). Pass seconds-to-impact, or null/false to stop.
+let klaxonSecs = null;
 let klaxonTimer = null;
-export function setCollisionKlaxon(on) {
-  if (!!klaxonTimer === !!on) return;
-  if (!on) {
-    clearInterval(klaxonTimer);
+export function setCollisionKlaxon(secs) {
+  const off = secs === null || secs === undefined || secs === false;
+  const wasOn = klaxonSecs !== null;
+  klaxonSecs = off ? null : Number(secs);
+  if (off) {
+    clearTimeout(klaxonTimer);
     klaxonTimer = null;
     return;
   }
-  if (!ctx) return;
-  const whoop = () => {
-    const t = ctx.currentTime;
-    osc("sawtooth", 400, t, 0.28, 0.2, 800);
-    osc("sawtooth", 400, t + 0.34, 0.28, 0.2, 800);
-  };
-  whoop();
-  klaxonTimer = setInterval(whoop, 1400);
+  if (!wasOn && ctx) whoopChain();
+}
+
+function whoopChain() {
+  if (klaxonSecs === null || !ctx) return;
+  const t = ctx.currentTime;
+  osc("sawtooth", 400, t, 0.28, 0.2, 800);
+  osc("sawtooth", 400, t + 0.34, 0.28, 0.2, 800);
+  // 10 s out: leisurely 1.4 s spacing; on top of the rock: 300 ms
+  const iv = Math.max(300, Math.min(1400, klaxonSecs * 130));
+  klaxonTimer = setTimeout(whoopChain, iv);
 }
 
 export function sfxLaunch(own) {
@@ -270,7 +333,7 @@ export function setThrust(pct) {
     f.frequency.value = 120;
     const g = ctx.createGain();
     g.gain.value = 0;
-    src.connect(f).connect(g).connect(sfxBus);
+    src.connect(f).connect(g).connect(bedBus);
     src.start();
     thrustNodes = { f, g };
   }
@@ -278,6 +341,7 @@ export function setThrust(pct) {
   const t = ctx.currentTime;
   thrustNodes.g.gain.linearRampToValueAtTime(lvl * 0.16, t + 0.3);
   thrustNodes.f.frequency.linearRampToValueAtTime(90 + lvl * 220, t + 0.3);
+  setBedTarget("thrust", lvl * 0.16);
 }
 
 // v4.5 hearing: a distant drive rumble — deeper and softer than own
@@ -294,12 +358,13 @@ export function setRumble(level) {
     f.frequency.value = 46; // sub-rumble: felt more than heard
     const g = ctx.createGain();
     g.gain.value = 0;
-    src.connect(f).connect(g).connect(sfxBus);
+    src.connect(f).connect(g).connect(bedBus);
     src.start();
     rumbleNodes = { f, g };
   }
   const lvl = Math.max(0, Math.min(1, level));
   rumbleNodes.g.gain.linearRampToValueAtTime(lvl * 0.11, ctx.currentTime + 0.6);
+  setBedTarget("rumble", lvl * 0.11);
 }
 
 // v4.7 §4.3: dust immersion — a soft filtered-noise wash while inside a
@@ -317,27 +382,76 @@ export function setDustHiss(on) {
     f.Q.value = 0.5;
     const g = ctx.createGain();
     g.gain.value = 0;
-    src.connect(f).connect(g).connect(sfxBus);
+    src.connect(f).connect(g).connect(bedBus);
     src.start();
     dustNodes = { g };
   }
   dustNodes.g.gain.linearRampToValueAtTime(on ? 0.045 : 0, ctx.currentTime + 0.8);
+  setBedTarget("dust", on ? 0.045 : 0);
 }
 
-// Lock warning (RWR): "acquiring" = rising two-tone; "locked" = continuous
-// urgent pulse. The single most important sound in the game.
+// Lock warning (RWR) — v5.1 §2, the alarm law: information lives in the
+// ONSET and the CHANGE, never in persistence. "locked" fires the full
+// blare for LOCK_ONSET_MS (the oh-shit moment — deliberately awful), then
+// decays to a soft heartbeat whose only job is "still true" — one thump
+// PER LOCKER (§2.2: a triple-thump means run). Any change (reacquire, new
+// attacker, launch while locked) snaps back to full onset.
+const LOCK_ONSET_MS = 4000;
+const LOCK_HEARTBEAT_MS = 2500;
+const ACQUIRING_MAX_BEEPS = 8; // inherently short-lived (locks take ~5 s) — just capped
+
 let warnState = "none";
-let warnTimer = null;
-export function setWarning(state) {
-  if (state === warnState) return;
-  warnState = state;
-  if (warnTimer) {
+let warnLockers = 0;
+let warnTimer = null; // repeating pulse of the current phase
+let warnPhaseTimer = null; // onset -> sustain hand-off
+
+function clearWarnTimers() {
+  clearInterval(warnTimer);
+  warnTimer = null;
+  clearTimeout(warnPhaseTimer);
+  warnPhaseTimer = null;
+}
+
+function lockOnset() {
+  clearWarnTimers();
+  const blare = () => {
+    const t = ctx.currentTime;
+    osc("square", 950, t, 0.085, 0.22);
+    osc("square", 950, t + 0.13, 0.085, 0.22);
+  };
+  blare();
+  warnTimer = setInterval(blare, 300);
+  warnPhaseTimer = setTimeout(() => {
     clearInterval(warnTimer);
-    warnTimer = null;
-  }
+    // sustain: sine, ~500 Hz, a quarter the level — never the onset's
+    // timbre. One thump per locker, capped at 4 (past that, just run).
+    const beat = () => {
+      const t = ctx.currentTime;
+      for (let i = 0; i < Math.min(Math.max(1, warnLockers), 4); i++) {
+        osc("sine", 500, t + i * 0.17, 0.09, 0.055);
+      }
+    };
+    beat();
+    warnTimer = setInterval(beat, LOCK_HEARTBEAT_MS);
+  }, LOCK_ONSET_MS);
+}
+
+export function setWarning(state, lockers = state === "locked" ? 1 : 0) {
+  const changed = state !== warnState;
+  const newAttacker = state === "locked" && !changed && lockers > warnLockers;
+  warnLockers = lockers;
+  if (!changed && !newAttacker) return;
+  warnState = state;
+  clearWarnTimers();
   if (!ctx || state === "none") return;
   if (state === "acquiring") {
+    let beeps = 0;
     const beep = () => {
+      if (++beeps > ACQUIRING_MAX_BEEPS) {
+        clearInterval(warnTimer);
+        warnTimer = null;
+        return;
+      }
       const t = ctx.currentTime;
       osc("square", 620, t, 0.11, 0.16);
       osc("square", 840, t + 0.25, 0.11, 0.16);
@@ -345,14 +459,13 @@ export function setWarning(state) {
     beep();
     warnTimer = setInterval(beep, 1100);
   } else if (state === "locked") {
-    const blare = () => {
-      const t = ctx.currentTime;
-      osc("square", 950, t, 0.085, 0.22);
-      osc("square", 950, t + 0.13, 0.085, 0.22);
-    };
-    blare();
-    warnTimer = setInterval(blare, 300);
+    lockOnset(); // full onset on ANY change — including a new attacker
   }
+}
+
+// §2.1: a detected launch while we're locked snaps the alarm back to onset
+export function reassertWarning() {
+  if (ctx && warnState === "locked") lockOnset();
 }
 
 // Missile-proximity ticking: accelerates as the nearest visible inbound
@@ -374,9 +487,10 @@ function scheduleProxTick() {
   proxTimeout = setTimeout(scheduleProxTick, delay);
 }
 
-// Silence continuous layers (game over / disconnect).
+// Silence continuous layers (game over / death→spectator / disconnect).
 export function stopContinuous() {
   setWarning("none");
+  setCollisionKlaxon(false);
   proxDist = null;
   if (thrustNodes && ctx) thrustNodes.g.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.4);
   if (rumbleNodes && ctx) rumbleNodes.g.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.4);
@@ -384,11 +498,10 @@ export function stopContinuous() {
 }
 
 // ---------- ship-AI speech queue ----------
-// One line at a time, never overlapping. Warnings (alert) jump the queue;
-// stale non-alert acknowledgements are dropped rather than played late.
+// One line at a time, never overlapping. Scheduling policy (tiers, the
+// inter-line gap, TTLs, barge-in) lives in speech-scheduler.js — this side
+// is only the WebAudio driver: fetch/decode/play, fade-stop, re-poll timers.
 
-const speechQueue = [];
-let speaking = false;
 const decoded = new Map(); // speech id -> AudioBuffer promise
 
 function fetchSpeech(id) {
@@ -404,63 +517,69 @@ function fetchSpeech(id) {
   return decoded.get(id);
 }
 
-// Battle-tempo throttle: the ear is a scarcer resource than the transcript.
-// - warnings (alert) always speak: they jump ahead of chatter, identical
-//   lines already waiting are deduped, and only the 2 freshest warnings
-//   stay queued (older ones are superseded news)
-// - everything else speaks ONLY when the voice channel is idle — during a
-//   furball the chatter goes text-only instead of piling up
-export function enqueueSpeech(id, alert = false, queued = false) {
-  if (!ctx) return;
-  // three tiers (v5 §7): alerts preempt; `queued` lines (incoming
-  // transmissions) WAIT their turn instead of being dropped; ordinary
-  // acks are dropped when the ship is already talking
-  if (!alert && !queued && (speaking || speechQueue.length > 0)) return;
-  const entry = { id, alert, at: performance.now(), buf: fetchSpeech(id) };
-  if (queued && !alert) {
-    speechQueue.push(entry);
-    void playNext();
-    return;
-  }
-  if (alert) {
-    if (speechQueue.some((e) => e.alert && e.id === id)) return; // dedupe
-    const firstNonAlert = speechQueue.findIndex((e) => !e.alert);
-    if (firstNonAlert === -1) speechQueue.push(entry);
-    else speechQueue.splice(firstNonAlert, 0, entry);
-    // keep only the freshest 2 warnings
-    let alerts = speechQueue.filter((e) => e.alert);
-    while (alerts.length > 2) {
-      speechQueue.splice(speechQueue.indexOf(alerts[0]), 1);
-      alerts = speechQueue.filter((e) => e.alert);
+let lineSrc = null; // currently-playing {src, gain, gen}
+let lineGen = 0; // invalidates onended/decode callbacks after a stop()
+let pollTimer = null;
+
+const sched = createSpeechScheduler({
+  now: () => performance.now(),
+  later: (ms) => {
+    clearTimeout(pollTimer);
+    pollTimer = setTimeout(() => sched.poll(), ms);
+  },
+  start: (id) => {
+    const gen = ++lineGen;
+    void (async () => {
+      const buf = await fetchSpeech(id);
+      if (gen !== lineGen) return; // stopped while decoding
+      if (!buf) {
+        sched.onEnded(); // missing line: over instantly
+        return;
+      }
+      const src = ctx.createBufferSource();
+      const gain = ctx.createGain();
+      src.buffer = buf;
+      src.connect(gain);
+      gain.connect(speechBus);
+      src.onended = () => {
+        if (gen !== lineGen) return; // preempted — the scheduler already moved on
+        lineSrc = null;
+        speechBedDuck(false);
+        sched.onEnded();
+      };
+      lineSrc = { src, gain, gen };
+      speechBedDuck(true); // §4.1: room tone drops while the XO talks
+      src.start();
+    })();
+  },
+  stop: (fadeMs) => {
+    lineGen++; // orphan in-flight decode + onended
+    speechBedDuck(false);
+    if (lineSrc && ctx) {
+      const { src, gain } = lineSrc;
+      lineSrc = null;
+      gain.gain.setValueAtTime(gain.gain.value, ctx.currentTime);
+      gain.gain.linearRampToValueAtTime(0, ctx.currentTime + fadeMs / 1000);
+      try {
+        src.stop(ctx.currentTime + fadeMs / 1000);
+      } catch {
+        /* already stopped */
+      }
     }
-  } else {
-    speechQueue.push(entry);
-  }
-  void playNext();
+  },
+});
+
+export function enqueueSpeech(id, priority = "news") {
+  if (!ctx) return;
+  // §4.3 verbosity: TERSE drops chatter, SILENT drops all but critical.
+  // Speech only — the transcript logged the line either way.
+  if (verbosity === "terse" && priority === "chatter") return;
+  if (verbosity === "silent" && priority !== "critical") return;
+  sched.enqueue(id, priority);
 }
 
-async function playNext() {
-  if (speaking || speechQueue.length === 0) return;
-  speaking = true;
-  const entry = speechQueue.shift();
-  // anything that sat queued too long is stale news — skip it
-  if (performance.now() - entry.at > (entry.alert ? 6000 : 8000)) {
-    speaking = false;
-    void playNext();
-    return;
-  }
-  const buf = await entry.buf;
-  if (!buf) {
-    speaking = false;
-    void playNext();
-    return;
-  }
-  const src = ctx.createBufferSource();
-  src.buffer = buf;
-  src.connect(speechBus);
-  src.onended = () => {
-    speaking = false;
-    void playNext();
-  };
-  src.start();
+// PTT down: the captain spoke — drop the playing non-critical line, flush
+// chatter. CRITICAL finishes, ducked. See speech-scheduler.js §1.4.
+export function bargeIn() {
+  sched.bargeIn();
 }

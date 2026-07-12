@@ -1,5 +1,24 @@
 # TODO — next steps
 
+## v5.1 "Discipline" (HANDOFF-v5.1.md) — BUILT 2026-07-12
+
+All build-order steps: §1 speech discipline (3.5 s gap, three tiers,
+HUD-visible acks silent, barge-in), §2 alarm law (lock onset→per-locker
+heartbeat, accelerating klaxon), §3 FFA scaling (global rumble budget +
+aggregation, contact relevance gate), §4 mix (bed ceiling, SFX/VOX
+sliders, XO verbosity), §5 names (never in prompts — invariant 18;
+post-match reveal), §6 ship-select stat cards, §7 practice ship+drone
+select + MAIN MENU + rematch ready-up. Zero sim/balance changes. Also
+fixed en route (v5 bugs): practice rematch spawned no drone; N-player
+rematch was first-click-relaunches-everyone and one leaver bricked it.
+
+- [ ] **Playtest §1 and §3 SEPARATELY, by ear** (the handoff's own
+  instruction): does the gap feel right at 3500 ms (expect to land
+  3000-6000)? Does the FFA board go quiet without going dead? Then the
+  lock heartbeat (§2): does the per-locker thump count land?
+- [ ] Spectator audio at gameover + the reveal screen: worth one look in
+  a real room.
+
 ## v5.0.1 — multiplayer voice-pipeline fixes (playtest 2026-07-12)
 
 Two 8-captain rounds (rooms ADBW, RERU): voice near-unusable for some

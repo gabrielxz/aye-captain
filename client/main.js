@@ -1,6 +1,6 @@
 // ws handling + client state store
 import { startRenderLoop, bigBoomAt, showVector, setOverlay, resetOverlays, kickShake, camera } from "./render.js";
-import { initUI, addTranscript, updateHUD, showLobbyStatus, enterGame, showBanner, hideBanner, updateWatching, setSpectator, showRoomLobby, hideRoomLobby } from "./ui.js";
+import { initUI, addTranscript, updateHUD, showLobbyStatus, enterGame, showBanner, showReveal, hideBanner, showRematchTally, setMenuVisible, updateWatching, setSpectator, showRoomLobby, hideRoomLobby } from "./ui.js";
 import * as audio from "./audio.js";
 
 export const state = {
@@ -61,7 +61,14 @@ function handleMessage(msg) {
       pingListen = null;
       updateWatching([]); // fresh roster arrives right behind the start
       setSpectator(msg.role === "spectator" ? msg.callsign : null);
+      showRematchTally(0, 0); // a fresh start clears any ready-up tally
+      // §7.2: practice and spectating get a live MENU control
+      setMenuVisible(!!msg.practice || msg.role === "spectator");
       if (msg.role === "spectator") {
+        // death→spectator arrives as a fresh start: kill the RWR pulse,
+        // klaxon, thrust hum — a ghost has no alarms (playtest 2026-07-12:
+        // the lock pulse clicked through all of spectator mode)
+        audio.stopContinuous();
         // referee framing: whole region, nothing to follow
         camera.follow = false;
         camera.x = 0;
@@ -125,6 +132,7 @@ function handleMessage(msg) {
       if (state.role === "spectator") {
         audio.sfxBoom(true, false);
         showBanner(winnerLabel, (msg.forfeit ? "win by forfeit — " : "") + timeLine + standings);
+        showReveal(msg.reveal);
         addTranscript("sys", `${isTeamWin ? `team ${winnerName}` : winnerName} wins — match over`);
         break;
       }
@@ -140,6 +148,7 @@ function handleMessage(msg) {
         msg.youWin ? "VICTORY" : "SHIP LOST",
         (msg.forfeit ? "win by forfeit — " : "") + timeLine + standings
       );
+      showReveal(msg.reveal); // §5.4: who everyone actually was
       addTranscript("sys", msg.youWin ? "Enemy ship destroyed. Well fought, Captain." : "Hull breach — we're done. Abandon ship.", !msg.youWin);
       break;
     }
@@ -154,14 +163,17 @@ function handleMessage(msg) {
       showLobbyStatus(msg.message);
       addTranscript("sys", msg.message, true);
       break;
+    case "rematch_tally":
+      showRematchTally(msg.ready, msg.total);
+      break;
     case "ui":
       if (msg.what === "show_vector") showVector(5000);
       else if (msg.what === "overlay") setOverlay(msg.element, msg.state === "on");
       break;
     case "transcript":
-      addTranscript(msg.who, msg.text, msg.alert);
+      addTranscript(msg.who, msg.text, msg.priority === "critical");
       // incoming transmissions queue (above acks, below combat warnings)
-      if (msg.speech) audio.enqueueSpeech(msg.speech, !!msg.alert, msg.who === "comms");
+      if (msg.speech) audio.enqueueSpeech(msg.speech, msg.priority ?? "news");
       break;
     default:
       console.log("unhandled message", msg);
@@ -175,7 +187,16 @@ let prevTiers = null; // cid -> tier from the previous snapshot
 let pingListen = null; // {until, rangeM, done} — set when OUR ping fires
 function soundFromSnapshot(snap) {
   const you = snap.you;
-  if (!you || state.gameOver) return;
+  if (!you || state.gameOver) {
+    // no ship, no alarms — without this, whatever channel was live at the
+    // moment of death latches forever (snapshot-diff stops running)
+    if (prevAudio) {
+      audio.stopContinuous();
+      prevAudio = null;
+      prevTiers = null;
+    }
+    return;
+  }
 
   // v4.7 §3b: sonar return. During the grant window after our own ping,
   // the nearest NEW or PROMOTED contact schedules a range-delayed blip.
@@ -217,7 +238,7 @@ function soundFromSnapshot(snap) {
   prevTiers = tiers;
 
   audio.setThrust(you.thrustOut ?? you.thrust);
-  audio.setWarning(you.painted ?? "none");
+  audio.setWarning(you.painted ?? "none", you.lockedBy ?? 0);
   audio.setDustHiss(!!you.inDust);
   // hearing: the loudest rumble drives the low ambience (0 = silence)
   audio.setRumble(Math.max(0, ...(snap.rumbles ?? []).map((r) => r.loud ?? 0)));
@@ -239,10 +260,14 @@ function soundFromSnapshot(snap) {
       if (was === "ready" && t.state !== "ready") audio.sfxLaunch(true);
       if (was === "reloading" && t.state === "ready") audio.sfxReload();
     });
-    // a new enemy missile on scope
+    // a new enemy missile on scope — and if we're locked, that launch is
+    // probably AT US: the lock alarm snaps back to full onset (§2.1)
     const prevIds = prevAudio.enemyMissiles;
     for (const m of snap.missiles ?? []) {
-      if (!m.own && !prevIds.has(m.id)) audio.sfxLaunch(false);
+      if (!m.own && !prevIds.has(m.id)) {
+        audio.sfxLaunch(false);
+        if (you.painted === "locked") audio.reassertWarning();
+      }
     }
     // decoy deployed (ours)
     if ((you.decoys ?? 0) < prevAudio.decoys) audio.sfxDecoy();
@@ -258,9 +283,12 @@ function soundFromSnapshot(snap) {
       kickShake(prevAudio.hull - you.hull >= 20);
     }
   }
-  // collision klaxon while an impact is projected inside 10 s
+  // collision klaxon while an impact is projected inside 10 s — it gets
+  // the countdown so the whoop rate accelerates into impact (§2.3)
   audio.setCollisionKlaxon(
     you.collisionWarning !== null && you.collisionWarning !== undefined && you.collisionWarning <= 10
+      ? you.collisionWarning
+      : null
   );
   prevAudio = {
     tubes: (you.tubes ?? []).map((t) => ({ state: t.state })),
@@ -278,7 +306,8 @@ function updateHUDFromSnapshot(snap) {
     // referee panel: just the two hulls (everything else is on the map)
     updateHUD(
       (snap.ships ?? []).map((s) => ({
-        label: `${(s.callsign ?? s.id).toUpperCase()} HULL`,
+        // spectators are omniscient — names ride along (v5.1 §5.1)
+        label: `${(s.callsign ?? s.id).toUpperCase()}${snap.names?.[s.id] ? ` (${snap.names[s.id]})` : ""} HULL`,
         value: `${s.hull}/${s.hullMax}${s.drone ? " (drone)" : ""}`,
         cls: s.hull <= s.hullMax * 0.35 ? "alert" : s.hull <= s.hullMax * 0.65 ? "warn" : "",
       }))
@@ -321,7 +350,9 @@ function updateHUDFromSnapshot(snap) {
     { label: "THRUST", value: `${Math.round(you.thrust)}%${tanksDry && you.thrust > 0 ? " (DRY)" : ""}`, cls: tanksDry && you.thrust > 0 ? "alert" : "" },
     { label: "SPD", value: `${you.speed} m/s` },
     { label: "HDG", value: `${String(Math.round(you.facing) % 360).padStart(3, "0")}` },
-    { label: "PROP", value: prop, bar: true, cls: prop <= 10 ? "alert" : prop <= 25 ? "warn" : "" },
+    // ⟳ = ramscoop harvesting, ✕ = regen gated off (outside zone or
+    // throttle > 20%) — the at-a-glance answer to "why isn't fuel coming back"
+    { label: `PROP${prop >= 100 ? "" : you.regen ? " ⟳" : " ✕"}`, value: prop, bar: true, cls: prop <= 10 ? "alert" : prop <= 25 ? "warn" : "" },
     { label: "TUBES", value: tubes || "—" },
     { label: "MSL", value: `${you.missiles}` },
     { label: "DECOY", value: `${you.decoys}` },

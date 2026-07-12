@@ -53,8 +53,21 @@ production): all ten HANDOFF-v5.md build-order steps — §1 continuous
 tracking, §2 N-ship rooms/ghosts/death→spectator, §3 callsigns +
 designations, §4 archetypes, §5 railgun, §6 probes, §7 comms, §8
 teams/IFF, §9 schema audit, §10 docs (Doctrine VI) — 661 headless
-assertions. NEXT: the v5 playtest watch-list in TODO.md (do not
-pre-tune). v5 design policy: archetypes
+assertions. v5.0.1 (2026-07-12, post-playtest): STT rate pacing + OpenAI
+fallback (STT_FALLBACK_*), AudioWorklet mic capture, translator
+multi-block recovery, TTS concurrency semaphore — all deployed. **v5.1
+"Discipline" (`HANDOFF-v5.1.md`) BUILT 2026-07-12**: speech discipline
+(3.5 s gap, CRITICAL/NEWS/CHATTER tiers replacing the alert boolean,
+HUD-visible acks silent, PTT barge-in), the alarm law (lock
+onset→per-locker heartbeat via you.lockedBy, accelerating klaxon), FFA
+announcement scaling (GLOBAL 15 s rumble budget + aggregation, contact
+relevance gate contactAnnounceRange(n)), audio mix (bed ceiling 0.22,
+SFX/VOX sliders, XO verbosity), player names (invariant 18), ship-select
+stat cards, practice ship+drone select, MAIN MENU everywhere, rematch
+ready-up vote. Zero sim/sensor/weapon/balance changes (v5.1 §0 law).
+NEXT: the v5 playtest watch-list in TODO.md (do not
+pre-tune) — v5.1's audio changes are only assessable BY EAR (playtest §1
+and §3 separately, per the handoff). v5 design policy: archetypes
 differ in NUMBERS ONLY — stat blocks, no special abilities (explicitly a
 v5 policy, not permanent doctrine; the railgun loadout row is the first
 sanctioned asymmetry).
@@ -130,7 +143,13 @@ Note: on this machine's rootless Docker, `-p` port publishing doesn't route
   main-thread jank in busy rooms DROPPED ScriptProcessor buffers mid-word,
   the 2026-07-12 multiplayer garble; 150 ms stop-grace catches in-flight
   chunks), `audio.js` (procedural SFX — PDC
-  brrrt, crunch, klaxon, thrust, RWR — and the speech queue), `assets/*.svg`.
+  brrrt, crunch, klaxon, thrust, RWR — and the speech DRIVER; scheduling
+  policy lives in `speech-scheduler.js`, a pure module unit-tested in
+  tests/speech.test.ts; v5.1 mix: all four continuous beds share a
+  ceiling-limited bedBus that ducks under speech; SFX/VOX sliders;
+  verbosity filter), `ship-select.js` (v5.1 §6 archetype stat cards, built
+  from the hello config's ARCHETYPES block — used by lobby + practice),
+  `assets/*.svg`.
 
 ## Invariants (do not break)
 
@@ -206,6 +225,19 @@ Note: on this machine's rootless Docker, `-p` port publishing doesn't route
     rumbles, no probe feeds. Intel moves by tightbeam; that minigame is
     load-bearing. (`share contact` is a backlogged concession — do not
     build unprompted.)
+18. v5.1 player names are DISPLAY-ONLY and a SECURITY BOUNDARY, not a
+    scope call: never in any LLM prompt, schema field, state summary, or
+    standing-order condition (prompt-injection surface — names live on
+    Match seats; the Sim never learns them), and never spoken (unbounded
+    TTS vocabulary). Fog: teammates + spectators only; the callsign→name
+    mapping ships ONLY in the gameover reveal. tests/names.test.ts is
+    mandatory-green.
+19. v5.1 speech discipline: the XO speaks when he knows something the
+    captain doesn't. Non-critical lines respect SPEECH_MIN_GAP_MS;
+    HUD-visible acks carry no speech id; the server classifies every
+    transcript line critical/news/chatter (no alert boolean); alarms obey
+    the alarm law (onset + change carry the information, sustains decay —
+    setMissileProximity is the reference and must not be touched).
 
 ## Judgment calls already made (user-visible, flagged in check-ins)
 
@@ -268,6 +300,18 @@ Note: on this machine's rootless Docker, `-p` port publishing doesn't route
   cids the designation LETTERS and rumble cids per-viewer opaque aliases
   ("r1") — object-keyed wire ids let a JSON reader correlate tracks and
   spot decoys by prefix.
+- v5.1 judgment calls: the relevance gate keeps decoy/ship ceremony
+  IDENTICAL (silence gating is by range/lock/board-count, never identity —
+  invariant 15 holds); a silent notice may still be critical-priority (red
+  transcript, no voice); "lock trumps range" (losing a contact that holds
+  a lock on you speaks from anywhere); rematch field choice is majority
+  with ties keeping the field; MAIN MENU is location.reload() on purpose —
+  the socket-close teardown path is the one already tested; practice
+  rematch was FOUND BROKEN in v5 (spawnShips spawned the captain alone, no
+  drone) and beginMatch now rebuilds the practice sim; the practice
+  drone's picked archetype changes shape/signature/handling but hull stays
+  DRONE_HULL_POINTS (no balance change); lobby rosters show names
+  (callsigns don't exist pre-launch, so the reveal's mapping can't leak).
 - v5.0.1 (2026-07-12 playtest): the translator sometimes emits an ack-only
   draft, prose ("Wait — I need to emit the command:"), then a corrected
   fenced block — parseResponse now tries each fenced block as its own

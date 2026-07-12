@@ -89,7 +89,23 @@ export const SENSOR_BASE_M = 180000; // LINKED: == ARCHETYPES.frigate.sensorBase
 // going somewhere — not both.
 export const HEARING_RANGE_MULT = 2.5; // hearing = detection x 2.5: dark ~135 km, cruise ~360 km, flank map-wide
 export const RUMBLE_SHIFT_ANNOUNCE_DEG = 15; // XO re-announces a rumble when its bearing drifts this far
-export const RUMBLE_ANNOUNCE_COOLDOWN_S = 10; // per-emitter rate limit on rumble announcements
+// v5.1 §3.1: GLOBAL rumble-announcement budget, one line per window — the
+// old 10 s PER-EMITTER limit meant N=6 entitled five emitters to a line
+// every 2 s for the whole match (a constant tuned at N=2, run at N=8).
+// When the budget fires, changes AGGREGATE into one line naming at most
+// MAX_BEARINGS bearings, loudest first ("Three drives out there, Captain —
+// bearings zero-four-zero, one-eighty, and two-nine-five").
+export const RUMBLE_ANNOUNCE_COOLDOWN_S = 15;
+export const RUMBLE_ANNOUNCE_MAX_BEARINGS = 3;
+
+// v5.1 §3.3-3.4: the XO announces change in THREAT, not change in
+// information — a tier transition speaks only when the contact is within
+// contactAnnounceRange(boardCount) = clamp(BASE / max(1, n), MIN, BASE),
+// or holds a lock on us, or is the only contact on the board. Everything
+// below the bar is transcript-only. 1 contact -> 60 km (tell me
+// everything); 3+ -> floored at 20 km (only what can hurt me).
+export const CONTACT_ANNOUNCE_RANGE_BASE_M = 60000;
+export const CONTACT_ANNOUNCE_RANGE_MIN_M = 20000;
 
 // v4.5 active ping — the information ladder's second rung (HEARING bearing
 // -> aimed PING -> passive TIERS -> LOCK). A ping FINDS ships; it does not
@@ -315,6 +331,11 @@ export const SPECTATOR_CALLSIGNS = [
   "Ghost", "Watcher", "Echo", "Specter", "Shade", "Drifter", "Raven", "Static",
 ];
 export const SPECTATOR_NAMES_SHOWN_MAX = 3; // player HUD lists names up to this, then collapses to a count
+
+// v5.1 §5: player names — display-only strings. They ride the transponder
+// (teammates + spectators + the post-match reveal), NEVER the LLM prompt
+// (injection surface), NEVER the TTS (unbounded synth vocabulary).
+export const PLAYER_NAME_MAX_CHARS = 16;
 
 // LLM
 export const LLM_MODEL = "claude-haiku-4-5-20251001";

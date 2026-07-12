@@ -8,8 +8,9 @@ import {
   ACCEL_FULL_THRUST_MPS2,
   TURN_RATE_DEG_PER_SEC,
   STT_MAX_AUDIO_BYTES,
+  ARCHETYPES,
 } from "./constants.js";
-import { Match } from "./match.js";
+import { Match, sanitizeName } from "./match.js";
 import { sttAvailable, transcribe, SttBusyError } from "./stt.js";
 import { getSpeech, pregenStockLines, ttsAvailable } from "./tts.js";
 
@@ -94,6 +95,9 @@ wss.on("connection", (ws: WebSocket) => {
         accel: ACCEL_FULL_THRUST_MPS2, // for the client-side stop-point projection
         turnRate: TURN_RATE_DEG_PER_SEC,
         stt: sttAvailable(),
+        // v5.1 §6: the select screen renders stat bars straight from the
+        // runtime source of truth — the client never hardcodes a number
+        archetypes: ARCHETYPES,
       },
     })
   );
@@ -109,13 +113,17 @@ wss.on("connection", (ws: WebSocket) => {
     switch (msg.type) {
       case "practice": {
         if (matchByWs.has(ws)) return;
-        matchByWs.set(ws, Match.createPractice(ws));
+        // v5.1 §7.1: pick your ship AND your sparring partner
+        matchByWs.set(
+          ws,
+          Match.createPractice(ws, String(msg.archetype ?? ""), String(msg.droneArchetype ?? ""))
+        );
         break;
       }
       case "create": {
         if (matchByWs.has(ws)) return;
         const code = genRoomCode();
-        const match = Match.createRoom(code, ws);
+        const match = Match.createRoom(code, ws, sanitizeName(msg.name));
         rooms.set(code, match);
         matchByWs.set(ws, match);
         break;
@@ -128,7 +136,7 @@ wss.on("connection", (ws: WebSocket) => {
           ws.send(JSON.stringify({ type: "error", message: `no room '${code}'` }));
           return;
         }
-        const err = match.joinOrReconnect(ws);
+        const err = match.joinOrReconnect(ws, sanitizeName(msg.name));
         if (err) {
           ws.send(JSON.stringify({ type: "error", message: err }));
           return;
@@ -189,13 +197,11 @@ wss.on("connection", (ws: WebSocket) => {
         const match = matchByWs.get(ws);
         if (!match || !match.sim.winner) break;
         // seated captains only (dead ones kept their seats); pure
-        // spectators never call rematch
+        // spectators never call rematch. v5.1 §7.3: a click is a VOTE
+        // (ready-up + field preference) — the room relaunches when every
+        // still-connected captain is ready; leavers don't block.
         if (!match.hasSeat(ws)) break;
-        if (!match.canRematch()) {
-          ws.send(JSON.stringify({ type: "error", message: "a captain is gone — no rematch" }));
-          break;
-        }
-        match.reset(msg.newField === true); // same field unless asked
+        match.voteRematch(ws, msg.newField === true);
         break;
       }
       default:

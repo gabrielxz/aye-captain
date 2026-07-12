@@ -349,10 +349,14 @@ export type Fx =
 
 export type SimEvent =
   | { kind: "reject"; ship: ShipId; verb: string; reason: string }
-  | { kind: "ack"; ship: ShipId; text: string }
+  // verb rides along so the match can apply the v5.1 §1.3 ack rule: acks of
+  // commands whose effect is instantly HUD-visible get no voice
+  | { kind: "ack"; ship: ShipId; verb: string; text: string }
   // speak: optional TTS-safe variant (quantized digit-word bearings, no
-  // abbreviations); the transcript displays `text`, the voice says `speak`
-  | { kind: "notice"; ship: ShipId | "all"; text: string; alert?: boolean; speak?: string }
+  // abbreviations); the transcript displays `text`, the voice says `speak`.
+  // silent: transcript-only — never synthesized (v5.1 §1.3: confirmations
+  // of instantly-visible effects, e.g. the drift-marker toggle)
+  | { kind: "notice"; ship: ShipId | "all"; text: string; alert?: boolean; speak?: string; silent?: boolean }
   | { kind: "ui"; ship: ShipId; what: "show_vector" } // client-side overlay triggers
   // persistent client-side overlay toggles (v4.7): pure ui, no sim state.
   // v5 adds ELEMENT values (probe markers, designations), not new events.
@@ -449,6 +453,21 @@ export function spokenBearing(deg: number): string {
 
 const TUBE_NAMES = ["one", "two", "three", "four"];
 const PROBE_NAMES = ["one", "two", "three", "four", "five", "six"];
+// v5.1 §3.2 aggregated rumble lines ("Three drives out there, Captain")
+const COUNT_WORDS: Record<number, string> = {
+  2: "Two", 3: "Three", 4: "Four", 5: "Five", 6: "Six", 7: "Seven", 8: "Eight",
+};
+
+// v5.1 §3.4: the XO gets terser as the board gets busier — the spoken-
+// announcement range shrinks with the contact count. 1 contact -> 60 km
+// (tell me everything); 3+ -> floored at 20 km (only what can hurt me).
+export function contactAnnounceRange(boardCount: number): number {
+  return clamp(
+    C.CONTACT_ANNOUNCE_RANGE_BASE_M / Math.max(1, boardCount),
+    C.CONTACT_ANNOUNCE_RANGE_MIN_M,
+    C.CONTACT_ANNOUNCE_RANGE_BASE_M
+  );
+}
 
 // ---------- sim ----------
 
@@ -505,6 +524,11 @@ export class Sim {
   // data model stays open to multiple listeners hearing one emitter (v5
   // probes as remote ears).
   private rumbleState = new Map<ShipId, Map<string, { bearing: number; cooldown: number; live: boolean }>>();
+  // v5.1 §3.1: per-VIEWER announcement budget + pending-change flags — one
+  // aggregated line per RUMBLE_ANNOUNCE_COOLDOWN_S window, however many
+  // emitters are out there. Dirty flags persist across gapped ticks so a
+  // change that arrives mid-cooldown still gets told when the window opens.
+  private rumbleBudget = new Map<ShipId, { cooldown: number; fresh: boolean; drifted: boolean; lost: boolean }>();
 
   // No seed = empty terrain (headless tests build exact fields by hand);
   // matches always pass one.
@@ -942,7 +966,7 @@ export class Sim {
               : this.speedOf(ship) < 5
                 ? "We're not drifting anywhere, Captain — nothing to mark yet."
                 : "Drift marker up, Captain.";
-          events.push({ kind: "notice", ship: ship.id, text });
+          events.push({ kind: "notice", ship: ship.id, text, silent: true });
         }
         return null;
       }
@@ -1565,7 +1589,7 @@ export class Sim {
         if (reason) {
           events.push({ kind: "reject", ship: ship.id, verb: action.verb, reason });
         } else if (action.acknowledgement) {
-          events.push({ kind: "ack", ship: ship.id, text: action.acknowledgement });
+          events.push({ kind: "ack", ship: ship.id, verb: action.verb, text: action.acknowledgement });
         }
       }
       if (order.repeat) {
@@ -1829,6 +1853,7 @@ export class Sim {
     this.prevVisibleMissiles.delete(id);
     this.decoyFaint.delete(id);
     this.rumbleState.delete(id);
+    this.rumbleBudget.delete(id);
     this.rumbleAliases.delete(id);
     this.contactBooks.delete(id);
     for (const state of this.rumbleState.values()) state.delete(`s${id}`);
@@ -1996,52 +2021,37 @@ export class Sim {
     return out;
   }
 
-  // XO rumble announcements: new rumbles, bearing drifts past
-  // RUMBLE_SHIFT_ANNOUNCE_DEG, and fades — rate-limited per emitter. A
+  // XO rumble announcements (v5.1 §3.1-3.2): new rumbles, bearing drifts
+  // past RUMBLE_SHIFT_ANNOUNCE_DEG, and fades — against a GLOBAL per-viewer
+  // budget of one line per RUMBLE_ANNOUNCE_COOLDOWN_S. Multiple changes
+  // aggregate into a single line (loudest first, at most
+  // RUMBLE_ANNOUNCE_MAX_BEARINGS bearings) instead of enumerating. A
   // rumble that hardens into a CONTACT fades silently (the tier notice is
   // the announcement — seamless handoff, never a double contact).
   private updateRumbles(ship: Ship, events: SimEvent[]): void {
     if (ship.isDrone) return;
     const state = this.rumbleState.get(ship.id)!;
+    let budget = this.rumbleBudget.get(ship.id);
+    if (!budget) {
+      budget = { cooldown: 0, fresh: false, drifted: false, lost: false };
+      this.rumbleBudget.set(ship.id, budget);
+    }
+    budget.cooldown = Math.max(0, budget.cooldown - 1 / C.TICK_RATE_HZ);
+    // per-key cooldowns now serve only flicker suppression: a rumble that
+    // fades and reappears inside the window resumes silently
     for (const st of state.values()) st.cooldown = Math.max(0, st.cooldown - 1 / C.TICK_RATE_HZ);
     const current = this.rumblesFor(ship);
     const liveIds = new Set(current.map((r) => r.key)); // real keys internally
 
-    // Spoken bearings quantize to 10° — a rumble is vague by nature, and
-    // exact bearings made every announcement a UNIQUE string, each one a
-    // fresh ElevenLabs synthesis (the playtest burned the whole TTS quota
-    // in a day). 36 buckets x 2 line shapes cache to disk once, forever.
-    // Internal drift tracking stays exact; the chevron shows the true bearing.
-    const spoken = (b: number) => fmtBearing((Math.round(b / 10) * 10) % 360);
     for (const r of current) {
       const st = state.get(r.key);
-      const viaProbe = r.probe !== undefined ? ` — probe ${PROBE_NAMES[r.probe - 1] ?? r.probe}'s bearing` : "";
       if (!st || (!st.live && st.cooldown <= 0)) {
-        state.set(r.key, { bearing: r.bearing, cooldown: C.RUMBLE_ANNOUNCE_COOLDOWN_S, live: true });
-        events.push({
-          kind: "notice",
-          ship: ship.id,
-          text: `Drive rumble, bearing ${spoken(r.bearing)}${viaProbe}.`,
-          speak:
-            r.probe !== undefined
-              ? `Probe rumble, bearing ${spokenBearing(r.bearing)}.`
-              : `Drive rumble, bearing ${spokenBearing(r.bearing)}.`,
-        });
-      } else if (
-        st.live &&
-        st.cooldown <= 0 &&
-        Math.abs(angDiff(st.bearing, r.bearing)) > C.RUMBLE_SHIFT_ANNOUNCE_DEG
-      ) {
-        st.bearing = r.bearing;
-        st.cooldown = C.RUMBLE_ANNOUNCE_COOLDOWN_S;
-        events.push({
-          kind: "notice",
-          ship: ship.id,
-          text: `That rumble's drifted to ${spoken(r.bearing)}.`,
-          speak: `That rumble's drifted to ${spokenBearing(r.bearing)}.`,
-        });
+        state.set(r.key, { bearing: r.bearing, cooldown: 0, live: true });
+        budget.fresh = true;
+      } else if (st.live && Math.abs(angDiff(st.bearing, r.bearing)) > C.RUMBLE_SHIFT_ANNOUNCE_DEG) {
+        budget.drifted = true; // bearing updates when the line goes out
       } else if (!st.live) {
-        st.live = true; // back within cooldown: resume silently
+        st.live = true; // back within the flicker window: resume silently
         st.bearing = r.bearing;
       }
     }
@@ -2053,6 +2063,7 @@ export class Sim {
         continue;
       }
       st.live = false;
+      st.cooldown = C.RUMBLE_ANNOUNCE_COOLDOWN_S; // flicker window
       // silent when it hardened into a contact (rumble -> faint handoff);
       // probe-relayed keys look through to their emitter
       const emitter = key.includes(":") ? key.slice(key.indexOf(":") + 1) : key;
@@ -2061,11 +2072,61 @@ export class Sim {
         : this.decoys.some(
             (d) => `d${d.id}` === emitter && this.decoyTierFor(ship, d) >= 1
           );
-      if (!becameContact) {
-        st.cooldown = C.RUMBLE_ANNOUNCE_COOLDOWN_S;
+      if (!becameContact) budget.lost = true;
+    }
+
+    if (budget.cooldown > 0 || (!budget.fresh && !budget.drifted && !budget.lost)) return;
+
+    // The window is open and something changed: say the CURRENT picture,
+    // once. Spoken bearings quantize to 10° — exact bearings made every
+    // announcement a unique ElevenLabs synthesis and burned the TTS quota
+    // in a day (v4.6). Aggregated multi-bearing lines are dynamic synths,
+    // acceptable at one per 15 s (§3.2) — never at one per 2 s.
+    const spoken = (b: number) => fmtBearing((Math.round(b / 10) * 10) % 360);
+    const loudest = [...current].sort((a, b) => b.loud - a.loud);
+    if (current.length === 0) {
+      if (budget.lost) {
         events.push({ kind: "notice", ship: ship.id, text: "Lost the rumble." });
       }
+    } else if (current.length === 1) {
+      // single-emitter picture: keep the classic (fully cached) line shapes
+      const r = current[0];
+      const viaProbe = r.probe !== undefined ? ` — probe ${PROBE_NAMES[r.probe - 1] ?? r.probe}'s bearing` : "";
+      const drifted = budget.drifted && !budget.fresh;
+      events.push({
+        kind: "notice",
+        ship: ship.id,
+        text: drifted
+          ? `That rumble's drifted to ${spoken(r.bearing)}.`
+          : `Drive rumble, bearing ${spoken(r.bearing)}${viaProbe}.`,
+        speak: drifted
+          ? `That rumble's drifted to ${spokenBearing(r.bearing)}.`
+          : r.probe !== undefined
+            ? `Probe rumble, bearing ${spokenBearing(r.bearing)}.`
+            : `Drive rumble, bearing ${spokenBearing(r.bearing)}.`,
+      });
+    } else {
+      const named = loudest.slice(0, C.RUMBLE_ANNOUNCE_MAX_BEARINGS);
+      const listText = named.map((r) => spoken(r.bearing));
+      const listSpoken = named.map((r) => spokenBearing(r.bearing));
+      const joinList = (parts: string[]) =>
+        parts.length === 2 ? `${parts[0]} and ${parts[1]}` : `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}`;
+      const count = COUNT_WORDS[current.length] ?? String(current.length);
+      const loudestNote = current.length > named.length ? " Loudest" : "";
+      events.push({
+        kind: "notice",
+        ship: ship.id,
+        text: `${count} drives out there, Captain —${loudestNote.toLowerCase()} bearings ${joinList(listText)}.`,
+        speak: `${count} drives out there, Captain.${loudestNote ? " Loudest bearings" : " Bearings"} ${joinList(listSpoken)}.`,
+      });
     }
+    // everything on the board counts as told
+    for (const r of current) {
+      const st = state.get(r.key);
+      if (st) st.bearing = r.bearing;
+    }
+    budget.fresh = budget.drifted = budget.lost = false;
+    budget.cooldown = C.RUMBLE_ANNOUNCE_COOLDOWN_S;
   }
 
   // Enemy decoys RESOLVED as decoys (ID tier) — what the helm may point at
@@ -2275,7 +2336,7 @@ export class Sim {
             events.push({ kind: "reject", ship: id, verb: cmd.verb, reason });
           } else if (cmd.acknowledgement) {
             // acknowledgements go out only for commands that actually executed
-            events.push({ kind: "ack", ship: id, text: cmd.acknowledgement });
+            events.push({ kind: "ack", ship: id, verb: cmd.verb, text: cmd.acknowledgement });
           }
         }
       }
@@ -2620,6 +2681,15 @@ export class Sim {
   // Hostile lock state as it bears on THIS ship (RWR fiction: you feel
   // their targeting radiation even if you can't see them). v5 §3:
   // ANY-source — the worst state across every hostile painting us.
+  // v5.1 §2.2: hostiles currently HOLDING a lock on this ship
+  lockersOn(ship: Ship): number {
+    let n = 0;
+    for (const h of this.hostilesOf(ship)) {
+      if (h.lock.has && h.lock.target === ship.id) n++;
+    }
+    return n;
+  }
+
   paintedState(ship: Ship): PaintedState {
     let state: PaintedState = "none";
     for (const h of this.hostilesOf(ship)) {
@@ -3143,9 +3213,21 @@ export class Sim {
   // and loss (last-known ghost under the letter).
   private updateDesignations(ship: Ship, events: SimEvent[]): void {
     const book = this.bookOf(ship.id);
-    const say = (text: string, speak?: string, alert = false) => {
+    // v5.1 §3.3: the ceremony always happens — letters, transcript lines,
+    // fog-identical decoy treatment (invariant 15) — but it only gets a
+    // VOICE when the change is a threat: inside the (board-size-scaled)
+    // announce range, or the contact holds a lock on us, or it's the only
+    // contact on the board. Below the bar: transcript-only.
+    const say = (text: string, speak?: string, alert = false, relevant = true) => {
       if (!ship.isDrone) {
-        events.push({ kind: "notice", ship: ship.id, text, ...(speak ? { speak } : {}), alert });
+        events.push({
+          kind: "notice",
+          ship: ship.id,
+          text,
+          ...(speak ? { speak } : {}),
+          alert,
+          ...(relevant ? {} : { silent: true }),
+        });
       }
     };
 
@@ -3199,6 +3281,17 @@ export class Sim {
       });
     }
 
+    // §3.4 terseness: the announce bar scales with how busy the board is
+    const boardCount = entries.filter((en) => en.tier >= 1).length;
+    const relevanceOf = (x: number, y: number, key: string): boolean => {
+      if (boardCount <= 1) return true; // the only contact: tell me everything
+      if (key.startsWith("s")) {
+        const h = this.ships.get(key.slice(1));
+        if (h && h.lock.has && h.lock.target === ship.id) return true; // it can shoot us
+      }
+      return dist(ship.x, ship.y, x, y) < contactAnnounceRange(boardCount);
+    };
+
     const seen = new Set<string>();
     for (const e of entries) {
       seen.add(e.key);
@@ -3206,6 +3299,7 @@ export class Sim {
       const brgDeg = bearingTo(ship.x, ship.y, e.x, e.y);
       const brg = fmtBearing(brgDeg);
       const rangeKm = Math.round(dist(ship.x, ship.y, e.x, e.y) / 1000);
+      const relevant = relevanceOf(e.x, e.y, e.key);
 
       if (e.tier >= 1 && !rec) {
         // first acquisition ever ("via probe" names the relay, v5 §6)
@@ -3218,7 +3312,9 @@ export class Sim {
             : `New contact${via} — designating ${rec.letter}. I have a track — bearing ${brg}, range ${rangeKm} km.`,
           e.viaProbe
             ? `New contact via probe — designating ${rec.letter}. Bearing ${spokenBearing(brgDeg)}.`
-            : `New contact — designating ${rec.letter}. Bearing ${spokenBearing(brgDeg)}.`
+            : `New contact — designating ${rec.letter}. Bearing ${spokenBearing(brgDeg)}.`,
+          false,
+          relevant
         );
       } else if (e.tier >= 1 && rec && rec.lostAt !== null) {
         // reacquisition: keep the letter only if the XO can plausibly
@@ -3236,7 +3332,9 @@ export class Sim {
           const label = rec.identified ? this.callsigns.get(e.key.slice(1)) ?? `Contact ${rec.letter}` : `Contact ${rec.letter}`;
           say(
             `${label} is back — bearing ${brg}, range approximately ${rangeKm} km.`,
-            `${label} is back — bearing ${spokenBearing(brgDeg)}.`
+            `${label} is back — bearing ${spokenBearing(brgDeg)}.`,
+            false,
+            relevant
           );
           rec.prevTier = 1; // transition lines below take it from faint
         } else {
@@ -3250,7 +3348,9 @@ export class Sim {
             e.tier === 1
               ? `New contact — designating ${rec.letter}. Faint, bearing ${brg}, range approximately ${rangeKm} km.`
               : `New contact — designating ${rec.letter}. I have a track — bearing ${brg}, range ${rangeKm} km.`,
-            `New contact — designating ${rec.letter}. Bearing ${spokenBearing(brgDeg)}.`
+            `New contact — designating ${rec.letter}. Bearing ${spokenBearing(brgDeg)}.`,
+            false,
+            relevant
           );
         }
       }
@@ -3277,6 +3377,9 @@ export class Sim {
           const lk = rec.lastKnown;
           const lkDeg = lk ? bearingTo(ship.x, ship.y, lk.x, lk.y) : brgDeg;
           rec.lostAt = this.tickCount;
+          // §3.3: a fade at 200 km is not news; the SAME fade while that
+          // contact holds a lock on us is screaming news — relevanceOf
+          // encodes exactly that (lock trumps range)
           say(
             was >= 2
               ? `Track lost on ${label} — last known bearing ${fmtBearing(lkDeg)}.`
@@ -3284,26 +3387,31 @@ export class Sim {
             was >= 2
               ? `Track lost on ${label} — last known bearing ${spokenBearing(lkDeg)}.`
               : `${label} faded — last known bearing ${spokenBearing(lkDeg)}.`,
-            was >= 2
+            was >= 2,
+            lk ? relevanceOf(lk.x, lk.y, e.key) : relevant
           );
         } else if (e.tier === 1 && was >= 2) {
-          say(`Losing resolution — ${label}'s gone faint.`);
+          say(`Losing resolution — ${label}'s gone faint.`, undefined, false, relevant);
         } else if (e.tier === 2) {
           if (was < 2 && was > 0) {
             say(
               `${label} firming up — I have a track. Bearing ${brg}, range ${rangeKm} km.`,
-              `${label} firming up — I have a track. Bearing ${spokenBearing(brgDeg)}.`
+              `${label} firming up — I have a track. Bearing ${spokenBearing(brgDeg)}.`,
+              false,
+              relevant
             );
           } else if (was === 3) {
-            say(`Lost the detail readout on ${label} — still holding the track.`);
+            say(`Lost the detail readout on ${label} — still holding the track.`, undefined, false, relevant);
           }
         } else if (e.tier === 3) {
+          // ID happens at close range by sensor math — it passes the bar
+          // on range in practice; the gate is uniform anyway
           if (!rec.identified) {
             rec.identified = true;
             const line = e.idLine(rec.letter);
-            say(line.text, line.speak);
+            say(line.text, line.speak, false, relevant);
           } else if (!isDecoy) {
-            say(`Close-range ID — full readout on ${this.callsigns.get(e.key.slice(1)) ?? label}.`);
+            say(`Close-range ID — full readout on ${this.callsigns.get(e.key.slice(1)) ?? label}.`, undefined, false, relevant);
           }
         }
         rec.prevTier = e.tier;
@@ -3338,7 +3446,8 @@ export class Sim {
           rec.prevTier >= 2
             ? `Track lost on ${label} — last known bearing ${spokenBearing(lkDeg)}.`
             : `${label} faded — last known bearing ${spokenBearing(lkDeg)}.`,
-          rec.prevTier >= 2
+          rec.prevTier >= 2,
+          lk ? relevanceOf(lk.x, lk.y, key) : false
         );
         rec.prevTier = 0;
       }
@@ -3674,7 +3783,15 @@ export class Sim {
     const lines: string[] = [];
     const zoneDist = dist(ship.x, ship.y, 0, 0);
     lines.push(
-      `Own ship (${ship.archetype.toUpperCase()}): heading ${fmtBearing(ship.facing)}, speed ${Math.round(this.speedOf(ship))} m/s, thrust ${Math.round(ship.thrust)}%${effectiveThrust(ship) < ship.thrust ? " (NO output — tanks dry)" : ""}, hull ${ship.hull}/${hullMaxOf(ship)}, propellant ${Math.round(ship.propellant)}/${C.PROPELLANT_MAX}.`
+      `Own ship (${ship.archetype.toUpperCase()}): heading ${fmtBearing(ship.facing)}, speed ${Math.round(this.speedOf(ship))} m/s, thrust ${Math.round(ship.thrust)}%${effectiveThrust(ship) < ship.thrust ? " (NO output — tanks dry)" : ""}, hull ${ship.hull}/${hullMaxOf(ship)}, propellant ${Math.round(ship.propellant)}/${C.PROPELLANT_MAX}${
+        ship.propellant < 50 && !ship.isDrone
+          ? ` (ramscoop ${
+              this.insideZone(ship) && ship.thrust <= C.REGEN_MAX_THRUST_PCT
+                ? "REGENERATING"
+                : `NOT regenerating — needs: inside the zone AND throttle setting <= ${C.REGEN_MAX_THRUST_PCT}%`
+            })`
+          : ""
+      }.`
     );
     lines.push(
       `Position: ${(zoneDist / 1000).toFixed(1)} km from zone center (${this.insideZone(ship) ? "inside" : "OUTSIDE"} the zone)${this.inDust(ship) ? " — INSIDE A DUST CLOUD: sensors blind both ways, no locks" : ""}. Own signature ${Math.round(this.signatureOf(ship))} (detection range others get on us scales with it).`
@@ -4129,6 +4246,9 @@ export class Sim {
         speed: Math.round(this.speedOf(ship)),
         hull: ship.hull,
         propellant: ship.propellant,
+        // playtest 2026-07-12: a dry captain couldn't tell WHY nothing was
+        // recharging (he was outside the zone) — surface the gate's state
+        regen: this.insideZone(ship) && ship.thrust <= C.REGEN_MAX_THRUST_PCT,
         missiles: missilesAboard(ship),
         tubes: ship.tubes.map((t) => ({
           state: t.loaded ? "ready" : t.reload > 0 ? "reloading" : "empty",
@@ -4139,6 +4259,11 @@ export class Sim {
           progress: Math.min(1, ship.lock.progress / C.LOCK_TIME_S),
         },
         painted: this.paintedState(ship),
+        // v5.1 §2.2: how many hostiles hold a lock on us — a COUNT only,
+        // no identity, no bearing (you already know THAT you're painted;
+        // this says how many times). The client heartbeat thumps once per
+        // locker. Fog test pins that nothing else rides along.
+        lockedBy: this.lockersOn(ship),
         decoys: ship.decoys,
         pdc: { posture: ship.pdcPosture, ammoS: Math.round(ship.pdcAmmoS) },
         rail:
