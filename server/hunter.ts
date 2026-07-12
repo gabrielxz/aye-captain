@@ -48,6 +48,10 @@ export interface HunterMem {
   dryS: number;
   lastSignalBearing: number | null;
   gateProbed: boolean;
+  // lethality round: seconds spent chasing a rumble WITHOUT converting it
+  // to a contact (the dust fortress), and total hunt seconds (gate drift)
+  rumbleChaseS: number;
+  huntS: number;
 }
 
 // Public mission knowledge — nothing here is fog-gated by nature: MARKED
@@ -71,6 +75,8 @@ export function initialHunterMem(): HunterMem {
     dryS: 0,
     lastSignalBearing: null,
     gateProbed: false,
+    rumbleChaseS: 0,
+    huntS: 0,
   };
 }
 
@@ -101,7 +107,11 @@ export function hunterDecide(
   intel: HunterIntel
 ): { commands: Command[]; mem: HunterMem } {
   const you = snap.you;
-  const next: HunterMem = { ...mem, fireCooldownS: Math.max(0, mem.fireCooldownS - 1) };
+  const next: HunterMem = {
+    ...mem,
+    fireCooldownS: Math.max(0, mem.fireCooldownS - 1),
+    huntS: mem.huntS + 1,
+  };
   const commands: Command[] = [];
 
   // fuel discipline (hysteresis): below the floor, coast in the regen band
@@ -194,20 +204,47 @@ export function hunterDecide(
       throttle = C.HUNTER_HUNT_THROTTLE;
       next.lastSignalBearing = norm360(loudest.bearing);
       next.dryS = 0; // a rumble is a live signal
+      next.rumbleChaseS += 1;
+      // BLIND FIRE (the dust fortress answer): a loud rumble it has chased
+      // for HUNTER_BLIND_FIRE_S without ever earning a contact gets a
+      // bearing-guided bird down the noise. Prox fuses are geometry —
+      // torpedoes swim through the cloud the sensors can't.
+      const tubeReady = you.tubes.some((t) => t.state === "ready");
+      if (
+        next.rumbleChaseS >= C.HUNTER_BLIND_FIRE_S &&
+        loudest.loud >= C.HUNTER_BLIND_FIRE_LOUD &&
+        tubeReady &&
+        next.fireCooldownS <= 0
+      ) {
+        commands.push({
+          verb: "fire_missile",
+          params: { guidance: "bearing", bearing_degrees: Math.round(loudest.bearing) },
+        });
+        next.fireCooldownS = C.HUNTER_FIRE_COOLDOWN_S;
+        next.rumbleChaseS = 0; // earn the next one
+      }
     } else if (snap.ghost && dist(you.x, you.y, snap.ghost.x, snap.ghost.y) > C.HUNTER_PATROL_ARRIVE_M) {
       heading = bearingTo(you.x, you.y, snap.ghost.x, snap.ghost.y);
       throttle = C.HUNTER_HUNT_THROTTLE;
       next.dryS += 1; // a stale fix is a lead, not a signal — the clock runs
+      next.rumbleChaseS = 0;
     } else {
-      const wps = intel.sites.length > 0 ? intel.sites : patrolWaypoints(terrain);
+      // GATE DRIFT: a hunt that has dragged past HUNTER_GATE_DRIFT_S adds
+      // the gate approach to the patrol rotation — it knows where you
+      // must eventually go (the soft, every-system picket)
+      const gl = Math.max(1, Math.hypot(intel.gate.x, intel.gate.y));
+      const gateStation = { x: intel.gate.x * (1 - 30000 / gl), y: intel.gate.y * (1 - 30000 / gl) };
+      const base = intel.sites.length > 0 ? intel.sites : patrolWaypoints(terrain);
+      const wps = next.huntS >= C.HUNTER_GATE_DRIFT_S ? [...base, gateStation, gateStation] : base;
       let wp = wps[next.wpIdx % wps.length];
       if (dist(you.x, you.y, wp.x, wp.y) <= C.HUNTER_PATROL_ARRIVE_M) {
-        next.wpIdx = (next.wpIdx + (intel.sites.length > 0 ? 1 : 7)) % wps.length;
+        next.wpIdx = (next.wpIdx + (intel.sites.length > 0 || wps.length > 2 ? 1 : 7)) % wps.length;
         wp = wps[next.wpIdx % wps.length];
       }
       heading = bearingTo(you.x, you.y, wp.x, wp.y);
       throttle = C.HUNTER_HUNT_THROTTLE;
       next.dryS += 1;
+      next.rumbleChaseS = 0;
     }
 
     // ESCALATION: a Hunter that can't find you starts SPENDING. Every
@@ -247,6 +284,7 @@ export function hunterDecide(
   // a contact is the strongest signal of all
   if (best) {
     next.dryS = 0;
+    next.rumbleChaseS = 0;
     next.lastSignalBearing = bearingTo(you.x, you.y, best.x, best.y);
   }
 

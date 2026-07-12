@@ -64,7 +64,17 @@ export type PdcPosture = "free" | "hold";
 // additive. salvage (campaign §4): full-stop physics, then the sequential
 // transfer runs while stopped alongside the wreck — any thrust/heading
 // order aborts it (you keep what already landed).
-export type Maneuver = { type: "full_stop" } | { type: "salvage"; wreckId: number };
+export type Maneuver =
+  | { type: "full_stop" }
+  | { type: "salvage"; wreckId: number }
+  // timed burn ("give me a 5 second burn at 50%"): thrust at `percent`
+  // until secondsLeft runs out, then engines to zero, announced.
+  | { type: "burn"; secondsLeft: number; percent: number }
+  // campaign gate-run assist: brake off the crossline, then (STICKY —
+  // the phase never reverts, or the controller dithers at the speed
+  // threshold) aim the aperture center and burn straight until the
+  // crossing takes the system.
+  | { type: "gate_run"; phase: "brake" | "run" };
 
 // Goal heading as stored.
 // absolute: steer shortest-arc to a compass heading. turn: a RELATIVE turn
@@ -1055,13 +1065,41 @@ export class Sim {
         return null;
       }
       case "maneuver": {
-        if (cmd.params.type !== "full_stop") return "Helm doesn't know that maneuver.";
-        if (this.speedOf(ship) < 5) return "We're already stopped, Captain.";
-        ship.maneuver = { type: "full_stop" };
-        if (!ship.isDrone) {
-          events.push({ kind: "notice", ship: ship.id, text: "Flipping to kill our velocity." });
+        const mtype = cmd.params.type;
+        if (mtype === "full_stop") {
+          if (this.speedOf(ship) < 5) return "We're already stopped, Captain.";
+          ship.maneuver = { type: "full_stop" };
+          if (!ship.isDrone) {
+            events.push({ kind: "notice", ship: ship.id, text: "Flipping to kill our velocity." });
+          }
+          return null;
         }
-        return null;
+        if (mtype === "burn") {
+          const secs = Number(cmd.params.seconds);
+          const pct = Number(cmd.params.percent);
+          if (!Number.isFinite(secs) || secs < 1 || secs > 600) return "Helm didn't copy that burn time.";
+          if (!Number.isFinite(pct) || pct <= 0 || pct > 100) return "Helm didn't copy that throttle.";
+          ship.thrust = pct;
+          ship.maneuver = { type: "burn", secondsLeft: secs, percent: pct };
+          return null;
+        }
+        if (mtype === "gate_run") {
+          // campaign only: the XO threads the aperture — from close and slow
+          const m = this.mission;
+          if (!m || ship.id !== m.playerId) return "No gate out here, Captain.";
+          const d = dist(ship.x, ship.y, m.gate.x, m.gate.y);
+          if (d > C.GATE_ASSIST_RANGE_M) {
+            return "The gate's too far for me to take her through, Captain — get us inside fifteen klicks.";
+          }
+          if (this.speedOf(ship) > C.GATE_ASSIST_MAX_SPEED_MPS) {
+            return "We're too hot for the aperture, Captain — kill some speed and I'll thread it.";
+          }
+          ship.maneuver = { type: "gate_run", phase: this.speedOf(ship) < 10 ? "run" : "brake" };
+          events.push({ kind: "notice", ship: ship.id, text: "I have the aperture, Captain — taking us through." });
+          delete cmd.acknowledgement; // the stock line is the confirmation
+          return null;
+        }
+        return "Helm doesn't know that maneuver.";
       }
       case "salvage": {
         // Campaign §4.1: one verb, and it is a maneuver. Sites carry fixed
@@ -3831,16 +3869,21 @@ export class Sim {
   // greed curve; walking away is always legal).
   private cancelManeuver(ship: Ship, events: SimEvent[]): void {
     if (!ship.maneuver) return;
-    const wasSalvage = ship.maneuver.type === "salvage";
+    const mtype = ship.maneuver.type;
     ship.maneuver = null;
-    if (wasSalvage && this.mission) this.mission.salvaging = null;
+    if (mtype === "salvage" && this.mission) this.mission.salvaging = null;
     if (!ship.isDrone) {
       events.push({
         kind: "notice",
         ship: ship.id,
-        text: wasSalvage
-          ? "Breaking off the salvage — what's aboard stays aboard, Captain."
-          : "Full stop belayed — you have the conn.",
+        text:
+          mtype === "salvage"
+            ? "Breaking off the salvage — what's aboard stays aboard, Captain."
+            : mtype === "burn"
+              ? "Burn belayed — you have the conn."
+              : mtype === "gate_run"
+                ? "Gate run belayed — you have the conn."
+                : "Full stop belayed — you have the conn.",
       });
     }
   }
@@ -3853,6 +3896,41 @@ export class Sim {
     const type = ship.maneuver.type;
     const speed = this.speedOf(ship);
     const accel = statsOf(ship).accel * ship.accelMult;
+
+    // timed burn: hold the throttle, count down, cut, announce
+    if (type === "burn") {
+      const man = ship.maneuver as { type: "burn"; secondsLeft: number; percent: number };
+      ship.thrust = man.percent;
+      man.secondsLeft -= dt;
+      if (man.secondsLeft <= 0) {
+        ship.maneuver = null;
+        ship.thrust = 0;
+        events.push({ kind: "notice", ship: ship.id, text: "Burn complete — engines to zero." });
+      }
+      return;
+    }
+
+    // campaign gate run: two STICKY phases (a threshold that can revert
+    // dithers forever — measured). brake: shared retro until the crawl;
+    // run: continuously re-aim the aperture center and burn — from near
+    // rest the ballistic threads by construction, and the re-aim curve
+    // absorbs the residual crossline. The crossing ends the system.
+    if (type === "gate_run") {
+      const m = this.mission;
+      if (!m) {
+        ship.maneuver = null;
+        return;
+      }
+      const man = ship.maneuver as { type: "gate_run"; phase: "brake" | "run" };
+      if (man.phase === "brake" && speed < 10) man.phase = "run";
+      if (man.phase === "run") {
+        const toGate = bearingTo(ship.x, ship.y, m.gate.x, m.gate.y);
+        ship.goal = { mode: "absolute", degrees: toGate };
+        ship.thrust = Math.abs(angDiff(ship.facing, toGate)) <= 6 ? 100 : 0;
+        return;
+      }
+      // brake phase: fall through to the shared retro-brake below
+    }
 
     // salvage (§4.1): "the XO handles the velocity-matching" — the
     // maneuver flies the TERMINAL approach itself: gentle hops toward the

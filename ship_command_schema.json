@@ -187,17 +187,19 @@
     },
 
     "maneuver": {
-      "description": "Run an autopilot macro with a defined end state. full_stop: the helm flips to retrograde, burns at an appropriate throttle, and cuts thrust when speed < 5 m/s; the XO announces start and completion. Cancelled automatically by ANY subsequent set_thrust or set_heading ('belay that' should emit set_thrust with the current setting to take the conn back). Rejected if already stopped.",
+      "description": "Run an autopilot macro with a defined end state; cancelled automatically by ANY subsequent set_thrust or set_heading ('belay that' should emit set_thrust with the current setting to take the conn back). TYPES — full_stop: flip to retrograde, burn, cut at <5 m/s (rejected if already stopped). burn: a TIMED burn — thrust at `percent` for `seconds`, then engines to zero, announced ('give me a five second burn at fifty percent' = {type:'burn', seconds:5, percent:50}); use whenever the captain gives a burn a DURATION. gate_run (CAMPAIGN ONLY): the XO threads the gate — requires within ~15 km of the gate and under ~300 m/s, else the server rejects and says which ('get me through the gate', 'take us through', 'maneuver through the gate'); leave its acknowledgement EMPTY.",
       "type": "object",
       "required": ["type"],
       "properties": {
-        "type": { "enum": ["full_stop"] }
+        "type": { "enum": ["full_stop", "burn", "gate_run"] },
+        "seconds": { "type": "number", "description": "burn only: duration, 1-600 s." },
+        "percent": { "type": "number", "description": "burn only: throttle, 1-100." }
       },
-      "examples": [ { "type": "full_stop" } ]
+      "examples": [ { "type": "full_stop" }, { "type": "burn", "seconds": 5, "percent": 50 }, { "type": "gate_run" } ]
     },
 
     "salvage": {
-      "description": "CAMPAIGN ONLY (rejected in multiplayer). Fly to a salvage site and run the transfer. Sites carry LETTER designations shown in CURRENT SHIP STATE ('wreck A', 'rumor C' — plain letters, never the NATO contact words). Within ~15 km of the named site the XO flies the ENTIRE approach: velocity-match, terminal dock, then items aboard one at a time, worst first, ~10s each. Targeting an UNRESOLVED RUMOR is how you investigate it — the approach resolves it en route (loot: he docks and transfers; dry hole: he calls it and stops). Beyond 15 km the server rejects and teaches the range. ANY subsequent set_thrust/set_heading breaks off; everything already landed stays aboard. `target` = the site letter; omit it for the nearest site. Use on ANY travel-or-take intent naming a site: 'come alongside rumor A', 'bring me to wreck B', 'MANEUVER to rumor D', 'take me to / go to / head to wreck A', 'investigate rumor C', 'salvage', 'strip the wreck'. CAUTION: 'maneuver to <site>' is THIS verb, never set_heading and never the maneuver verb (which is only full_stop) — captain-speak 'maneuver to X' means GO THERE. 'Break off' = set_thrust 0. Leave acknowledgement EMPTY — the ship speaks its own line.",
+      "description": "CAMPAIGN ONLY (rejected in multiplayer). Fly to a salvage site and run the transfer. Sites carry LETTER designations shown in CURRENT SHIP STATE ('wreck A', 'rumor C' — plain letters, never the NATO contact words). Within ~15 km of the named site the XO flies the ENTIRE approach: velocity-match, terminal dock, then items aboard one at a time, worst first, ~10s each. Targeting an UNRESOLVED RUMOR is how you investigate it — the approach resolves it en route (loot: he docks and transfers; dry hole: he calls it and stops). Beyond 15 km the server rejects and teaches the range. ANY subsequent set_thrust/set_heading breaks off; everything already landed stays aboard. `target` = the site letter; omit it for the nearest site. Use on ANY travel-or-take intent naming a site: 'come alongside rumor A', 'bring me to wreck B', 'MANEUVER to rumor D', 'take me to / go to / head to wreck A', 'investigate rumor C', 'salvage', 'strip the wreck'. CAUTION: 'maneuver to <site>' is THIS verb, never set_heading — captain-speak 'maneuver to X' means GO THERE. BUT pointing is NOT traveling: 'turn to / point at / face / nose on wreck A' = set_heading absolute at its bearing from the state line, at ANY range — never the salvage verb. 'Break off' = set_thrust 0. Leave acknowledgement EMPTY — the ship speaks its own line.",
       "type": "object",
       "properties": {
         "target": { "type": "string", "description": "Site letter from the state line ('A'). Omit for nearest." }
@@ -763,6 +765,24 @@
         ]
       },
       {
+        "captain": "Turn toward wreck A",
+        "commands": [
+          { "verb": "set_heading", "params": { "mode": "absolute", "degrees": 285 }, "acknowledgement": "Nose on wreck A." }
+        ]
+      },
+      {
+        "captain": "Give me a 5 second burn at 50% engines",
+        "commands": [
+          { "verb": "maneuver", "params": { "type": "burn", "seconds": 5, "percent": 50 }, "acknowledgement": "Five seconds at half thrust, aye." }
+        ]
+      },
+      {
+        "captain": "Get me through the gate",
+        "commands": [
+          { "verb": "maneuver", "params": { "type": "gate_run" }, "acknowledgement": "" }
+        ]
+      },
+      {
         "captain": "Break off, get us moving",
         "commands": [
           { "verb": "set_thrust", "params": { "percent": 60 }, "acknowledgement": "Breaking off — underway." }
@@ -789,6 +809,7 @@
     "rules": [
       "Emit only valid commands from this schema. If the captain's intent maps to no verb, emit no command and have the acknowledgement explain what the ship can and cannot do.",
       "Ambiguity policy: make a reasonable interpretation and state it in the acknowledgement rather than asking clarifying questions. Misinterpretation is part of the game; stalling is not.",
+      "KNOWN VOICE MISHEARINGS: treat 'I'll stop' / 'I will stop' as 'all stop' (maneuver full_stop) — the transcriber confuses them constantly. 'Hold pieces'/'hold PCs' = 'hold PDCs'.",
       "CONTACT NAMES: the CURRENT SHIP STATE contact table lists this captain's designations ('Contact Alpha', 'Contact Bravo') and identified callsigns. When the captain names one, pass that exact name as the set_heading target / set_lock_target contact. 'him'/'the contact' with several contacts on the table = the nearest tracked one — say which in the acknowledgement ('On Bravo — the near one'). NEVER use a callsign that is not on the table: unidentified ships have no names yet.",
       "Compound utterances may emit up to 4 commands, executed in order.",
       "Never invent game state. Use query for anything the captain asks about; the acknowledgement for a query is written AFTER the server returns the snapshot.",

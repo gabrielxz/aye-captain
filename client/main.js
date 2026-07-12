@@ -68,6 +68,10 @@ function handleMessage(msg) {
       // and this is the instrument for flying it ("set_overlay off" still
       // works; a Stage 0 playtester may never discover the phrase)
       if (state.campaign) setOverlay("drift", true);
+      // campaign: every system starts ON YOUR SHIP — a drag-pan in the
+      // last system left follow off, and the camera woke up staring at
+      // the old gate (playtest)
+      if (state.campaign && msg.role !== "spectator") camera.follow = true;
       prevTiers = null;
       pingListen = null;
       updateWatching([]); // fresh roster arrives right behind the start

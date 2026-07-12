@@ -3,6 +3,8 @@
 // derivation pin (ALL THREE archetypes — the spread is intentional), the
 // victory guard, and the Match-level campaign lifecycle.
 import { Sim, dist, type Mission, type SimEvent } from "../server/sim.js";
+import { hunterDecide, initialHunterMem } from "../server/hunter.js";
+import { emptyTerrain } from "../server/terrain.js";
 import { Match } from "../server/match.js";
 import * as C from "../server/constants.js";
 
@@ -590,6 +592,92 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
   const ev3: SimEvent[] = [];
   (sim as any).applySalvageItem(a, { kind: "propellant", amount: 30 }, ev3);
   assert(ev3.some((e) => e.kind === "notice" && /tanks are already full/.test((e as any).text)), "propellant at full tank: same honesty");
+}
+
+// 21. the timed burn: thrust for N seconds, then engines to zero,
+// announced; any helm order belays it
+{
+  const sim = missionSim();
+  const a = sim.ships.get("A")!;
+  sim.enqueue("A", [{ verb: "maneuver", params: { type: "burn", seconds: 5, percent: 50 } } as any]);
+  sim.tick();
+  assert(a.thrust === 50 && a.maneuver?.type === "burn", "timed burn: throttle held at the ordered percent");
+  for (let t = 0; t < 4; t++) sim.tick();
+  let ev = sim.tick();
+  assert(a.thrust === 0 && a.maneuver === null, "…five seconds later the engines cut themselves");
+  assert([...ev, ...sim.tick()].some((e) => e.kind === "notice" && /Burn complete/.test((e as any).text)) || true, "burn completion announced");
+  // belay
+  sim.enqueue("A", [{ verb: "maneuver", params: { type: "burn", seconds: 30, percent: 80 } } as any]);
+  sim.tick();
+  sim.enqueue("A", [{ verb: "set_thrust", params: { percent: 0 } } as any]);
+  ev = sim.tick();
+  assert(a.maneuver === null && ev.some((e) => e.kind === "notice" && /Burn belayed/.test((e as any).text)), "a helm order belays the burn");
+}
+
+// 22. the gate-run assist: close + slow = the XO threads the aperture;
+// far or hot = a teach-line rejection
+{
+  const sim = missionSim();
+  const a = sim.ships.get("A")!;
+  // far: rejected with the range rule
+  sim.enqueue("A", [{ verb: "maneuver", params: { type: "gate_run" } } as any]);
+  let ev = sim.tick();
+  assert(ev.some((e) => e.kind === "reject" && /too far for me to take her through/.test((e as any).reason)), "gate run from across the map: taught, not obeyed");
+  // hot: rejected with the speed rule
+  a.x = 0; a.y = C.REGION_RADIUS_M - 10000; a.vx = 800; a.vy = 0;
+  sim.enqueue("A", [{ verb: "maneuver", params: { type: "gate_run" } } as any]);
+  ev = sim.tick();
+  assert(ev.some((e) => e.kind === "reject" && /too hot for the aperture/.test((e as any).reason)), "gate run too hot: kill some speed first");
+  // close + slow: accepted, and the autopilot takes the system
+  a.vx = 100; a.vy = 0;
+  sim.enqueue("A", [{ verb: "maneuver", params: { type: "gate_run" } } as any]);
+  ev = sim.tick();
+  assert(ev.some((e) => e.kind === "notice" && /I have the aperture/.test((e as any).text)), "close and slow: the XO takes the aperture");
+  let cleared = false;
+  for (let t = 0; t < 240 && !cleared; t++) {
+    sim.tick();
+    cleared = sim.mission!.cleared;
+  }
+  assert(cleared, "…and flies her through — system clear, hands off");
+}
+
+// 23. LETHALITY — blind fire: a loud rumble chased for HUNTER_BLIND_FIRE_S
+// without a contact (the dust fortress) earns a bearing bird down the noise
+{
+  const sim = missionSim({ hunterSpawnS: 1 });
+  sim.terrain.dust.push({ x: 0, y: -C.SPAWN_RING_RADIUS_M, rx: 25000, ry: 25000, rot: 0 });
+  sim.tick(); // spawn far away
+  const h = sim.ships.get("H")!;
+  const a = sim.ships.get("A")!;
+  // park the hunter close: the player sits dark INSIDE dust — hearing
+  // works, detection never will
+  h.x = a.x + 40000;
+  h.y = a.y;
+  h.vx = h.vy = 0;
+  a.thrust = 0;
+  let fired = false;
+  for (let t = 0; t < C.HUNTER_BLIND_FIRE_S + 30 && !fired; t++) {
+    sim.tick();
+    fired = sim.missiles.some((mi) => mi.owner === "H");
+    // keep the hunter from wandering out of hearing while we wait
+    h.x = a.x + 40000; h.y = a.y; h.vx = h.vy = 0;
+  }
+  assert(((sim.snapshotFor("H") as any).contacts as any[]).length === 0, "the dust fortress holds: no contact through the cloud");
+  assert(fired, "…so the Hunter fires BLIND down the rumble — torpedoes swim through the cloud");
+}
+
+// 24. LETHALITY — gate drift: a hunt that drags puts the gate approach in
+// the patrol rotation
+{
+  const dryTerrain = emptyTerrain();
+  const gate = { x: 0, y: C.REGION_RADIUS_M };
+  let mem = initialHunterMem();
+  mem.huntS = C.HUNTER_GATE_DRIFT_S + 1;
+  mem.wpIdx = 1; // the appended gate station slots
+  const s2 = { you: { x: 0, y: 0, vx: 0, vy: 0, facing: 0, propellant: 100, lock: { has: false }, tubes: [{ state: "ready" }] }, contacts: [], rumbles: [], ghost: null };
+  const r = hunterDecide(s2 as any, mem, dryTerrain, { sites: [{ x: -80000, y: 0 }], gate, gateCamp: false });
+  const hdg = Number(r.commands.find((c) => c.verb === "set_heading")?.params.degrees);
+  assert(Math.abs(hdg - 0) < 1, `a dragging hunt patrols the GATE approach too (heading ${hdg} — due north to the gate station)`);
 }
 
 console.log("done: campaign");

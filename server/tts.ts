@@ -117,6 +117,12 @@ const STOCK_LINES = [
   "We're wide right, Captain.",
   "It's gone quiet, Captain. The system is ours.",
   "We're through, Captain.",
+  "I have the aperture, Captain — taking us through.",
+  "The gate's too far for me to take her through, Captain — get us inside fifteen klicks.",
+  "We're too hot for the aperture, Captain — kill some speed and I'll thread it.",
+  "Burn complete — engines to zero.",
+  "Burn belayed — you have the conn.",
+  "Gate run belayed — you have the conn.",
   // salvage (§4): the haul narrates itself, one line per landing
   "Coming alongside, Captain.",
   "Alongside. Transfer's running, Captain.",

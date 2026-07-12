@@ -449,6 +449,28 @@ export const HUNTER_LEASH_FRAC = 0.9;
 // then probes (gate first — the player must come there eventually — then
 // down the last bearing it heard). Numbers-only; ladder rows can retune.
 export const HUNTER_DRY_SPELL_S = 75;
+// Lethality round (playtest: a dust-parked player was unfindable forever
+// and the Hunter read as harmless). BLIND FIRE: a persistent loud rumble
+// it cannot convert to a contact (the dust fortress) earns a bearing-
+// guided bird down the noise — prox fuses are pure geometry, and torpedoes
+// swimming through your cloud is the answer dust deserves. GATE DRIFT: as
+// a hunt drags on, the patrol biases toward the gate — it knows where you
+// must eventually go (a soft, every-system version of the late-row picket).
+export const HUNTER_BLIND_FIRE_S = 25; // continuous rumble-chase without a contact before it shoots the noise
+// A PARKED DARK ship's rumble reads ~0.2 loud even close aboard (measured
+// — loudness tracks signature, not just distance), and the parked dark
+// ship IS the dust-fortress case this exists for. The chase-time gate is
+// the real filter; the loudness floor only screens out map-edge whispers.
+export const HUNTER_BLIND_FIRE_LOUD = 0.15;
+export const HUNTER_GATE_DRIFT_S = 150; // hunt seconds before the gate joins the patrol rotation
+
+// Gate-run assist (playtest ask): within this range and below this speed,
+// "take us through the gate" hands the aperture to the XO — he stops,
+// lines the ballistic through center, and burns straight. The slow-entry
+// requirement is the price that keeps the aperture the difficulty: slow
+// is when the Hunter catches you.
+export const GATE_ASSIST_RANGE_M = 15000;
+export const GATE_ASSIST_MAX_SPEED_MPS = 300;
 export const GATE_XO_COOLDOWN_S = 10; // min gap between gate-solution XO calls (§5.4: rate-limited HARD)
 
 // --- Stage 1: the run (§1) + salvage (§4) + progression (§6) ---

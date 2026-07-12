@@ -245,8 +245,16 @@ export function validateCommand(raw: unknown, nested = false): Command | null {
       return out({ posture: p.posture });
     }
     case "maneuver": {
-      if (p.type !== "full_stop") return null;
-      return out({ type: p.type });
+      if (p.type === "full_stop") return out({ type: p.type });
+      if (p.type === "gate_run") return out({ type: p.type });
+      if (p.type === "burn") {
+        const secs = p.seconds;
+        const pct = p.percent;
+        if (typeof secs !== "number" || !Number.isFinite(secs) || secs < 1 || secs > 600) return null;
+        if (typeof pct !== "number" || !Number.isFinite(pct) || pct <= 0 || pct > 100) return null;
+        return out({ type: "burn", seconds: secs, percent: pct });
+      }
+      return null;
     }
     case "salvage": {
       // campaign: resolution is by proximity server-side; a named target
