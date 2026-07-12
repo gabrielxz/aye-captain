@@ -325,6 +325,20 @@ export const UTTERANCE_MAX_COMMANDS = 4;
 // Speech-to-text (server-side, see stt.ts; provider/key come from env)
 export const STT_TIMEOUT_MS = 15000;
 export const STT_MAX_AUDIO_BYTES = 15 * 1024 * 1024; // /stt upload cap
+// Groq on_demand tier caps whisper-large-v3-turbo at 20 requests/min PER ORG
+// — one 8-captain room shares it (playtest 2026-07-12 peaked ~30/min and
+// 429-stormed). Requests over the budget wait briefly, then spill to the
+// STT_FALLBACK_* provider, then fail as "busy". Env STT_RPM overrides
+// without a deploy (raise it when the Groq tier upgrade lands).
+export const STT_RPM_LIMIT = 20;
+export const STT_MAX_QUEUE_DELAY_MS = 5000; // longest a clip may wait for a primary slot
+export const STT_429_PENALTY_MS = 20000; // sit out after a 429 with no retry-after header
+
+// Ship AI voice (ElevenLabs, see tts.ts; key from ELEVENLABS_API_KEY)
+// Starter tier also caps CONCURRENT syntheses — dynamic acks in an 8-player
+// room tripped concurrent_limit_exceeded (2026-07-12); synth calls queue
+// through a semaphore this wide.
+export const TTS_MAX_CONCURRENT = 2;
 
 // Ship AI voice (ElevenLabs, see tts.ts; key from ELEVENLABS_API_KEY)
 export const TTS_MODEL = "eleven_flash_v2_5"; // low latency

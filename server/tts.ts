@@ -27,6 +27,25 @@ export function speechId(text: string): string {
 
 const pending = new Map<string, Promise<Buffer | null>>();
 
+// ElevenLabs low tiers cap CONCURRENT syntheses (an 8-player room's burst of
+// dynamic acks tripped concurrent_limit_exceeded) — synth calls take a slot
+// here; waiters re-check on every release until one frees up.
+let synthSlots = 0;
+let synthQueue: Promise<void> = Promise.resolve();
+
+async function withSynthSlot<T>(fn: () => Promise<T>): Promise<T> {
+  while (synthSlots >= C.TTS_MAX_CONCURRENT) await synthQueue;
+  synthSlots++;
+  let release!: () => void;
+  synthQueue = new Promise((r) => (release = r));
+  try {
+    return await fn();
+  } finally {
+    synthSlots--;
+    release();
+  }
+}
+
 async function synthesize(text: string): Promise<Buffer> {
   const url = `https://api.elevenlabs.io/v1/text-to-speech/${C.VOICE_ID}/stream?output_format=mp3_22050_32`;
   const resp = await fetch(url, {
@@ -56,7 +75,7 @@ export function ensureSpeech(text: string): string | null {
       /* miss — synthesize */
     }
     try {
-      const buf = await synthesize(text);
+      const buf = await withSynthSlot(() => synthesize(text));
       await mkdir(cacheDir(), { recursive: true });
       await writeFile(file, buf);
       return buf;

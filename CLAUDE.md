@@ -72,7 +72,12 @@ npm run build      # -> dist/ ; npm start runs it
 and `ELEVENLABS_API_KEY` (ship voice); gitignored. Each degrades gracefully
 when absent (translator offline / Web Speech fallback / text-only ship).
 `STT_API_KEY`/`STT_BASE_URL`/`STT_MODEL` switch STT provider
-(OpenAI-compatible endpoints). `SPEECH_CACHE_DIR` holds generated voice
+(OpenAI-compatible endpoints). STT requests are paced under the primary
+provider's per-org RPM cap (STT_RPM_LIMIT in constants.ts, env `STT_RPM`
+overrides) and spill to `STT_FALLBACK_API_KEY`/`STT_FALLBACK_BASE_URL`/
+`STT_FALLBACK_MODEL` (default OpenAI whisper-1) when saturated — one
+8-captain room shares the primary budget (Groq on_demand = 20 RPM).
+`SPEECH_CACHE_DIR` holds generated voice
 lines (on Fly: the /data volume).
 
 Deploy: live on Fly.io as `aye-captain` (region iad, single machine — always
@@ -120,7 +125,11 @@ Note: on this machine's rootless Docker, `-p` port publishing doesn't route
   `ui.js` (lobby/transcript/HUD/banner; focus: map owns keys, Enter/backtick
   focuses the box, Esc returns), `voice.js` (push-to-talk: 0.8 s pre-roll
   ring -> /stt, Web Speech fallback; hold Space, or on coarse-pointer
-  devices the #ptt HOLD button in the cmd row — same start/stop path), `audio.js` (procedural SFX — PDC
+  devices the #ptt HOLD button in the cmd row — same start/stop path;
+  capture runs in an AudioWorklet, `pcm-worklet.js`, on the audio thread —
+  main-thread jank in busy rooms DROPPED ScriptProcessor buffers mid-word,
+  the 2026-07-12 multiplayer garble; 150 ms stop-grace catches in-flight
+  chunks), `audio.js` (procedural SFX — PDC
   brrrt, crunch, klaxon, thrust, RWR — and the speech queue), `assets/*.svg`.
 
 ## Invariants (do not break)
@@ -259,6 +268,14 @@ Note: on this machine's rootless Docker, `-p` port publishing doesn't route
   cids the designation LETTERS and rumble cids per-viewer opaque aliases
   ("r1") — object-keyed wire ids let a JSON reader correlate tracks and
   spot decoys by prefix.
+- v5.0.1 (2026-07-12 playtest): the translator sometimes emits an ack-only
+  draft, prose ("Wait — I need to emit the command:"), then a corrected
+  fenced block — parseResponse now tries each fenced block as its own
+  candidate, LAST first, and a candidate yielding real commands beats any
+  reply-only one (four live "unusable response" drops pinned in
+  translator.test.ts). Leading-zero bearings (`"degrees": 051`) are
+  repaired string-aware. STT saturation returns 503 "voice channel busy"
+  (client shows the server's message), distinct from 502 real failures.
 - v4: "tell me when X" standing orders use a harmless `show_vector` action —
   the trigger log line itself is the telling (there is no notify verb).
 - v4: PDC ship-fire hull damage is applied directly (fractional per substep)

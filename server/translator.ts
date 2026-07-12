@@ -353,27 +353,38 @@ export function repairJson(text: string): string {
   return out;
 }
 
-export function parseResponse(text: string): TranslationResult {
-  const cleaned = text.replace(/```(?:json)?/gi, "").trim();
-  const start = cleaned.indexOf("[");
-  const end = cleaned.lastIndexOf("]");
-  const candidates = [cleaned];
-  if (start >= 0 && end > start) candidates.push(cleaned.slice(start, end + 1));
-  if (start >= 0) candidates.push(repairJson(cleaned.slice(start)));
-
-  let parsed: unknown;
-  let ok = false;
-  for (const candidate of candidates) {
-    try {
-      parsed = JSON.parse(candidate);
-      ok = true;
-      break;
-    } catch {
-      /* try the next repair stage */
+// JSON forbids leading zeros, and the model writes bearings verbatim
+// ("degrees": 051) often enough to matter. String-aware: digits inside
+// strings are untouched; 0.5 and 10 survive.
+export function stripLeadingZeros(text: string): string {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      out += ch;
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
     }
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+      continue;
+    }
+    // a 0 starting a multi-digit integer (not following a digit or a
+    // decimal point) is a leading zero — drop it
+    if (ch === "0" && /\d/.test(text[i + 1] ?? "") && !/[\d.]/.test(out[out.length - 1] ?? "")) {
+      continue;
+    }
+    out += ch;
   }
-  if (!ok) return { commands: [], replies: [], dropped: 0, failed: true };
+  return out;
+}
 
+function evaluateElements(parsed: unknown): TranslationResult {
   const arr = Array.isArray(parsed) ? parsed : [parsed];
   const commands: Command[] = [];
   const replies: string[] = [];
@@ -396,6 +407,48 @@ export function parseResponse(text: string): TranslationResult {
 
   const failed = commands.length === 0 && replies.length === 0;
   return { commands, replies, dropped, failed };
+}
+
+export function parseResponse(text: string): TranslationResult {
+  const fixed = stripLeadingZeros(text);
+  const cleaned = fixed.replace(/```(?:json)?/gi, "").trim();
+  const start = cleaned.indexOf("[");
+  const end = cleaned.lastIndexOf("]");
+  const candidates = [cleaned];
+  if (start >= 0 && end > start) candidates.push(cleaned.slice(start, end + 1));
+  if (start >= 0) candidates.push(repairJson(cleaned.slice(start)));
+  // Self-corrected multi-block responses — an ack-only draft, prose
+  // ("Wait — I need to emit the command:"), then a second fenced block with
+  // the real command (playtest 2026-07-12 dropped four of these as
+  // unusable). Each fenced block is its own candidate, LAST first: the
+  // model's final answer supersedes its draft. An unterminated final fence
+  // (response cut at max_tokens) still matches through to end-of-text, and
+  // repairJson closes what the cutoff left open.
+  const blocks = [...fixed.matchAll(/```(?:json)?\s*([\s\S]*?)(?:```|$)/gi)]
+    .map((m) => m[1].trim())
+    .filter(Boolean)
+    .reverse();
+  for (const block of blocks) {
+    candidates.push(block);
+    candidates.push(repairJson(block));
+  }
+
+  // A candidate that yields real commands beats any reply-only candidate:
+  // acks execute nothing (v4.6), and the dropped-command case is the one
+  // that reads as "the XO ignored me".
+  let replyOnly: TranslationResult | null = null;
+  for (const candidate of candidates) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(candidate);
+    } catch {
+      continue; // try the next repair stage
+    }
+    const result = evaluateElements(parsed);
+    if (result.commands.length > 0) return result;
+    if (!result.failed && replyOnly === null) replyOnly = result;
+  }
+  return replyOnly ?? { commands: [], replies: [], dropped: 0, failed: true };
 }
 
 // ---------- API calls ----------

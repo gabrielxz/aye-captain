@@ -1,5 +1,37 @@
 # TODO — next steps
 
+## v5.0.1 — multiplayer voice-pipeline fixes (playtest 2026-07-12)
+
+Two 8-captain rounds (rooms ADBW, RERU): voice near-unusable for some
+captains, fine for others; one "transcription failed server 502". Four
+distinct causes found in fly logs + /data/utterances.jsonl, all fixed:
+
+- **Groq 20 RPM org cap** (on_demand tier) 429-stormed room RERU at ~30
+  voice cmds/min → every 429 surfaced as a 502. Fixed: reservation-style
+  RPM pacing (STT_RPM_LIMIT / env STT_RPM), 429 penalty windows, spill to
+  an STT_FALLBACK_* provider, 503 "voice channel busy" messaging.
+- **ScriptProcessorNode dropped mic buffers under main-thread jank** —
+  Gabriel's words lost mid-utterance ("Set engine thrust percent." —
+  number gone) while same-room captains were clean; practice minutes later
+  was clean. Fixed: AudioWorklet capture (client/pcm-worklet.js) + 150 ms
+  stop-grace. NEEDS REAL-BATTLE CONFIRMATION next multiplayer playtest.
+- **Translator self-corrections dropped as "unusable"** (4 that night):
+  ack-only draft + "Wait—" prose + corrected fenced block. Fixed:
+  per-block candidates, last-first, commands-beat-replies; leading-zero
+  degrees repaired. Pinned in translator.test.ts.
+- **ElevenLabs concurrent_limit_exceeded** on dynamic-ack bursts. Fixed:
+  TTS_MAX_CONCURRENT=2 semaphore in tts.ts.
+
+- [x] **STT fallback provisioned** (2026-07-12): OpenAI key staged as
+  STT_FALLBACK_API_KEY on Fly (takes effect with the next deploy) + local
+  .env; whisper-1 default. Still worth raising STT_RPM once the Groq
+  Developer tier reopens ("temporarily unavailable due to high demand" as
+  of 2026-07-12) — the fallback absorbs overflow, the primary stays capped
+  at 20 RPM.
+- [ ] Voice-chat bleed (speaker users): friends' Discord audio transcribed
+  as commands ("Can you hear me?" reached the XO). Mitigation is human
+  (headphones); revisit only if playtests keep tripping it.
+
 ## v5 "The Fleet" (HANDOFF-v5.md) — DEPLOYED 2026-07-11
 
 All ten build-order steps, one release: §1 continuous target tracking

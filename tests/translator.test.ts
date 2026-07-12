@@ -1,4 +1,4 @@
-import { parseResponse, repairJson, validateCommand } from "../server/translator.js";
+import { parseResponse, repairJson, stripLeadingZeros, validateCommand } from "../server/translator.js";
 
 const assert = (cond: boolean, msg: string) => {
   if (!cond) { console.error("FAIL:", msg); process.exitCode = 1; }
@@ -92,6 +92,30 @@ const assert = (cond: boolean, msg: string) => {
   const s = '[{"verb":"set_thrust","params":{"percent":1},"acknowledgement":"brace } in { string"}]';
   assert(repairJson(s) === s, "balanced JSON untouched, string braces ignored");
 }
+// 15b. multi-block self-corrections + leading zeros: the four verbatim
+// "unusable response" drops from the 2026-07-12 multiplayer playtest
+{
+  // "100." — ack-only draft, prose, then the real command in a second fence
+  const r1 = parseResponse('```json\n[{"acknowledgement": "Thrust to one hundred percent, aye."}]\n```\n\nWait—I need to emit the command:\n\n```json\n[{"verb":"set_thrust","params":{"percent":100},"acknowledgement":"Flank speed, aye."}]\n```');
+  assert(r1.commands.length === 1 && r1.commands[0].verb === "set_thrust", "self-corrected second block wins (set_thrust 100)");
+
+  // "Fire missile towards Bering 18201." — unfenced ack line, then the command fenced
+  const r2 = parseResponse('[{"acknowledgement":"Bearing one-eight-two, blind fire — bird away."}]\n\n```json\n[{"verb":"fire_missile","params":{"guidance":"bearing","bearing_degrees":182}}]\n```');
+  assert(r2.commands.length === 1 && r2.commands[0].verb === "fire_missile", "fenced command block beats unfenced ack line");
+
+  // "all stop" on dry tanks — two ack-only blocks, the second is the model's correction
+  const r3 = parseResponse('```json\n[{"acknowledgement":"All stop, aye. Flipping to retrograde."}]\n```\n\nWait — tanks are dry.\n\n```json\n[{"acknowledgement":"Tanks empty, Captain. No thrust to brake with."}]\n```');
+  assert(r3.commands.length === 0 && r3.replies.length === 1 && /Tanks empty/.test(r3.replies[0]), "reply-only: the LAST block's correction is kept");
+
+  // leading-zero bearing ("degrees": 051) is invalid JSON — repaired, not dropped
+  const r4 = parseResponse('```json\n[{"verb": "set_heading", "params": {"mode": "absolute", "degrees": 051}, "acknowledgement": "Coming to zero five one."}]\n```');
+  assert(r4.commands.length === 1 && (r4.commands[0].params as any).degrees === 51, "leading-zero degrees repaired to 51");
+
+  // leading-zero repair never touches digits inside strings, decimals, or plain 10
+  const s = '[{"a":"call 051 back","b":10,"c":0.5,"d":051}]';
+  assert(stripLeadingZeros(s) === '[{"a":"call 051 back","b":10,"c":0.5,"d":51}]', "zero-stripping is string-aware and spares 10 / 0.5");
+}
+
 // 16. heading validation
 {
   assert(validateCommand({verb:"set_heading",params:{mode:"relative",direction:"port",degrees:40}}) !== null, "relative heading valid");

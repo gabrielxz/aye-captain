@@ -3,6 +3,9 @@
 //    the key keeps the last PRE_ROLL_S seconds plus everything until
 //    release, so speech onsets are never clipped. Uploaded as WAV to /stt
 //    (server-side Whisper). Used when the server reports an STT key.
+//    Capture runs in an AudioWorklet (audio thread — main-thread jank in a
+//    busy 8-player battle can no longer drop buffers mid-word); the
+//    deprecated ScriptProcessorNode remains only as a legacy fallback.
 //  - webspeech: browser Web Speech API (free fallback, Chrome/Edge/Safari)
 // States reported via onStateChange: "idle" | "listening" | "transcribing".
 
@@ -10,6 +13,7 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const AC = window.AudioContext || window.webkitAudioContext;
 
 const PRE_ROLL_S = 0.8; // audio kept from BEFORE the keypress
+const TAIL_GRACE_MS = 150; // after release: in-flight worklet chunks + clipped word endings land
 const UPLOAD_RATE = 16000; // Whisper-native mono 16 kHz
 
 export function createVoice({ useServerStt, onInterim, onFinal, onStateChange, onError }) {
@@ -23,6 +27,7 @@ export function createVoice({ useServerStt, onInterim, onFinal, onStateChange, o
   // ---------- pcm engine (continuous capture + pre-roll ring) ----------
   let cap = null; // {stream, actx, ring: Float32Array[], ringLen, rec: Float32Array[]|null}
   let heldSince = 0;
+  let recGen = 0; // bumped per press so a stale stop-grace timer can't steal a new recording
 
   async function ensureCapture() {
     if (cap && cap.stream.active && cap.actx.state !== "closed") {
@@ -36,10 +41,8 @@ export function createVoice({ useServerStt, onInterim, onFinal, onStateChange, o
     });
     const actx = new AC();
     const src = actx.createMediaStreamSource(stream);
-    const proc = actx.createScriptProcessor(2048, 1, 1);
     const state = { stream, actx, ring: [], ringLen: 0, rec: null };
-    proc.onaudioprocess = (e) => {
-      const chunk = new Float32Array(e.inputBuffer.getChannelData(0));
+    const onChunk = (chunk) => {
       state.ring.push(chunk);
       state.ringLen += chunk.length;
       const capSamples = PRE_ROLL_S * actx.sampleRate;
@@ -49,12 +52,27 @@ export function createVoice({ useServerStt, onInterim, onFinal, onStateChange, o
       }
       if (state.rec) state.rec.push(chunk);
     };
-    // the processor only runs when routed to the destination; a zero-gain
-    // stage keeps the mic from echoing out of the speakers
+    let node;
+    if (actx.audioWorklet) {
+      await actx.audioWorklet.addModule("/pcm-worklet.js");
+      node = new AudioWorkletNode(actx, "pcm-capture", {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        channelCount: 1,
+      });
+      node.port.onmessage = (e) => onChunk(e.data);
+    } else {
+      // legacy: main-thread capture — jank can drop buffers (the pre-v5.0.1
+      // multiplayer garble); only browsers without AudioWorklet land here
+      node = actx.createScriptProcessor(2048, 1, 1);
+      node.onaudioprocess = (e) => onChunk(new Float32Array(e.inputBuffer.getChannelData(0)));
+    }
+    // keep the node in a rendered graph so it always processes; the
+    // zero-gain stage stops the mic echoing out of the speakers
     const mute = actx.createGain();
     mute.gain.value = 0;
-    src.connect(proc);
-    proc.connect(mute);
+    src.connect(node);
+    node.connect(mute);
     mute.connect(actx.destination);
     cap = state;
     return cap;
@@ -70,18 +88,27 @@ export function createVoice({ useServerStt, onInterim, onFinal, onStateChange, o
     }
     if (mode !== "listening") return; // key released while mic was coming up
     heldSince = performance.now();
+    recGen++;
     cap.rec = [...cap.ring]; // pre-roll: the words spoken as the key went down
   }
 
   function stopPcm() {
-    const chunks = cap?.rec ?? [];
-    if (cap) cap.rec = null;
     const heldMs = performance.now() - heldSince;
     if (heldMs < 350) {
+      if (cap) cap.rec = null;
       setMode("idle"); // a tap, not an order
       return;
     }
-    void finishPcm(chunks);
+    // keep recording through a short grace so worklet chunks still in
+    // flight (and the tail of the last word) make it into the clip
+    setMode("transcribing");
+    const gen = recGen;
+    setTimeout(() => {
+      if (gen !== recGen || !cap || !cap.rec) return; // re-pressed during the grace
+      const chunks = cap.rec;
+      cap.rec = null;
+      void finishPcm(chunks);
+    }, TAIL_GRACE_MS);
   }
 
   async function finishPcm(chunks) {
@@ -117,7 +144,11 @@ export function createVoice({ useServerStt, onInterim, onFinal, onStateChange, o
         headers: { "Content-Type": "audio/wav" },
         body: wav,
       });
-      if (!resp.ok) throw new Error(`server ${resp.status}`);
+      if (!resp.ok) {
+        // the server explains saturation ("voice channel busy") vs failure
+        const detail = await resp.json().then((b) => b.error).catch(() => null);
+        throw new Error(detail ?? `server ${resp.status}`);
+      }
       const { text } = await resp.json();
       setMode("idle");
       if (text) onFinal(text);

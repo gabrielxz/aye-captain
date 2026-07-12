@@ -10,7 +10,7 @@ import {
   STT_MAX_AUDIO_BYTES,
 } from "./constants.js";
 import { Match } from "./match.js";
-import { sttAvailable, transcribe } from "./stt.js";
+import { sttAvailable, transcribe, SttBusyError } from "./stt.js";
 import { getSpeech, pregenStockLines, ttsAvailable } from "./tts.js";
 
 const PORT = Number(process.env.PORT ?? 8080);
@@ -44,8 +44,15 @@ app.post(
       const text = await transcribe(audio, req.headers["content-type"] ?? "audio/webm");
       res.json({ text });
     } catch (err) {
-      console.error("stt error:", err instanceof Error ? err.message : err);
-      res.status(502).json({ error: "transcription failed" });
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("stt error:", msg);
+      // saturation (every provider budget spent / rate-limited) is the
+      // captain's cue to re-key the mic, not a server fault
+      if (err instanceof SttBusyError || msg.includes("STT 429")) {
+        res.status(503).json({ error: "voice channel busy — try again in a few seconds" });
+      } else {
+        res.status(502).json({ error: "transcription failed" });
+      }
     }
   }
 );
