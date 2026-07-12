@@ -411,7 +411,11 @@ export type SimEvent =
 // greed curve, not a progress bar. "upgrade" is the run-maker: a permanent
 // per-run stat module (§6 — a multiplier, not a tech tree).
 export interface SalvageItem {
-  kind: "propellant" | "missiles" | "pdc_ammo" | "hull" | "decoys" | "upgrade";
+  // "propellant" survives in the type for hand-built fields, but the
+  // generators no longer deal it (playtest: the tank caps at 100 and the
+  // ramscoop refills free — fuel salvage was dead weight). Probes took
+  // its slot: consumable, stackable, and the Hunter spends them too.
+  kind: "propellant" | "missiles" | "pdc_ammo" | "hull" | "decoys" | "probes" | "upgrade";
   amount: number;
   upgrade?: "sig" | "sensor" | "accel" | "hull";
 }
@@ -2007,8 +2011,8 @@ export class Sim {
         checked: false,
         items: [
           { kind: "pdc_ammo", amount: 30 },
-          { kind: "propellant", amount: 40 },
           { kind: "missiles", amount: 2 },
+          { kind: "probes", amount: 2 },
           { kind: "upgrade", amount: 1, upgrade: cycle[(this.mission.stats.huntersKilled - 1) % 4] },
         ],
       });
@@ -4232,8 +4236,14 @@ export class Sim {
     const say = (text: string) => events.push({ kind: "notice", ship: ship.id, text });
     switch (item.kind) {
       case "propellant":
+        // an item that lands with nowhere to go still gets CALLED (playtest:
+        // "if we find something we can't use, the XO should mention it")
+        if (ship.propellant >= C.PROPELLANT_MAX) {
+          say("Propellant aboard — but the tanks are already full, Captain.");
+        } else {
+          say("Propellant aboard, Captain.");
+        }
         ship.propellant = Math.min(C.PROPELLANT_MAX, ship.propellant + item.amount);
-        say("Propellant aboard, Captain.");
         break;
       case "missiles":
         ship.reserve += item.amount;
@@ -4247,9 +4257,17 @@ export class Sim {
         ship.decoys += item.amount;
         say("Decoys aboard.");
         break;
+      case "probes":
+        ship.probesLeft += item.amount;
+        say("Sensor probes aboard, Captain.");
+        break;
       case "hull":
+        if (ship.hull >= hullMaxOf(ship)) {
+          say("Hull plating aboard — but she's already whole, Captain.");
+        } else {
+          say("Patch crews report hull repairs holding.");
+        }
         ship.hull = Math.min(hullMaxOf(ship), ship.hull + item.amount);
-        say("Patch crews report hull repairs holding.");
         break;
       case "upgrade": {
         // §6: one permanent (per-run) stat module — applied to the ship

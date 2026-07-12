@@ -237,9 +237,9 @@ export class Match {
         marked: true,
         checked: false,
         items: [
-          { kind: "propellant", amount: 30 },
           { kind: "pdc_ammo", amount: 20 },
           { kind: i % 2 === 0 ? "missiles" : "decoys", amount: 2 },
+          { kind: "probes", amount: 1 },
         ] as SalvageItem[],
       });
     }
@@ -259,9 +259,9 @@ export class Match {
         items: empty
           ? []
           : ([
-              { kind: "propellant", amount: 30 },
               { kind: "hull", amount: 15 },
               { kind: "missiles", amount: 2 },
+              { kind: "probes", amount: 1 },
               ...(inDust || rand() < 0.4
                 ? [{ kind: "upgrade", amount: 1, upgrade: cycle[(id + i) % 4] }]
                 : []),
@@ -433,6 +433,7 @@ export class Match {
       missiles: "missiles",
       pdc_ammo: "PDC ammunition",
       decoys: "decoys",
+      probes: "sensor probes",
       hull: "hull repair",
     };
     const moduleNames = {

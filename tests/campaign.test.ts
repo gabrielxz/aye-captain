@@ -564,4 +564,32 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
   assert(new Set(letters).size === letters.length && letters[0] === "A", `generated letters unique from A (${letters.join(",")})`);
 }
 
+// 20. loot economy (playtest round 5): propellant is out of the deal
+// tables (tank caps + free ramscoop = dead weight) — probes take the
+// slot; items that land with nowhere to go get CALLED, not silently eaten
+{
+  const gen = (Match as any).generateWrecks("loot-econ", new Sim("loot-econ"));
+  const kinds = gen.flatMap((w: any) => w.items.map((i: any) => i.kind));
+  assert(!kinds.includes("propellant"), "generators deal no propellant");
+  assert(kinds.includes("probes"), "…probes took its slot");
+
+  const sim = missionSim();
+  const a = sim.ships.get("A")!;
+  const before = a.probesLeft;
+  const ev: SimEvent[] = [];
+  (sim as any).applySalvageItem(a, { kind: "probes", amount: 2 }, ev);
+  assert(a.probesLeft === before + 2, "salvaged probes stack onto the supply");
+  assert(ev.some((e) => e.kind === "notice" && /Sensor probes aboard/.test((e as any).text)), "…and are announced");
+
+  // waste is mentioned, not silent
+  a.hull = 100; // frigate max
+  const ev2: SimEvent[] = [];
+  (sim as any).applySalvageItem(a, { kind: "hull", amount: 15 }, ev2);
+  assert(ev2.some((e) => e.kind === "notice" && /already whole/.test((e as any).text)), "hull plating at full hull: the XO says it was useless");
+  a.propellant = 100;
+  const ev3: SimEvent[] = [];
+  (sim as any).applySalvageItem(a, { kind: "propellant", amount: 30 }, ev3);
+  assert(ev3.some((e) => e.kind === "notice" && /tanks are already full/.test((e as any).text)), "propellant at full tank: same honesty");
+}
+
 console.log("done: campaign");
