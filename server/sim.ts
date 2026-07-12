@@ -3418,7 +3418,7 @@ export class Sim {
         // the dash.
         speak: now
           ? "We're in the cloud. Our sensors are blind, but so are theirs."
-          : "Clear of the cloud. Sensors are back.",
+          : "We're clear of the cloud, Captain. Sensors are back.",
       });
     }
     ship.wasInDust = now;

@@ -197,7 +197,7 @@
     },
 
     "salvage": {
-      "description": "CAMPAIGN ONLY (rejected in multiplayer). Fly to a salvage site and run the transfer. Sites carry LETTER designations shown in CURRENT SHIP STATE ('wreck A', 'rumor C' — plain letters, never the NATO contact words). Within ~15 km of the named site the XO flies the ENTIRE approach: velocity-match, terminal dock, then items aboard one at a time, worst first, ~10s each. Targeting an UNRESOLVED RUMOR is how you investigate it — the approach resolves it en route (loot: he docks and transfers; dry hole: he calls it and stops). Beyond 15 km the server rejects and teaches the range. ANY subsequent set_thrust/set_heading breaks off; everything already landed stays aboard. `target` = the site letter; omit it for the nearest site. Use on 'come alongside rumor A', 'bring me to wreck B', 'investigate rumor C', 'salvage', 'strip the wreck'. 'Break off' = set_thrust 0. Leave acknowledgement EMPTY — the ship speaks its own line.",
+      "description": "CAMPAIGN ONLY (rejected in multiplayer). Fly to a salvage site and run the transfer. Sites carry LETTER designations shown in CURRENT SHIP STATE ('wreck A', 'rumor C' — plain letters, never the NATO contact words). Within ~15 km of the named site the XO flies the ENTIRE approach: velocity-match, terminal dock, then items aboard one at a time, worst first, ~10s each. Targeting an UNRESOLVED RUMOR is how you investigate it — the approach resolves it en route (loot: he docks and transfers; dry hole: he calls it and stops). Beyond 15 km the server rejects and teaches the range. ANY subsequent set_thrust/set_heading breaks off; everything already landed stays aboard. `target` = the site letter; omit it for the nearest site. Use on ANY travel-or-take intent naming a site: 'come alongside rumor A', 'bring me to wreck B', 'MANEUVER to rumor D', 'take me to / go to / head to wreck A', 'investigate rumor C', 'salvage', 'strip the wreck'. CAUTION: 'maneuver to <site>' is THIS verb, never set_heading and never the maneuver verb (which is only full_stop) — captain-speak 'maneuver to X' means GO THERE. 'Break off' = set_thrust 0. Leave acknowledgement EMPTY — the ship speaks its own line.",
       "type": "object",
       "properties": {
         "target": { "type": "string", "description": "Site letter from the state line ('A'). Omit for nearest." }
@@ -757,6 +757,12 @@
         ]
       },
       {
+        "captain": "Maneuver to rumor D.",
+        "commands": [
+          { "verb": "salvage", "params": { "target": "D" }, "acknowledgement": "" }
+        ]
+      },
+      {
         "captain": "Break off, get us moving",
         "commands": [
           { "verb": "set_thrust", "params": { "percent": 60 }, "acknowledgement": "Breaking off — underway." }
@@ -796,6 +802,7 @@
       "sensor_ping needs EXPLICIT active intent ('ping', 'go active', 'light them up', 'active sweep') — it reveals us map-wide. Passive questions ('what do you hear', 'any contacts', 'anything out there') are query verbs, never a ping.",
       "A reply-only element (acknowledgement with no verb) must NEVER claim an action was taken — no 'PDCs holding', no 'coming about'. It explains what the ship can and cannot do, or states your interpretation problem. IF YOU CAN NAME THE ACTION, EMIT THE VERB: understanding the intent well enough to describe the action means you emit the command, not a reply.",
       "Vague quantities get sensible defaults, stated aloud: 'slow down' -> thrust 25%, 'ease off' -> reduce by ~25 points, 'hard about' -> relative 180.",
+      "NEVER order full burn the captain didn't ask for toward a POINT destination (a wreck, a rumor, a staging spot): a heading plus 100% thrust with no arrival plan flies the ship off the map. Unrequested travel throttle tops out at ~60%.",
       "Acknowledgements are at most 12 words. Every word is spoken aloud by the ship's voice — brevity is a feature.",
       "Continuous tracking IS a helm capability: 'keep facing him', 'stay pointed at him', 'keep the nose on him', 'chase that rumble' all emit a single set_heading mode=target — the helm re-resolves the bearing every tick until a new heading order. Never build a standing order for it; one command does the whole job.",
       "DRIFT vs VECTOR: any request naming the DRIFT ('drift marker', 'show me our drift', 'put our drift on the map') is the persistent overlay — set_overlay. Asking about the VECTOR or the direction of travel ('show me our vector', 'which way are we drifting', 'what's our vector') is a momentary look — show_vector. When in doubt: a request phrased as a STATE ('keep it up', 'leave it on', 'kill/drop it') is set_overlay; a QUESTION is show_vector.",
@@ -805,7 +812,7 @@
       "PROBE acks: leave the acknowledgement EMPTY — the ship speaks its own launch line. 'probe out'/'launch a probe (down) bearing X' = launch_probe. Probes are the tooling for rumble triangulation: if the captain wants a fix on a rumble, a probe off-axis gives the second bearing — suggest it only when asked how.",
       "RAILGUN acks: leave the acknowledgement EMPTY — the ship speaks its own stock line on fire ('Solution ready — firing.' / 'Slug away.'). 'put a slug on him/that solution' = fire_railgun solution; naming a bearing ('rail on 090') = bearing mode. The rail is a snapshot, not a duel-opener: remind the captain only when relevant that a thrusting target will dodge a solution.",
       "CAMPAIGN — THE GATE IS NOT A CONTACT: when CURRENT SHIP STATE carries a MISSION line, 'the gate' refers to the exit landmark on that line, never to an enemy. 'Head/make for the gate' = set_heading absolute at the gate bearing FROM THE STATE LINE (plus set_thrust if a speed was asked). 'How far to the gate' / 'what's the clock' / 'any salvage out there' = query topic 'mission'. The gate is FLOWN through — there is no gate verb, no docking, no charge-up; do not invent one.",
-      "CAMPAIGN — SALVAGE SITES HAVE LETTERS: 'wreck A' / 'rumor C' on the state line. Within 15 km, the salvage verb WITH THE LETTER flies the whole approach and transfer ('come alongside rumor A', 'bring me to wreck B' = salvage {target}). Beyond 15 km the server rejects and says so — in that case steer for the site's bearing from the state line (set_heading absolute) and TELL the captain the fifteen-klick rule. 'Break off'/'belay the salvage' = set_thrust (any thrust/heading order ends the transfer; what's aboard stays aboard). Leave salvage acknowledgements empty.",
+      "CAMPAIGN — SALVAGE SITES HAVE LETTERS: 'wreck A' / 'rumor C' on the state line. ANY travel/take/investigate intent that NAMES a site is the salvage verb with that letter ('come alongside rumor A', 'bring me to wreck B', 'maneuver to rumor D', 'go to wreck A') — never a bare heading while the site is within 15 km; the salvage verb flies the whole approach and transfer. Beyond 15 km the server rejects and says so — then (and only then) steer for the site's bearing (set_heading absolute) at a MODERATE throttle and TELL the captain the fifteen-klick rule. 'Break off'/'belay the salvage' = set_thrust (any thrust/heading order ends the transfer; what's aboard stays aboard). Leave salvage acknowledgements empty.",
       "CAMPAIGN — RUMORS RESOLVE BY PRESENCE, NEVER BY SENSORS: contents are unknown until the ship gets within ~5 km, where the XO calls it automatically — loot or dry hole. 'Investigate/check out rumor C' = the salvage verb with that letter when within 15 km (the approach resolves it en route); beyond 15 km, set_heading at its bearing. NEVER a query or a ping for a rumor's contents (they cannot resolve it, and dust changes nothing). If the captain asks what's in an unresolved rumor, say the only way to know is to go."
     ]
   }
