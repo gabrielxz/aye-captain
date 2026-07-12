@@ -96,8 +96,24 @@ export function initUI() {
   // socket; the server's close handler detaches us and tears down empty
   // rooms — the one already-tested leave path.
   const toMainMenu = () => location.reload();
+  // gameover MAIN MENU: the match is over, nothing to lose — one click
   document.getElementById("btn-mainmenu").addEventListener("click", toMainMenu);
-  document.getElementById("btn-menu").addEventListener("click", toMainMenu);
+  // in-match EXIT (practice/spectator): confirm first — one stray click
+  // must not dump a session (v5.1.1 playtest)
+  const confirmLeave = document.getElementById("confirm-leave");
+  document.getElementById("btn-menu").addEventListener("click", () => {
+    confirmLeave.classList.add("active");
+  });
+  document.getElementById("btn-leave-yes").addEventListener("click", toMainMenu);
+  document.getElementById("btn-leave-no").addEventListener("click", () => {
+    confirmLeave.classList.remove("active");
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && confirmLeave.classList.contains("active")) {
+      confirmLeave.classList.remove("active");
+      e.stopPropagation();
+    }
+  }, true);
   document.getElementById("btn-howto").addEventListener("click", () => {
     location.href = "/how-to-play";
   });
