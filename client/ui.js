@@ -1,7 +1,16 @@
 // command box, transcript pane, HUD panels, lobby
 import { send, state } from "./main.js";
 import { createVoice } from "./voice.js";
-import { initAudio, setVolume, getVolume, sfxClick, duck, bargeIn } from "./audio.js";
+import {
+  initAudio,
+  setMixVolume,
+  getMixVolume,
+  setVerbosity,
+  getVerbosity,
+  sfxClick,
+  duck,
+  bargeIn,
+} from "./audio.js";
 
 const lobbyEl = document.getElementById("lobby");
 const gameEl = document.getElementById("game");
@@ -101,9 +110,34 @@ export function initUI() {
   // Web Audio needs a user gesture before it may play; arm on the first one.
   document.addEventListener("pointerdown", initAudio);
   document.addEventListener("keydown", initAudio);
-  const vol = document.getElementById("vol");
-  vol.value = String(getVolume());
-  vol.addEventListener("input", () => setVolume(Number(vol.value)));
+  // v5.1 §4.2: SFX and VOICE ride separate sliders
+  for (const [id, kind] of [["vol-sfx", "sfx"], ["vol-voice", "voice"]]) {
+    const el = document.getElementById(id);
+    el.value = String(getMixVolume(kind));
+    el.addEventListener("input", () => setMixVolume(kind, Number(el.value)));
+  }
+  // v5.1 §4.3: XO verbosity — one shared state, a cycle button in the
+  // lobby AND the in-match topbar (changeable mid-match by design: six
+  // people at one table need to be able to shut their XOs up live)
+  const VERBOSITY_CYCLE = ["full", "terse", "silent"];
+  const verbosityButtons = [
+    { el: document.getElementById("verbosity"), prefix: "XO: " },
+    { el: document.getElementById("verbosity-lobby"), prefix: "" },
+  ];
+  const paintVerbosity = () => {
+    for (const { el, prefix } of verbosityButtons) {
+      if (el) el.textContent = `${prefix}${getVerbosity().toUpperCase()}`;
+    }
+  };
+  for (const { el } of verbosityButtons) {
+    el?.addEventListener("click", () => {
+      const next =
+        VERBOSITY_CYCLE[(VERBOSITY_CYCLE.indexOf(getVerbosity()) + 1) % VERBOSITY_CYCLE.length];
+      setVerbosity(next);
+      paintVerbosity();
+    });
+  }
+  paintVerbosity();
 }
 
 // Push-to-talk: hold Space while the command box is empty. With text in the

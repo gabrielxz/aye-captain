@@ -84,6 +84,12 @@
       width: 90px; accent-color: var(--accent); height: 2px;
     }
     #controls-hint { flex: 1; letter-spacing: 0.5px; }
+    .verbosity-btn {
+      background: none; border: 1px solid var(--line); color: var(--dim);
+      font: inherit; font-size: 10px; padding: 2px 8px; cursor: pointer;
+      letter-spacing: 1px;
+    }
+    .verbosity-btn:hover { border-color: var(--accent); color: var(--accent); }
 
     #hud {
       border-bottom: 1px solid var(--line); padding: 8px 10px;
@@ -195,6 +201,9 @@
     </div>
     <button id="btn-practice">PRACTICE</button>
     <button id="btn-howto">HOW TO PLAY</button>
+    <div class="sub" style="margin-top:8px">
+      XO voice: <button id="verbosity-lobby" class="verbosity-btn">FULL</button>
+    </div>
     <div id="lobby-status"></div>
 
     <!-- v5 §2: room lobby — roster, mode toggle, team picks, launch -->
@@ -239,8 +248,11 @@
     <div id="side">
       <div id="topbar">
         <span id="controls-hint">ENTER type &middot; SPACE talk &middot; WHEEL zoom &middot; DRAG/WASD pan &middot; F follow &middot; M map &middot; V vector</span>
-        <span>VOL</span>
-        <input type="range" id="vol" min="0" max="1" step="0.05" />
+        <span>SFX</span>
+        <input type="range" id="vol-sfx" min="0" max="1" step="0.05" style="width:64px" />
+        <span>VOX</span>
+        <input type="range" id="vol-voice" min="0" max="1" step="0.05" style="width:64px" />
+        <button id="verbosity" class="verbosity-btn" title="XO verbosity — FULL: everything &middot; TERSE: warnings and news only &middot; SILENT: warnings only">XO: FULL</button>
       </div>
       <div id="hud"></div>
       <div id="transcript"></div>

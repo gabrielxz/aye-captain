@@ -1,13 +1,33 @@
 // Procedural SFX (Web Audio, no assets) + ship-AI speech queue.
-// Everything routes through one master gain: the VOL slider.
+// Mix (v5.1 §4): SFX and VOICE buses ride separate sliders; the four
+// continuous beds share a group bus with a summed ceiling that ducks
+// under speech; master carries only the push-to-talk duck.
 import { createSpeechScheduler } from "./speech-scheduler.js";
 
 let ctx = null;
 let master = null;
 let sfxBus = null;
 let speechBus = null;
+let bedBus = null; // v5.1 §4.1: every continuous bed routes through here
 
-let volume = Number(localStorage.getItem("vol") ?? 0.7);
+// v5.1 §4.2: SFX and VOICE ride separate sliders (the buses always
+// existed; they were just slaved to one knob). Legacy "vol" seeds both.
+const legacyVol = Number(localStorage.getItem("vol") ?? 0.7);
+const mixVol = {
+  sfx: Number(localStorage.getItem("vol_sfx") ?? legacyVol),
+  voice: Number(localStorage.getItem("vol_voice") ?? legacyVol),
+};
+
+// v5.1 §4.3: XO verbosity — FULL (everything), TERSE (critical + news),
+// SILENT (critical only). Filters speech only; the transcript always logs.
+let verbosity = localStorage.getItem("xo_verbosity") ?? "full";
+export function setVerbosity(v) {
+  verbosity = v;
+  localStorage.setItem("xo_verbosity", v);
+}
+export function getVerbosity() {
+  return verbosity;
+}
 
 // AudioContext needs a user gesture; call from any click/keydown.
 export function initAudio() {
@@ -19,15 +39,46 @@ export function initAudio() {
   if (!AC) return;
   ctx = new AC();
   master = ctx.createGain();
-  master.gain.value = volume;
+  master.gain.value = 1;
   master.connect(ctx.destination);
   sfxBus = ctx.createGain();
-  sfxBus.gain.value = 0.9;
+  sfxBus.gain.value = 0.9 * mixVol.sfx;
   sfxBus.connect(master);
   speechBus = ctx.createGain();
-  speechBus.gain.value = 1.0;
+  speechBus.gain.value = mixVol.voice;
   speechBus.connect(master);
+  bedBus = ctx.createGain();
+  bedBus.gain.value = 1;
+  bedBus.connect(sfxBus);
   startHum();
+}
+
+// ---------- the bed group (v5.1 §4.1) ----------
+// Four continuous beds run at once — thrust rumble, hearing rumble, hull
+// hum, dust hiss — and each was justified alone; nobody summed them. The
+// group gain scales ALL of them down proportionally whenever their summed
+// targets exceed the ceiling, and ducks under XO speech so he never
+// competes with room tone.
+const BED_GAIN_CEILING = 0.22;
+const bedTargets = { hum: 0, thrust: 0, rumble: 0, dust: 0 };
+let speechPlaying = false;
+
+function updateBeds() {
+  if (!bedBus) return;
+  const sum = bedTargets.hum + bedTargets.thrust + bedTargets.rumble + bedTargets.dust;
+  const ceiling = sum > BED_GAIN_CEILING ? BED_GAIN_CEILING / sum : 1;
+  const target = ceiling * (speechPlaying ? 0.35 : 1);
+  bedBus.gain.linearRampToValueAtTime(target, ctx.currentTime + 0.25);
+}
+
+function setBedTarget(name, gain) {
+  bedTargets[name] = gain;
+  updateBeds();
+}
+
+function speechBedDuck(on) {
+  speechPlaying = on;
+  updateBeds();
 }
 
 // v4.7 §4.6: hull hum — one filtered noise loop at very low gain, always on
@@ -43,15 +94,22 @@ function startHum() {
   f.frequency.value = 64;
   const g = ctx.createGain();
   g.gain.value = 0.028;
-  src.connect(f).connect(g).connect(sfxBus);
+  src.connect(f).connect(g).connect(bedBus);
   src.start();
+  setBedTarget("hum", 0.028);
 }
 
 let ducked = false;
-export function setVolume(v) {
-  volume = v;
-  localStorage.setItem("vol", String(v));
-  if (master && !ducked) master.gain.value = v;
+export function setMixVolume(kind, v) {
+  mixVol[kind] = v;
+  localStorage.setItem(kind === "sfx" ? "vol_sfx" : "vol_voice", String(v));
+  if (!ctx) return;
+  if (kind === "sfx") sfxBus.gain.value = 0.9 * v;
+  else speechBus.gain.value = v;
+}
+
+export function getMixVolume(kind) {
+  return mixVol[kind];
 }
 
 // Duck game audio while the captain is talking (push-to-talk held): they
@@ -59,11 +117,7 @@ export function setVolume(v) {
 export function duck(on) {
   ducked = on;
   if (!ctx) return;
-  master.gain.linearRampToValueAtTime(on ? volume * 0.15 : volume, ctx.currentTime + 0.15);
-}
-
-export function getVolume() {
-  return volume;
+  master.gain.linearRampToValueAtTime(on ? 0.15 : 1, ctx.currentTime + 0.15);
 }
 
 // ---------- tiny synth helpers ----------
@@ -279,7 +333,7 @@ export function setThrust(pct) {
     f.frequency.value = 120;
     const g = ctx.createGain();
     g.gain.value = 0;
-    src.connect(f).connect(g).connect(sfxBus);
+    src.connect(f).connect(g).connect(bedBus);
     src.start();
     thrustNodes = { f, g };
   }
@@ -287,6 +341,7 @@ export function setThrust(pct) {
   const t = ctx.currentTime;
   thrustNodes.g.gain.linearRampToValueAtTime(lvl * 0.16, t + 0.3);
   thrustNodes.f.frequency.linearRampToValueAtTime(90 + lvl * 220, t + 0.3);
+  setBedTarget("thrust", lvl * 0.16);
 }
 
 // v4.5 hearing: a distant drive rumble — deeper and softer than own
@@ -303,12 +358,13 @@ export function setRumble(level) {
     f.frequency.value = 46; // sub-rumble: felt more than heard
     const g = ctx.createGain();
     g.gain.value = 0;
-    src.connect(f).connect(g).connect(sfxBus);
+    src.connect(f).connect(g).connect(bedBus);
     src.start();
     rumbleNodes = { f, g };
   }
   const lvl = Math.max(0, Math.min(1, level));
   rumbleNodes.g.gain.linearRampToValueAtTime(lvl * 0.11, ctx.currentTime + 0.6);
+  setBedTarget("rumble", lvl * 0.11);
 }
 
 // v4.7 §4.3: dust immersion — a soft filtered-noise wash while inside a
@@ -326,11 +382,12 @@ export function setDustHiss(on) {
     f.Q.value = 0.5;
     const g = ctx.createGain();
     g.gain.value = 0;
-    src.connect(f).connect(g).connect(sfxBus);
+    src.connect(f).connect(g).connect(bedBus);
     src.start();
     dustNodes = { g };
   }
   dustNodes.g.gain.linearRampToValueAtTime(on ? 0.045 : 0, ctx.currentTime + 0.8);
+  setBedTarget("dust", on ? 0.045 : 0);
 }
 
 // Lock warning (RWR) — v5.1 §2, the alarm law: information lives in the
@@ -487,14 +544,17 @@ const sched = createSpeechScheduler({
       src.onended = () => {
         if (gen !== lineGen) return; // preempted — the scheduler already moved on
         lineSrc = null;
+        speechBedDuck(false);
         sched.onEnded();
       };
       lineSrc = { src, gain, gen };
+      speechBedDuck(true); // §4.1: room tone drops while the XO talks
       src.start();
     })();
   },
   stop: (fadeMs) => {
     lineGen++; // orphan in-flight decode + onended
+    speechBedDuck(false);
     if (lineSrc && ctx) {
       const { src, gain } = lineSrc;
       lineSrc = null;
@@ -511,6 +571,10 @@ const sched = createSpeechScheduler({
 
 export function enqueueSpeech(id, priority = "news") {
   if (!ctx) return;
+  // §4.3 verbosity: TERSE drops chatter, SILENT drops all but critical.
+  // Speech only — the transcript logged the line either way.
+  if (verbosity === "terse" && priority === "chatter") return;
+  if (verbosity === "silent" && priority !== "critical") return;
   sched.enqueue(id, priority);
 }
 
