@@ -1,6 +1,6 @@
 // ws handling + client state store
 import { startRenderLoop, bigBoomAt, showVector, setOverlay, resetOverlays, kickShake, camera } from "./render.js";
-import { initUI, addTranscript, updateHUD, showLobbyStatus, enterGame, showBanner, showReveal, hideBanner, updateWatching, setSpectator, showRoomLobby, hideRoomLobby } from "./ui.js";
+import { initUI, addTranscript, updateHUD, showLobbyStatus, enterGame, showBanner, showReveal, hideBanner, showRematchTally, setMenuVisible, updateWatching, setSpectator, showRoomLobby, hideRoomLobby } from "./ui.js";
 import * as audio from "./audio.js";
 
 export const state = {
@@ -61,6 +61,9 @@ function handleMessage(msg) {
       pingListen = null;
       updateWatching([]); // fresh roster arrives right behind the start
       setSpectator(msg.role === "spectator" ? msg.callsign : null);
+      showRematchTally(0, 0); // a fresh start clears any ready-up tally
+      // §7.2: practice and spectating get a live MENU control
+      setMenuVisible(!!msg.practice || msg.role === "spectator");
       if (msg.role === "spectator") {
         // death→spectator arrives as a fresh start: kill the RWR pulse,
         // klaxon, thrust hum — a ghost has no alarms (playtest 2026-07-12:
@@ -159,6 +162,9 @@ function handleMessage(msg) {
     case "error":
       showLobbyStatus(msg.message);
       addTranscript("sys", msg.message, true);
+      break;
+    case "rematch_tally":
+      showRematchTally(msg.ready, msg.total);
       break;
     case "ui":
       if (msg.what === "show_vector") showVector(5000);

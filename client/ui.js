@@ -52,9 +52,51 @@ export function initUI() {
   document.getElementById("join-code").addEventListener("keydown", (e) => {
     if (e.key === "Enter") joinMatch(false);
   });
+  // v5.1 §7.1: PRACTICE opens the select screen — your hull and the
+  // drone's — instead of launching blind
+  const practicePick = {
+    ship: localStorage.getItem("practiceArch") ?? "frigate",
+    drone: localStorage.getItem("practiceDrone") ?? "frigate", // the generalist
+  };
+  const practicePanel = document.getElementById("practice-panel");
+  const buildPracticeCards = () => {
+    buildShipSelect(document.getElementById("practice-arch-row"), {
+      archetypes: state.config?.archetypes,
+      selected: practicePick.ship,
+      onPick: (arch) => {
+        practicePick.ship = arch;
+        localStorage.setItem("practiceArch", arch);
+        buildPracticeCards();
+      },
+    });
+    buildShipSelect(document.getElementById("practice-drone-row"), {
+      archetypes: state.config?.archetypes,
+      selected: practicePick.drone,
+      onPick: (arch) => {
+        practicePick.drone = arch;
+        localStorage.setItem("practiceDrone", arch);
+        buildPracticeCards();
+      },
+    });
+  };
   document.getElementById("btn-practice").addEventListener("click", () => {
-    send({ type: "practice" });
+    buildPracticeCards();
+    practicePanel.style.display = "flex";
   });
+  document.getElementById("btn-practice-back").addEventListener("click", () => {
+    practicePanel.style.display = "none";
+  });
+  document.getElementById("btn-practice-start").addEventListener("click", () => {
+    practicePanel.style.display = "none";
+    send({ type: "practice", archetype: practicePick.ship, droneArchetype: practicePick.drone });
+  });
+
+  // v5.1 §7.2: a way OUT that isn't closing the tab. Reloading drops the
+  // socket; the server's close handler detaches us and tears down empty
+  // rooms — the one already-tested leave path.
+  const toMainMenu = () => location.reload();
+  document.getElementById("btn-mainmenu").addEventListener("click", toMainMenu);
+  document.getElementById("btn-menu").addEventListener("click", toMainMenu);
   document.getElementById("btn-howto").addEventListener("click", () => {
     location.href = "/how-to-play";
   });
@@ -429,4 +471,16 @@ export function showReveal(reveal) {
 
 export function hideBanner() {
   bannerEl.classList.remove("active");
+}
+
+// v5.1 §7.3: the rematch ready-up tally ("REMATCH 3/6 — waiting")
+export function showRematchTally(ready, total) {
+  document.getElementById("rematch-status").textContent =
+    ready > 0 ? `REMATCH ${ready}/${total} — waiting for the room` : "";
+}
+
+// v5.1 §7.2: the in-match MENU control (practice + spectators — captains
+// mid-match leave by dying or winning, not by button)
+export function setMenuVisible(on) {
+  document.getElementById("btn-menu").style.display = on ? "" : "none";
 }

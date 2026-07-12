@@ -94,13 +94,26 @@ export class Match {
     };
   }
 
-  constructor(practice: boolean, code: string | null = null, seed: string = Match.randomSeed()) {
+  // practice archetype picks survive rematches (same picks, same rule as
+  // room rematches)
+  private practiceArch: C.ArchetypeName = "frigate";
+  private practiceDroneArch: C.ArchetypeName = "frigate";
+
+  constructor(
+    practice: boolean,
+    code: string | null = null,
+    seed: string = Match.randomSeed(),
+    practiceArch: C.ArchetypeName = "frigate",
+    practiceDroneArch: C.ArchetypeName = "frigate"
+  ) {
     this.practice = practice;
     this.code = code;
+    this.practiceArch = practiceArch;
+    this.practiceDroneArch = practiceDroneArch;
     // pre-launch rooms hold an empty sim on the room's terrain seed; launch
     // replaces it with the spawned field (rematch keeps the seed unless
     // newField)
-    this.sim = practice ? Match.buildPracticeSim(seed) : new Sim(seed);
+    this.sim = practice ? Match.buildPracticeSim(seed, practiceArch, practiceDroneArch) : new Sim(seed);
   }
 
   static randomSeed(): string {
@@ -108,16 +121,25 @@ export class Match {
   }
 
   // Practice: the captain plus the drone, on the classic two-point spawn.
-  private static buildPracticeSim(seed: string): Sim {
+  // v5.1 §7.1: both hulls are picked on the select screen — "let me
+  // practice fighting a Cruiser" is a real training request. The drone
+  // flies its archetype's stat block (signature, hull, speed) unchanged.
+  private static buildPracticeSim(
+    seed: string,
+    archetype: C.ArchetypeName,
+    droneArchetype: C.ArchetypeName
+  ): Sim {
     const sim = new Sim(seed);
-    sim.addShip("A", 0, -C.SPAWN_RING_RADIUS_M, 0, false, null, C.CALLSIGN_POOL[0]);
-    sim.addShip("B", 0, C.SPAWN_RING_RADIUS_M, 180, true, null, "Drone"); // practice target
+    sim.addShip("A", 0, -C.SPAWN_RING_RADIUS_M, 0, false, null, C.CALLSIGN_POOL[0], archetype);
+    sim.addShip("B", 0, C.SPAWN_RING_RADIUS_M, 180, true, null, "Drone", droneArchetype);
     return sim;
   }
 
-  static createPractice(ws: WebSocket): Match {
-    const match = new Match(true);
-    match.seats.push({ id: "A", ws, team: null, archetype: "frigate", dead: false, name: null });
+  static createPractice(ws: WebSocket, archetype = "frigate", droneArchetype = "frigate"): Match {
+    const arch = (archetype in C.ARCHETYPES ? archetype : "frigate") as C.ArchetypeName;
+    const droneArch = (droneArchetype in C.ARCHETYPES ? droneArchetype : "frigate") as C.ArchetypeName;
+    const match = new Match(true, null, Match.randomSeed(), arch, droneArch);
+    match.seats.push({ id: "A", ws, team: null, archetype: arch, dead: false, name: null });
     match.launched = true;
     match.sendStart(match.seats[0]);
     match.start();
@@ -238,10 +260,17 @@ export class Match {
   // rematch.
   private beginMatch(seed: string): void {
     this.stop();
-    this.sim = new Sim(seed);
-    this.spawnShips();
+    if (this.practice) {
+      // v5 bug (found in v5.1 §7.3): practice rematch used spawnShips(),
+      // which spawns SEATS — captain alone, no drone, an empty range
+      this.sim = Match.buildPracticeSim(seed, this.practiceArch, this.practiceDroneArch);
+    } else {
+      this.sim = new Sim(seed);
+      this.spawnShips();
+    }
     this.launched = true;
     this.kills = [];
+    this.rematchVotes.clear();
     // callsigns captured now: dead ships leave the sim, the reveal doesn't
     this.matchCallsigns.clear();
     for (const seat of this.seats) {
@@ -437,6 +466,8 @@ export class Match {
     }
     if (this.practice || this.sim.winner) {
       if (this.isEmpty()) this.stop();
+      // §7.3: a departure can complete the ready-up (everyone left is ready)
+      else if (this.sim.winner && !this.practice) this.evaluateRematch();
       return;
     }
 
@@ -533,8 +564,43 @@ export class Match {
   canRematch(): boolean {
     if (!this.sim.winner) return false;
     if (this.practice) return true;
-    // every captain still connected (dead ones live on as spectators)
-    return this.seats.every((s) => s.ws !== null);
+    // v5.1 §7.3: leavers no longer block — two connected captains can
+    // always rerun it (absent seats come back as ghosts)
+    return this.seats.filter((s) => s.ws !== null).length >= 2;
+  }
+
+  // v5.1 §7.3: rematch is a READY-UP, not a trigger — at N=8 one impatient
+  // captain must not be able to yank seven others out of the scoreboard.
+  // A click = ready + field preference; the room relaunches when every
+  // still-connected captain has voted (majority picks the field, a tie
+  // keeps it). Votes die with their captain on disconnect.
+  private rematchVotes = new Map<ShipId, boolean>();
+
+  voteRematch(ws: WebSocket, newField: boolean): void {
+    if (!this.sim.winner || !this.launched) return;
+    const seat = this.seats.find((s) => s.ws === ws);
+    if (!seat) return;
+    this.rematchVotes.set(seat.id, newField);
+    this.evaluateRematch();
+  }
+
+  private evaluateRematch(): void {
+    if (!this.sim.winner) return;
+    const connected = this.seats.filter((s) => s.ws !== null);
+    for (const id of [...this.rematchVotes.keys()]) {
+      if (!connected.some((s) => s.id === id)) this.rematchVotes.delete(id);
+    }
+    const ready = this.rematchVotes.size;
+    const total = connected.length;
+    if (ready >= total && (this.practice ? ready >= 1 : total >= 2)) {
+      const wantNew = [...this.rematchVotes.values()].filter(Boolean).length;
+      this.reset(wantNew > ready / 2);
+      return;
+    }
+    const payload = JSON.stringify({ type: "rematch_tally", ready, total });
+    for (const s of connected) {
+      if (s.ws && s.ws.readyState === s.ws.OPEN) s.ws.send(payload);
+    }
   }
 
   // Fresh sim in the same room ("Rematch" button): same field by default,

@@ -113,7 +113,11 @@ wss.on("connection", (ws: WebSocket) => {
     switch (msg.type) {
       case "practice": {
         if (matchByWs.has(ws)) return;
-        matchByWs.set(ws, Match.createPractice(ws));
+        // v5.1 §7.1: pick your ship AND your sparring partner
+        matchByWs.set(
+          ws,
+          Match.createPractice(ws, String(msg.archetype ?? ""), String(msg.droneArchetype ?? ""))
+        );
         break;
       }
       case "create": {
@@ -193,13 +197,11 @@ wss.on("connection", (ws: WebSocket) => {
         const match = matchByWs.get(ws);
         if (!match || !match.sim.winner) break;
         // seated captains only (dead ones kept their seats); pure
-        // spectators never call rematch
+        // spectators never call rematch. v5.1 §7.3: a click is a VOTE
+        // (ready-up + field preference) — the room relaunches when every
+        // still-connected captain is ready; leavers don't block.
         if (!match.hasSeat(ws)) break;
-        if (!match.canRematch()) {
-          ws.send(JSON.stringify({ type: "error", message: "a captain is gone — no rematch" }));
-          break;
-        }
-        match.reset(msg.newField === true); // same field unless asked
+        match.voteRematch(ws, msg.newField === true);
         break;
       }
       default:
