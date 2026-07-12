@@ -14,7 +14,7 @@
 import * as C from "./constants.js";
 import type { Terrain } from "./terrain.js";
 import { segCircleHitT } from "./terrain.js";
-import { bearingTo, dist, norm360, type Command } from "./sim.js";
+import { bearingTo, dist, headingVec, norm360, type Command } from "./sim.js";
 
 // The slices of the wire snapshot the Hunter reads. Deliberately narrow —
 // everything here is fog-scoped by construction.
@@ -28,6 +28,8 @@ export interface HunterSnap {
     propellant: number;
     lock: { has: boolean };
     tubes: { state: string }[];
+    ping?: { ready: boolean };
+    probes?: number;
   };
   contacts: { cid: string; tier: number; x: number; y: number; vx?: number; vy?: number }[];
   rumbles: { bearing: number; loud: number }[];
@@ -40,6 +42,12 @@ export interface HunterMem {
   lowFuel: boolean; // fuel-discipline hysteresis: coast and regen until RESUME
   wpIdx: number; // HUNT patrol waypoint index
   lockedCid: string | null; // contact we last designated (avoid re-issuing)
+  // escalation (the Hunter that can't find you starts SPENDING): seconds
+  // of total silence, the last bearing it ever heard, and whether the
+  // gate probe has gone out
+  dryS: number;
+  lastSignalBearing: number | null;
+  gateProbed: boolean;
 }
 
 // Public mission knowledge — nothing here is fog-gated by nature: MARKED
@@ -54,7 +62,16 @@ export interface HunterIntel {
 }
 
 export function initialHunterMem(): HunterMem {
-  return { fireCooldownS: 0, dodge: 0, lowFuel: false, wpIdx: 0, lockedCid: null };
+  return {
+    fireCooldownS: 0,
+    dodge: 0,
+    lowFuel: false,
+    wpIdx: 0,
+    lockedCid: null,
+    dryS: 0,
+    lastSignalBearing: null,
+    gateProbed: false,
+  };
 }
 
 // HUNT patrol route: rock flanks, then the region center. Terrain is public
@@ -175,9 +192,12 @@ export function hunterDecide(
     if (loudest) {
       heading = norm360(loudest.bearing);
       throttle = C.HUNTER_HUNT_THROTTLE;
+      next.lastSignalBearing = norm360(loudest.bearing);
+      next.dryS = 0; // a rumble is a live signal
     } else if (snap.ghost && dist(you.x, you.y, snap.ghost.x, snap.ghost.y) > C.HUNTER_PATROL_ARRIVE_M) {
       heading = bearingTo(you.x, you.y, snap.ghost.x, snap.ghost.y);
       throttle = C.HUNTER_HUNT_THROTTLE;
+      next.dryS += 1; // a stale fix is a lead, not a signal — the clock runs
     } else {
       const wps = intel.sites.length > 0 ? intel.sites : patrolWaypoints(terrain);
       let wp = wps[next.wpIdx % wps.length];
@@ -187,7 +207,47 @@ export function hunterDecide(
       }
       heading = bearingTo(you.x, you.y, wp.x, wp.y);
       throttle = C.HUNTER_HUNT_THROTTLE;
+      next.dryS += 1;
     }
+
+    // ESCALATION: a Hunter that can't find you starts SPENDING. Every
+    // HUNTER_DRY_SPELL_S of silence: PING first — the reveal is priced in,
+    // and the frustrated scream is the player's gift — then probes (the
+    // gate first: the player must come there eventually; after that, down
+    // the last bearing it ever heard, else a spread off the patrol index).
+    if (next.dryS >= C.HUNTER_DRY_SPELL_S) {
+      if (you.ping?.ready) {
+        commands.push({ verb: "sensor_ping", params: {} });
+        next.dryS = 0;
+      } else if ((you.probes ?? 0) > 0) {
+        const probeBearing = !next.gateProbed
+          ? bearingTo(you.x, you.y, intel.gate.x, intel.gate.y)
+          : next.lastSignalBearing ?? norm360(next.wpIdx * 73);
+        commands.push({ verb: "launch_probe", params: { bearing_degrees: Math.round(probeBearing) } });
+        next.gateProbed = true;
+        next.dryS = 0;
+      }
+      // nothing left to spend: the clock holds at the threshold and fires
+      // the moment the transducers recharge
+    }
+
+    // SOFT LEASH: rumble bearings carry no range — a noise pointing
+    // outward was marching hunters off the map. Beyond the leash radius,
+    // an outward HUNT heading bends home. (PURSUE and the picket are
+    // exempt: chasing a real contact off the rim is a chase.)
+    const rd = Math.hypot(you.x, you.y);
+    if (rd > C.REGION_RADIUS_M * C.HUNTER_LEASH_FRAC) {
+      const [hx, hy] = headingVec(heading);
+      if (hx * you.x + hy * you.y > 0) {
+        heading = bearingTo(you.x, you.y, 0, 0);
+      }
+    }
+  }
+
+  // a contact is the strongest signal of all
+  if (best) {
+    next.dryS = 0;
+    next.lastSignalBearing = bearingTo(you.x, you.y, best.x, best.y);
   }
 
   // AVOID overrides everything: project the velocity HUNTER_AVOID_LOOKAHEAD_S

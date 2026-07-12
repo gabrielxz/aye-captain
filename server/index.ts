@@ -11,6 +11,7 @@ import {
   ARCHETYPES,
   SALVAGE_DOCK_RANGE_M,
   RUMOR_RESOLVE_RANGE_M,
+  SALVAGE_APPROACH_RANGE_M,
 } from "./constants.js";
 import { Match, sanitizeName } from "./match.js";
 import { sttAvailable, transcribe, SttBusyError } from "./stt.js";
@@ -100,6 +101,7 @@ wss.on("connection", (ws: WebSocket) => {
         // campaign client affordances: dock/resolve rings + in-range hints
         salvageDockRangeM: SALVAGE_DOCK_RANGE_M,
         rumorResolveRangeM: RUMOR_RESOLVE_RANGE_M,
+        salvageApproachRangeM: SALVAGE_APPROACH_RANGE_M,
         // v5.1 §6: the select screen renders stat bars straight from the
         // runtime source of truth — the client never hardcodes a number
         archetypes: ARCHETYPES,

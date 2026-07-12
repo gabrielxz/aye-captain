@@ -232,6 +232,7 @@ export class Match {
       const p = place(false);
       wrecks.push({
         id: id++,
+        letter: String.fromCharCode(65 + wrecks.length), // "A", "B", ... in creation order
         ...p,
         marked: true,
         checked: false,
@@ -251,6 +252,7 @@ export class Match {
       const empty = !inDust && rand() < 0.35;
       wrecks.push({
         id: id++,
+        letter: String.fromCharCode(65 + wrecks.length),
         ...p,
         marked: false,
         checked: false,

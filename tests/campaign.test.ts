@@ -324,6 +324,7 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
   const sim = missionSim();
   sim.mission!.wrecks.push({
     id: 1,
+    letter: "A",
     x: 0,
     y: -C.SPAWN_RING_RADIUS_M + 1000, // 1 km off the spawn point
     marked: true,
@@ -388,9 +389,9 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
 {
   const sim = missionSim({ hunterSpawnS: 1 });
   sim.mission!.wrecks.push(
-    { id: 1, x: 50000, y: 0, marked: true, checked: false, items: [{ kind: "propellant", amount: 30 }] },
-    { id: 2, x: -50000, y: 0, marked: false, checked: false, items: [{ kind: "missiles", amount: 2 }] },
-    { id: 3, x: 90000, y: 0, marked: true, checked: false, items: [] } // stripped: no longer worth watching
+    { id: 1, letter: "A", x: 50000, y: 0, marked: true, checked: false, items: [{ kind: "propellant", amount: 30 }] },
+    { id: 2, letter: "B", x: -50000, y: 0, marked: false, checked: false, items: [{ kind: "missiles", amount: 2 }] },
+    { id: 3, letter: "C", x: 90000, y: 0, marked: true, checked: false, items: [] } // stripped: no longer worth watching
   );
   sim.tick();
   const intel = sim.hunterIntelFor(sim.ships.get("H")!);
@@ -464,8 +465,8 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
   const sim = missionSim();
   const a = sim.ships.get("A")!;
   sim.mission!.wrecks.push(
-    { id: 1, x: a.x, y: a.y - 40000, marked: false, checked: false, items: [{ kind: "missiles", amount: 2 }] },
-    { id: 2, x: a.x, y: a.y + 40000, marked: false, checked: false, items: [] } // the dry hole
+    { id: 1, letter: "A", x: a.x, y: a.y - 40000, marked: false, checked: false, items: [{ kind: "missiles", amount: 2 }] },
+    { id: 2, letter: "B", x: a.x, y: a.y + 40000, marked: false, checked: false, items: [] } // the dry hole
   );
   let snap = sim.snapshotFor("A") as any;
   const rumor = snap.wrecks.find((w: any) => w.id === 1);
@@ -475,7 +476,7 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
   // drift within resolve range of the loot rumor
   a.y -= 40000 - C.RUMOR_RESOLVE_RANGE_M + 1000;
   let ev = sim.tick();
-  assert(ev.some((e) => e.kind === "notice" && /wreck here alright/.test((e as any).text)), "presence resolves the rumor — the XO calls the loot");
+  assert(ev.some((e) => e.kind === "notice" && /is a wreck alright/.test((e as any).text)), "presence resolves the rumor — the XO calls the loot");
   snap = sim.snapshotFor("A") as any;
   assert(snap.wrecks.find((w: any) => w.id === 1)?.items === 1, "…and the marker now names the count");
   // now check the dry hole
@@ -526,6 +527,41 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
   sim.mission!.cleared = true; // the exit has registered
   const ev = [...sim.tick(), ...sim.tick()];
   assert(!ev.some((e) => e.kind === "notice" && /contact|track|readout|rumble/i.test((e as any).text)), "no sensor ceremony after the exit — the system is over");
+}
+
+// 19. lettered sites + the 15 km envelope: "come alongside rumor A" is
+// one command; naming a distant site teaches the rule; a dry target is
+// refused honestly; letters are unique at generation
+{
+  const sim = missionSim();
+  const a = sim.ships.get("A")!;
+  sim.mission!.wrecks.push(
+    { id: 1, letter: "A", x: a.x + 10000, y: a.y, marked: true, checked: false, items: [{ kind: "propellant", amount: 30 }] },
+    { id: 2, letter: "B", x: a.x + 90000, y: a.y, marked: true, checked: false, items: [{ kind: "missiles", amount: 2 }] },
+    { id: 3, letter: "C", x: a.x - 12000, y: a.y, marked: false, checked: false, items: [{ kind: "hull", amount: 15 }] },
+    { id: 4, letter: "D", x: a.x - 3000, y: a.y, marked: false, checked: true, items: [] }
+  );
+  // by letter, inside the envelope
+  sim.enqueue("A", [{ verb: "salvage", params: { target: "A" } } as any]);
+  let ev = sim.tick();
+  assert(ev.some((e) => e.kind === "notice" && /Coming alongside wreck A/.test((e as any).text)), '"salvage A" inside 15 km: the XO takes her in, by name');
+  assert((a.maneuver as any)?.wreckId === 1, "the maneuver targets the NAMED site, not the nearest");
+  // a distant site teaches the rule
+  sim.enqueue("A", [{ verb: "salvage", params: { target: "B" } } as any]);
+  ev = sim.tick();
+  assert(ev.some((e) => e.kind === "reject" && /too far out.*fifteen klicks/.test((e as any).reason)), "a distant site rejects with the fifteen-klick rule");
+  // an unresolved rumor is a legal target — that IS investigation
+  sim.enqueue("A", [{ verb: "salvage", params: { target: "C" } } as any]);
+  ev = sim.tick();
+  assert(ev.some((e) => e.kind === "notice" && /Coming alongside rumor C/.test((e as any).text)), '"investigate rumor C" = the salvage verb, accepted unresolved');
+  // a known dry hole is refused honestly
+  sim.enqueue("A", [{ verb: "salvage", params: { target: "D" } } as any]);
+  ev = sim.tick();
+  assert(ev.some((e) => e.kind === "reject" && /dry hole/.test((e as any).reason)), "a checked dry hole refuses — nothing there to fly to");
+  // generation letters are unique
+  const ws2 = (Match as any).generateWrecks("lettertest", new Sim("lettertest"));
+  const letters = ws2.map((w: any) => w.letter);
+  assert(new Set(letters).size === letters.length && letters[0] === "A", `generated letters unique from A (${letters.join(",")})`);
 }
 
 console.log("done: campaign");

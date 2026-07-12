@@ -934,16 +934,14 @@ function drawWrecks() {
   if (!wrecks || wrecks.length === 0) return;
   const you = state.lastSnap?.you ?? null;
   const salv = you?.mission?.salvaging ?? null;
-  const dockM = state.config?.salvageDockRangeM ?? 2000;
-  const resolveM = state.config?.rumorResolveRangeM ?? 5000;
+  const ringM = state.config?.salvageApproachRangeM ?? 15000;
   ctx.save();
   for (const w of wrecks) {
     const [sx, sy] = worldToScreen(w.x, w.y);
     const color = w.marked ? "#b8a86a" : "#8a7fb0";
-    // the interaction ring: dock range on lootable wrecks, resolve range
-    // on unresolved rumors — and it BRIGHTENS when you're inside it, so
-    // "I can act now" is a visible state, not a guess (playtest ask)
-    const ringM = !w.marked && w.items === null ? resolveM : dockM;
+    // ONE ring, one rule: inside the approach ring, "come alongside
+    // wreck B" is a single command and the XO flies everything. It
+    // BRIGHTENS when you're inside — actable is a visible state.
     const inRange = you ? Math.hypot(you.x - w.x, you.y - w.y) <= ringM : false;
     ctx.strokeStyle = color;
     ctx.globalAlpha = inRange ? 0.85 : 0.28;
@@ -977,7 +975,11 @@ function drawWrecks() {
     // its count (or vanishes, if it was a dry hole — the server stops
     // sending it)
     ctx.font = "9px 'Share Tech Mono', monospace";
-    const tag = w.marked ? `wreck ·${w.items}` : w.items !== null ? `rumor ·${w.items}` : "rumor ·?";
+    const tag = w.marked
+      ? `wreck ${w.letter} ·${w.items}`
+      : w.items !== null
+        ? `rumor ${w.letter} ·${w.items}`
+        : `rumor ${w.letter} ·?`;
     labelText(inRange ? `${tag} — in range` : tag, sx + 8, sy + 3, color, inRange ? 1 : 0.75);
   }
   ctx.restore();

@@ -422,6 +422,9 @@ export interface SalvageItem {
 // revealed, or the dry hole discovered and struck off the map).
 export interface Wreck {
   id: number;
+  letter: string; // fixed site designation ("A".."H") — plain letters, NOT
+  // the NATO words: "Bravo" belongs to hostile contact designations and
+  // "salvage Bravo" must never collide with "lock up Bravo"
   x: number;
   y: number;
   marked: boolean;
@@ -1057,23 +1060,52 @@ export class Sim {
         return null;
       }
       case "salvage": {
-        // Campaign §4.1: one verb, and it is a maneuver. The XO handles the
-        // velocity-matching; getting alongside is the captain's flying.
-        // Resolution is BY PROXIMITY (nearest wreck with anything left) —
-        // wrecks are landmarks, not fog contacts, so a contact-ref grammar
-        // would be theater. Any thrust/heading order aborts the transfer.
+        // Campaign §4.1: one verb, and it is a maneuver. Sites carry fixed
+        // letters ("come alongside rumor A"); inside SALVAGE_APPROACH_RANGE_M
+        // the XO flies the whole terminal approach. An UNRESOLVED rumor is a
+        // legal target — that IS "investigate rumor A": the approach resolves
+        // it at RUMOR_RESOLVE_RANGE_M en route (loot -> he docks and runs the
+        // transfer; dry -> he calls it and the maneuver ends). Any
+        // thrust/heading order aborts; landed items stay aboard.
         const m = this.mission;
         if (!m || ship.id !== m.playerId) return "Nothing to salvage out here, Captain.";
-        const cand = m.wrecks
-          .filter((w) => w.items.length > 0)
-          .map((w) => ({ w, d: dist(ship.x, ship.y, w.x, w.y) }))
-          .sort((a, b) => a.d - b.d)[0];
-        if (!cand) return "No wrecks left with anything in them, Captain.";
-        if (cand.d > C.SALVAGE_DOCK_RANGE_M * 3) {
-          return "No wreck in docking range, Captain — get us alongside first.";
+        const isCandidate = (w: Wreck) => w.items.length > 0 || (!w.marked && !w.checked);
+        const noun = (w: Wreck) => (w.marked || w.checked ? "Wreck" : "Rumor");
+        let target: Wreck | undefined;
+        const ref = String(cmd.params.target ?? "").trim().toUpperCase();
+        const letter = ref.match(/([A-Z])\s*$/)?.[1];
+        if (letter) {
+          target = m.wrecks.find((w) => w.letter === letter);
+          if (!target) return `No site lettered ${letter} on the board, Captain.`;
+          if (!isCandidate(target)) {
+            // a stripped WRECK vs a rumor that turned out to be nothing —
+            // the refusal keeps the site's history straight
+            return target.marked
+              ? `Wreck ${letter} is stripped bare, Captain — nothing left to take.`
+              : `That rumor was a dry hole, Captain — nothing there.`;
+          }
+          if (dist(ship.x, ship.y, target.x, target.y) > C.SALVAGE_APPROACH_RANGE_M) {
+            // fixed strings (letters only, no numbers) — rejections speak
+            // verbatim and the synthesis cache must stay bounded
+            return `${noun(target)} ${letter} is too far out, Captain — get us inside fifteen klicks and I'll take her in.`;
+          }
+        } else {
+          const cand = m.wrecks
+            .filter(isCandidate)
+            .map((w) => ({ w, d: dist(ship.x, ship.y, w.x, w.y) }))
+            .sort((a, b) => a.d - b.d)[0];
+          if (!cand) return "No sites left with anything in them, Captain.";
+          if (cand.d > C.SALVAGE_APPROACH_RANGE_M) {
+            return "No site inside fifteen klicks, Captain — pick one and get us closer.";
+          }
+          target = cand.w;
         }
-        ship.maneuver = { type: "salvage", wreckId: cand.w.id };
-        events.push({ kind: "notice", ship: ship.id, text: "Coming alongside, Captain." });
+        ship.maneuver = { type: "salvage", wreckId: target.id };
+        events.push({
+          kind: "notice",
+          ship: ship.id,
+          text: `Coming alongside ${noun(target).toLowerCase()} ${target.letter}, Captain.`,
+        });
         // the stock notice is the whole confirmation (set_overlay precedent)
         delete cmd.acknowledgement;
         return null;
@@ -1968,6 +2000,7 @@ export class Sim {
       const cycle: ("sig" | "sensor" | "accel" | "hull")[] = ["sig", "sensor", "accel", "hull"];
       this.mission.wrecks.push({
         id: this.nextId++,
+        letter: String.fromCharCode(65 + this.mission.wrecks.length), // next free letter
         x: target.x,
         y: target.y,
         marked: true,
@@ -4123,13 +4156,14 @@ export class Sim {
           ? {
               kind: "notice",
               ship: player.id,
-              text: `There's a wreck here alright, Captain — ${w.items.length} piece${w.items.length === 1 ? "" : "s"} worth taking.`,
-              speak: "There's a wreck here alright, Captain. Worth taking.",
+              text: `Rumor ${w.letter} is a wreck alright, Captain — ${w.items.length} piece${w.items.length === 1 ? "" : "s"} worth taking.`,
+              speak: `Rumor ${w.letter} is a wreck alright, Captain. Worth taking.`,
             }
           : {
               kind: "notice",
               ship: player.id,
-              text: "Nothing here, Captain — that rumor was a dry hole.",
+              text: `Nothing at rumor ${w.letter}, Captain — a dry hole.`,
+              speak: `Nothing at rumor ${w.letter}, Captain. A dry hole.`,
             }
       );
     }
@@ -4453,13 +4487,13 @@ export class Sim {
           `Salvage on the board: ${live
             .map(
               (w) =>
-                `${w.marked ? "marked wreck" : "rumored wreck"} bearing ${fmtBearing(bearingTo(ship.x, ship.y, w.x, w.y))}, ${(dist(ship.x, ship.y, w.x, w.y) / 1000).toFixed(0)} km${
+                `${w.marked || w.checked ? "wreck" : "rumor"} ${w.letter}: bearing ${fmtBearing(bearingTo(ship.x, ship.y, w.x, w.y))}, ${(dist(ship.x, ship.y, w.x, w.y) / 1000).toFixed(0)} km${
                   w.marked || w.checked
                     ? ` (${w.items.length} items)`
-                    : ` (contents unknown — a rumor resolves by PRESENCE: fly within ${C.RUMOR_RESOLVE_RANGE_M / 1000} km and I'll call what's there; sensors and pings can't do it, dust or no dust)`
+                    : " (contents unknown — resolves by PRESENCE en route; sensors and pings can't do it, dust or no dust)"
                 }`
             )
-            .join("; ")}. The salvage verb docks the nearest wreck — we must be alongside (${C.SALVAGE_DOCK_RANGE_M / 1000} km) and it needs a full stop.`
+            .join("; ")}. Within ${C.SALVAGE_APPROACH_RANGE_M / 1000} km the salvage verb (target = the letter) flies the whole approach and transfer ("come alongside rumor A"). Beyond that, steer for its bearing first and SAY the fifteen-klick rule.`
         );
       }
       if (m.salvaging) {
@@ -4786,15 +4820,15 @@ export class Sim {
           wrecks: m.wrecks
             .filter((w) => w.items.length > 0 || (!w.marked && !w.checked))
             .map((w) => ({
-              type: w.marked ? "marked" : "rumored",
+              site: `${w.marked || w.checked ? "wreck" : "rumor"} ${w.letter}`,
               bearing: fmtBearing(bearingTo(ship.x, ship.y, w.x, w.y)),
               range_km: Math.round(dist(ship.x, ship.y, w.x, w.y) / 1000),
               items:
                 w.marked || w.checked
                   ? w.items.length
-                  : `unknown — resolves by presence (fly within ${C.RUMOR_RESOLVE_RANGE_M / 1000} km; sensors/pings cannot resolve a rumor)`,
+                  : "unknown — resolves by presence en route (sensors/pings cannot resolve a rumor)",
             })),
-          salvage_note: `salvage docks the nearest wreck: be alongside (${C.SALVAGE_DOCK_RANGE_M / 1000} km) and come to a full stop; items land one per ${C.SALVAGE_ITEM_S}s, worst first`,
+          salvage_note: `within ${C.SALVAGE_APPROACH_RANGE_M / 1000} km, the salvage verb with the site letter flies the whole approach and transfer; items land one per ${C.SALVAGE_ITEM_S}s, worst first; beyond that range, steer for its bearing first`,
         };
       }
       case "full_report":
@@ -5040,6 +5074,7 @@ export class Sim {
               .filter((w) => w.items.length > 0 || (!w.marked && !w.checked))
               .map((w) => ({
                 id: w.id,
+                letter: w.letter,
                 x: w.x,
                 y: w.y,
                 marked: w.marked,

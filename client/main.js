@@ -471,11 +471,13 @@ function updateHUDFromSnapshot(snap) {
             if (s) {
               return [{ label: "SALVAGE", value: `next in ${s.nextInS}s · ${s.itemsLeft} left`, cls: "good" }];
             }
-            const dockM = state.config?.salvageDockRangeM ?? 2000;
-            const near = (snap.wrecks ?? []).some(
-              (w) => w.items !== null && w.items !== 0 && Math.hypot(w.x - you.x, w.y - you.y) <= dockM
-            );
-            return near ? [{ label: "SALVAGE", value: 'in range — say "salvage"', cls: "good" }] : [];
+            const rangeM = state.config?.salvageApproachRangeM ?? 15000;
+            const near = (snap.wrecks ?? [])
+              .filter((w) => w.items !== 0 && Math.hypot(w.x - you.x, w.y - you.y) <= rangeM)
+              .sort((a, b) => Math.hypot(a.x - you.x, a.y - you.y) - Math.hypot(b.x - you.x, b.y - you.y))[0];
+            return near
+              ? [{ label: "SALVAGE", value: `in range — "salvage ${near.letter}"`, cls: "good" }]
+              : [];
           })(),
           {
             label: "GATE",

@@ -197,12 +197,12 @@
     },
 
     "salvage": {
-      "description": "CAMPAIGN ONLY (rejected in multiplayer). Dock the NEAREST wreck and run the salvage transfer: the XO velocity-matches (a full stop — the most expensive thing the ship owns), then items come aboard one at a time, worst first, ~10s each. The ship must already be alongside (within ~2 km; the server rejects with 'get us alongside first' otherwise — approach is the captain's flying). ANY subsequent set_thrust/set_heading breaks off the transfer; everything already landed stays aboard. `target` is optional flavor — resolution is always by proximity. Use on 'come alongside the wreck', 'salvage that', 'grab the salvage', 'strip the wreck'. 'Break off' during a transfer = set_thrust 0. Leave acknowledgement EMPTY — the ship speaks its own docking line.",
+      "description": "CAMPAIGN ONLY (rejected in multiplayer). Fly to a salvage site and run the transfer. Sites carry LETTER designations shown in CURRENT SHIP STATE ('wreck A', 'rumor C' — plain letters, never the NATO contact words). Within ~15 km of the named site the XO flies the ENTIRE approach: velocity-match, terminal dock, then items aboard one at a time, worst first, ~10s each. Targeting an UNRESOLVED RUMOR is how you investigate it — the approach resolves it en route (loot: he docks and transfers; dry hole: he calls it and stops). Beyond 15 km the server rejects and teaches the range. ANY subsequent set_thrust/set_heading breaks off; everything already landed stays aboard. `target` = the site letter; omit it for the nearest site. Use on 'come alongside rumor A', 'bring me to wreck B', 'investigate rumor C', 'salvage', 'strip the wreck'. 'Break off' = set_thrust 0. Leave acknowledgement EMPTY — the ship speaks its own line.",
       "type": "object",
       "properties": {
-        "target": { "type": "string", "description": "Optional wreck reference; ignored by resolution (nearest wins)." }
+        "target": { "type": "string", "description": "Site letter from the state line ('A'). Omit for nearest." }
       },
-      "examples": [ {}, { "target": "the wreck" } ]
+      "examples": [ {}, { "target": "A" } ]
     },
 
     "show_vector": {
@@ -745,6 +745,18 @@
         ]
       },
       {
+        "captain": "Bring me to wreck B",
+        "commands": [
+          { "verb": "salvage", "params": { "target": "B" }, "acknowledgement": "" }
+        ]
+      },
+      {
+        "captain": "Investigate rumor C",
+        "commands": [
+          { "verb": "salvage", "params": { "target": "C" }, "acknowledgement": "" }
+        ]
+      },
+      {
         "captain": "Break off, get us moving",
         "commands": [
           { "verb": "set_thrust", "params": { "percent": 60 }, "acknowledgement": "Breaking off — underway." }
@@ -793,8 +805,8 @@
       "PROBE acks: leave the acknowledgement EMPTY — the ship speaks its own launch line. 'probe out'/'launch a probe (down) bearing X' = launch_probe. Probes are the tooling for rumble triangulation: if the captain wants a fix on a rumble, a probe off-axis gives the second bearing — suggest it only when asked how.",
       "RAILGUN acks: leave the acknowledgement EMPTY — the ship speaks its own stock line on fire ('Solution ready — firing.' / 'Slug away.'). 'put a slug on him/that solution' = fire_railgun solution; naming a bearing ('rail on 090') = bearing mode. The rail is a snapshot, not a duel-opener: remind the captain only when relevant that a thrusting target will dodge a solution.",
       "CAMPAIGN — THE GATE IS NOT A CONTACT: when CURRENT SHIP STATE carries a MISSION line, 'the gate' refers to the exit landmark on that line, never to an enemy. 'Head/make for the gate' = set_heading absolute at the gate bearing FROM THE STATE LINE (plus set_thrust if a speed was asked). 'How far to the gate' / 'what's the clock' / 'any salvage out there' = query topic 'mission'. The gate is FLOWN through — there is no gate verb, no docking, no charge-up; do not invent one.",
-      "CAMPAIGN — SALVAGE: 'salvage', 'come alongside the wreck', 'grab/strip the wreck' = the salvage verb (leave acknowledgement empty; the ship confirms). The wreck must already be close aboard — if the state line shows the nearest wreck far away, steer there first (set_heading absolute at its bearing) and SAY so; the salvage verb itself never flies the approach. 'Break off'/'belay the salvage' = set_thrust (any thrust/heading order ends the transfer; what's aboard stays aboard).",
-      "CAMPAIGN — RUMORS RESOLVE BY PRESENCE, NEVER BY SENSORS: a rumored wreck's contents are unknown until the ship flies within the resolve range on the state line (~5 km), at which point the XO calls it automatically — loot or dry hole. 'Investigate/check out/look at the rumor' = set_heading absolute at its bearing from the state line (plus thrust if asked); NEVER a query or a ping (they cannot resolve it, and being in dust changes nothing — you resolve it by being there). If the captain asks what's in an unresolved rumor, say the only way to know is to go."
+      "CAMPAIGN — SALVAGE SITES HAVE LETTERS: 'wreck A' / 'rumor C' on the state line. Within 15 km, the salvage verb WITH THE LETTER flies the whole approach and transfer ('come alongside rumor A', 'bring me to wreck B' = salvage {target}). Beyond 15 km the server rejects and says so — in that case steer for the site's bearing from the state line (set_heading absolute) and TELL the captain the fifteen-klick rule. 'Break off'/'belay the salvage' = set_thrust (any thrust/heading order ends the transfer; what's aboard stays aboard). Leave salvage acknowledgements empty.",
+      "CAMPAIGN — RUMORS RESOLVE BY PRESENCE, NEVER BY SENSORS: contents are unknown until the ship gets within ~5 km, where the XO calls it automatically — loot or dry hole. 'Investigate/check out rumor C' = the salvage verb with that letter when within 15 km (the approach resolves it en route); beyond 15 km, set_heading at its bearing. NEVER a query or a ping for a rumor's contents (they cannot resolve it, and dust changes nothing). If the captain asks what's in an unresolved rumor, say the only way to know is to go."
     ]
   }
 }

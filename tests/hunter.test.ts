@@ -162,4 +162,52 @@ const thrustOf = (cmds: ReturnType<typeof hunterDecide>["commands"]) =>
   assert(Math.abs(headingOf(r3.commands) - 180) < 5, "a real contact pulls the picket off station");
 }
 
+// 11. THE SOFT LEASH: beyond 0.9R, a rumble bearing pointing OUTWARD bends
+// home (noises carry no range; hunters were marching off the map) — but an
+// inward bearing is followed as heard
+{
+  const out = snap({
+    you: you({ x: 0, y: C.REGION_RADIUS_M * 0.95 }),
+    rumbles: [{ bearing: 0, loud: 0.5 }], // due north = outward
+  });
+  const r1 = hunterDecide(out, initialHunterMem(), emptyTerrain(), intel());
+  assert(Math.abs(headingOf(r1.commands) - 180) < 1, "outward rumble beyond the leash: heading bends home");
+  const inw = snap({
+    you: you({ x: 0, y: C.REGION_RADIUS_M * 0.95 }),
+    rumbles: [{ bearing: 170, loud: 0.5 }], // inward-ish
+  });
+  const r2 = hunterDecide(inw, initialHunterMem(), emptyTerrain(), intel());
+  assert(headingOf(r2.commands) === 170, "inward rumble: followed as heard");
+}
+
+// 12. ESCALATION: a long dry spell spends a PING; with transducers down it
+// spends a PROBE (gate first, then the last bearing it heard); any signal
+// resets the clock
+{
+  const dry = snap({ you: you({ x: 0, y: 0, ping: { ready: true }, probes: 4 }) });
+  let mem = initialHunterMem();
+  let pinged = false;
+  for (let t = 0; t < C.HUNTER_DRY_SPELL_S + 2 && !pinged; t++) {
+    const r = hunterDecide(dry, mem, emptyTerrain(), intel());
+    mem = r.mem;
+    pinged = r.commands.some((c) => c.verb === "sensor_ping");
+  }
+  assert(pinged && mem.dryS === 0, "a full dry spell: the Hunter PINGS — and screams its position doing it");
+  // transducers recharging: the next spell spends a probe toward the GATE
+  const dryNoPing = snap({ you: you({ x: 0, y: 0, ping: { ready: false }, probes: 4 }) });
+  let probed: any = null;
+  for (let t = 0; t < C.HUNTER_DRY_SPELL_S + 2 && !probed; t++) {
+    const r = hunterDecide(dryNoPing, mem, emptyTerrain(), intel());
+    mem = r.mem;
+    probed = r.commands.find((c) => c.verb === "launch_probe") ?? null;
+  }
+  assert(!!probed && mem.gateProbed, "next spell, ping down: a probe goes out");
+  assert(Math.abs(Number(probed.params.bearing_degrees) - 0) < 1, "…toward the GATE first (due north here) — the player must come there eventually");
+  // a rumble resets the clock
+  mem.dryS = C.HUNTER_DRY_SPELL_S - 5;
+  const heard = snap({ you: you({ ping: { ready: true }, probes: 3 }), rumbles: [{ bearing: 90, loud: 0.4 }] });
+  const r3 = hunterDecide(heard, mem, emptyTerrain(), intel());
+  assert(r3.mem.dryS === 0 && r3.mem.lastSignalBearing === 90, "any signal resets the dry clock and is remembered");
+}
+
 console.log("done");

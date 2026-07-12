@@ -438,6 +438,17 @@ export const HUNTER_FUEL_FLOOR = 20; // % propellant: below this, coast and rege
 export const HUNTER_FUEL_RESUME = 50; // ...until back above this (hysteresis)
 export const HUNTER_AVOID_LOOKAHEAD_S = 15; // rock-dodge projection window
 export const HUNTER_PATROL_ARRIVE_M = 15000; // waypoint arrival radius while HUNTing
+// Soft leash: beyond this fraction of the region radius, an outward HUNT
+// heading bends back toward the interior (rumble bearings carry no range —
+// a noise pointing outward was marching hunters off the map). PURSUE of a
+// real contact and the gate picket are exempt.
+export const HUNTER_LEASH_FRAC = 0.9;
+// Escalation (playtest ask): every dry spell this long — no contact, no
+// rumble, no ghost — the Hunter spends something: an active PING first
+// (which reveals IT map-wide: the frustrated scream is the player's gift),
+// then probes (gate first — the player must come there eventually — then
+// down the last bearing it heard). Numbers-only; ladder rows can retune.
+export const HUNTER_DRY_SPELL_S = 75;
 export const GATE_XO_COOLDOWN_S = 10; // min gap between gate-solution XO calls (§5.4: rate-limited HARD)
 
 // --- Stage 1: the run (§1) + salvage (§4) + progression (§6) ---
@@ -453,6 +464,9 @@ export const SALVAGE_RUMORED_SITES = 3; // might be empty, might be the run-make
 // price). Inside this range the XO eyeballs the hulk and calls it — loot
 // count or dry hole. Dust doesn't matter; you're alongside.
 export const RUMOR_RESOLVE_RANGE_M = 5000;
+// The XO flies the whole terminal approach: name a site inside this and
+// "come alongside wreck B" is one command. THE one ring drawn per site.
+export const SALVAGE_APPROACH_RANGE_M = 15000;
 // Progression is a multiplier table over constants that already exist (§6)
 // — no tech tree. −signature is deliberately the strongest lever in the
 // game (it directly degrades the Hunter's advantage; the economy teaches
