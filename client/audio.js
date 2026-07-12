@@ -148,23 +148,31 @@ export function sfxCrunch() {
   osc("square", 45, t + 0.08, 0.25, 0.3, 25);
 }
 
-// Collision-warning klaxon: two-tone whoop, repeated by the caller's state.
+// Collision-warning klaxon — v5.1 §2.3: the whoop rate is tied to the
+// countdown, accelerating into impact (it BECOMES the prox tick, which is
+// the correct answer). Pass seconds-to-impact, or null/false to stop.
+let klaxonSecs = null;
 let klaxonTimer = null;
-export function setCollisionKlaxon(on) {
-  if (!!klaxonTimer === !!on) return;
-  if (!on) {
-    clearInterval(klaxonTimer);
+export function setCollisionKlaxon(secs) {
+  const off = secs === null || secs === undefined || secs === false;
+  const wasOn = klaxonSecs !== null;
+  klaxonSecs = off ? null : Number(secs);
+  if (off) {
+    clearTimeout(klaxonTimer);
     klaxonTimer = null;
     return;
   }
-  if (!ctx) return;
-  const whoop = () => {
-    const t = ctx.currentTime;
-    osc("sawtooth", 400, t, 0.28, 0.2, 800);
-    osc("sawtooth", 400, t + 0.34, 0.28, 0.2, 800);
-  };
-  whoop();
-  klaxonTimer = setInterval(whoop, 1400);
+  if (!wasOn && ctx) whoopChain();
+}
+
+function whoopChain() {
+  if (klaxonSecs === null || !ctx) return;
+  const t = ctx.currentTime;
+  osc("sawtooth", 400, t, 0.28, 0.2, 800);
+  osc("sawtooth", 400, t + 0.34, 0.28, 0.2, 800);
+  // 10 s out: leisurely 1.4 s spacing; on top of the rock: 300 ms
+  const iv = Math.max(300, Math.min(1400, klaxonSecs * 130));
+  klaxonTimer = setTimeout(whoopChain, iv);
 }
 
 export function sfxLaunch(own) {
@@ -325,20 +333,68 @@ export function setDustHiss(on) {
   dustNodes.g.gain.linearRampToValueAtTime(on ? 0.045 : 0, ctx.currentTime + 0.8);
 }
 
-// Lock warning (RWR): "acquiring" = rising two-tone; "locked" = continuous
-// urgent pulse. The single most important sound in the game.
+// Lock warning (RWR) — v5.1 §2, the alarm law: information lives in the
+// ONSET and the CHANGE, never in persistence. "locked" fires the full
+// blare for LOCK_ONSET_MS (the oh-shit moment — deliberately awful), then
+// decays to a soft heartbeat whose only job is "still true" — one thump
+// PER LOCKER (§2.2: a triple-thump means run). Any change (reacquire, new
+// attacker, launch while locked) snaps back to full onset.
+const LOCK_ONSET_MS = 4000;
+const LOCK_HEARTBEAT_MS = 2500;
+const ACQUIRING_MAX_BEEPS = 8; // inherently short-lived (locks take ~5 s) — just capped
+
 let warnState = "none";
-let warnTimer = null;
-export function setWarning(state) {
-  if (state === warnState) return;
-  warnState = state;
-  if (warnTimer) {
+let warnLockers = 0;
+let warnTimer = null; // repeating pulse of the current phase
+let warnPhaseTimer = null; // onset -> sustain hand-off
+
+function clearWarnTimers() {
+  clearInterval(warnTimer);
+  warnTimer = null;
+  clearTimeout(warnPhaseTimer);
+  warnPhaseTimer = null;
+}
+
+function lockOnset() {
+  clearWarnTimers();
+  const blare = () => {
+    const t = ctx.currentTime;
+    osc("square", 950, t, 0.085, 0.22);
+    osc("square", 950, t + 0.13, 0.085, 0.22);
+  };
+  blare();
+  warnTimer = setInterval(blare, 300);
+  warnPhaseTimer = setTimeout(() => {
     clearInterval(warnTimer);
-    warnTimer = null;
-  }
+    // sustain: sine, ~500 Hz, a quarter the level — never the onset's
+    // timbre. One thump per locker, capped at 4 (past that, just run).
+    const beat = () => {
+      const t = ctx.currentTime;
+      for (let i = 0; i < Math.min(Math.max(1, warnLockers), 4); i++) {
+        osc("sine", 500, t + i * 0.17, 0.09, 0.055);
+      }
+    };
+    beat();
+    warnTimer = setInterval(beat, LOCK_HEARTBEAT_MS);
+  }, LOCK_ONSET_MS);
+}
+
+export function setWarning(state, lockers = state === "locked" ? 1 : 0) {
+  const changed = state !== warnState;
+  const newAttacker = state === "locked" && !changed && lockers > warnLockers;
+  warnLockers = lockers;
+  if (!changed && !newAttacker) return;
+  warnState = state;
+  clearWarnTimers();
   if (!ctx || state === "none") return;
   if (state === "acquiring") {
+    let beeps = 0;
     const beep = () => {
+      if (++beeps > ACQUIRING_MAX_BEEPS) {
+        clearInterval(warnTimer);
+        warnTimer = null;
+        return;
+      }
       const t = ctx.currentTime;
       osc("square", 620, t, 0.11, 0.16);
       osc("square", 840, t + 0.25, 0.11, 0.16);
@@ -346,14 +402,13 @@ export function setWarning(state) {
     beep();
     warnTimer = setInterval(beep, 1100);
   } else if (state === "locked") {
-    const blare = () => {
-      const t = ctx.currentTime;
-      osc("square", 950, t, 0.085, 0.22);
-      osc("square", 950, t + 0.13, 0.085, 0.22);
-    };
-    blare();
-    warnTimer = setInterval(blare, 300);
+    lockOnset(); // full onset on ANY change — including a new attacker
   }
+}
+
+// §2.1: a detected launch while we're locked snaps the alarm back to onset
+export function reassertWarning() {
+  if (ctx && warnState === "locked") lockOnset();
 }
 
 // Missile-proximity ticking: accelerates as the nearest visible inbound

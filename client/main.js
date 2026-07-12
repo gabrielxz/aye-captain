@@ -230,7 +230,7 @@ function soundFromSnapshot(snap) {
   prevTiers = tiers;
 
   audio.setThrust(you.thrustOut ?? you.thrust);
-  audio.setWarning(you.painted ?? "none");
+  audio.setWarning(you.painted ?? "none", you.lockedBy ?? 0);
   audio.setDustHiss(!!you.inDust);
   // hearing: the loudest rumble drives the low ambience (0 = silence)
   audio.setRumble(Math.max(0, ...(snap.rumbles ?? []).map((r) => r.loud ?? 0)));
@@ -252,10 +252,14 @@ function soundFromSnapshot(snap) {
       if (was === "ready" && t.state !== "ready") audio.sfxLaunch(true);
       if (was === "reloading" && t.state === "ready") audio.sfxReload();
     });
-    // a new enemy missile on scope
+    // a new enemy missile on scope — and if we're locked, that launch is
+    // probably AT US: the lock alarm snaps back to full onset (§2.1)
     const prevIds = prevAudio.enemyMissiles;
     for (const m of snap.missiles ?? []) {
-      if (!m.own && !prevIds.has(m.id)) audio.sfxLaunch(false);
+      if (!m.own && !prevIds.has(m.id)) {
+        audio.sfxLaunch(false);
+        if (you.painted === "locked") audio.reassertWarning();
+      }
     }
     // decoy deployed (ours)
     if ((you.decoys ?? 0) < prevAudio.decoys) audio.sfxDecoy();
@@ -271,9 +275,12 @@ function soundFromSnapshot(snap) {
       kickShake(prevAudio.hull - you.hull >= 20);
     }
   }
-  // collision klaxon while an impact is projected inside 10 s
+  // collision klaxon while an impact is projected inside 10 s — it gets
+  // the countdown so the whoop rate accelerates into impact (§2.3)
   audio.setCollisionKlaxon(
     you.collisionWarning !== null && you.collisionWarning !== undefined && you.collisionWarning <= 10
+      ? you.collisionWarning
+      : null
   );
   prevAudio = {
     tubes: (you.tubes ?? []).map((t) => ({ state: t.state })),

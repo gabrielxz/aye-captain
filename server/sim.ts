@@ -2681,6 +2681,15 @@ export class Sim {
   // Hostile lock state as it bears on THIS ship (RWR fiction: you feel
   // their targeting radiation even if you can't see them). v5 §3:
   // ANY-source — the worst state across every hostile painting us.
+  // v5.1 §2.2: hostiles currently HOLDING a lock on this ship
+  lockersOn(ship: Ship): number {
+    let n = 0;
+    for (const h of this.hostilesOf(ship)) {
+      if (h.lock.has && h.lock.target === ship.id) n++;
+    }
+    return n;
+  }
+
   paintedState(ship: Ship): PaintedState {
     let state: PaintedState = "none";
     for (const h of this.hostilesOf(ship)) {
@@ -4250,6 +4259,11 @@ export class Sim {
           progress: Math.min(1, ship.lock.progress / C.LOCK_TIME_S),
         },
         painted: this.paintedState(ship),
+        // v5.1 §2.2: how many hostiles hold a lock on us — a COUNT only,
+        // no identity, no bearing (you already know THAT you're painted;
+        // this says how many times). The client heartbeat thumps once per
+        // locker. Fog test pins that nothing else rides along.
+        lockedBy: this.lockersOn(ship),
         decoys: ship.decoys,
         pdc: { posture: ship.pdcPosture, ammoS: Math.round(ship.pdcAmmoS) },
         rail:

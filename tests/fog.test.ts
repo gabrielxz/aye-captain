@@ -227,4 +227,28 @@ const quietDetect = C.SENSOR_BASE_M * (C.SIG_BASE / 100); // ~54 km at v4.3 valu
   }
 }
 
+// v5.1 §2.2: the snapshot carries HOW MANY hostiles hold a lock on you —
+// a bare count. You already know THAT you're painted (the RWR); the count
+// adds multiplicity only. Nothing may ride along: no identity, no bearing.
+{
+  const sim = new Sim();
+  const a = sim.addShip("A", 0, 0, 0);
+  const b = sim.addShip("B", 0, 30000, 180, false);
+  const c = sim.addShip("C", 30000, 0, 270, false);
+  sim.tick();
+  assert((sim.snapshotFor("A") as any).you.lockedBy === 0, "lockedBy 0 while nobody holds a lock");
+  b.lock.target = "A";
+  b.lock.has = true;
+  assert((sim.snapshotFor("A") as any).you.lockedBy === 1, "one locker -> lockedBy 1");
+  c.lock.target = "A";
+  c.lock.has = true;
+  const snap = sim.snapshotFor("A") as any;
+  assert(snap.you.lockedBy === 2, "two lockers -> lockedBy 2");
+  assert(typeof snap.you.lockedBy === "number", "the count is a bare number — no identity, no bearing");
+  // acquiring (progress without hold) does not count as a locker
+  c.lock.has = false;
+  c.lock.progress = 2;
+  assert((sim.snapshotFor("A") as any).you.lockedBy === 1, "acquiring is not a held lock");
+}
+
 console.log("done");
