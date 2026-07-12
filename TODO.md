@@ -1,12 +1,12 @@
 # TODO — next steps
 
-## Campaign "Deep Black" (HANDOFF-CAMPAIGN-v1.md) — ALL STAGES BUILT 2026-07-12, NOT MERGED/DEPLOYED
+## Campaign "Deep Black" (HANDOFF-CAMPAIGN-v1.md) — RELEASED 2026-07-12
 
-Branch `campaign-deep-black`. Stage 0 passed its tension playtest
-(Gabriel, two runs, "very fun"); Gabriel authorized building stages 1-4
-in ONE pass with one playtest at the end (supersedes the spec's
-between-stages law — the core-loop fear it guarded was retired by the
-Stage 0 verdict). Built: §4 salvage (marked/rumored wrecks, full-stop
+All stages + four playtest patch rounds (rumor resolve-by-presence,
+haul manifest, lettered sites + 15 km envelope, Hunter leash +
+ping/probe escalation, bearing compass). Stage 0 passed its tension
+playtest; Gabriel flew stages 1-4 across several sessions and called
+the merge. Built: §4 salvage (marked/rumored wrecks, full-stop
 cost, sequential worst-first haul, abort keeps landed items, Hunter
 drops the best wreck), §6 progression (pools persist across jumps;
 upgrade modules = multipliers at the ship stat choke points), §1
@@ -22,15 +22,14 @@ flash, starfield streak, resolve), §11-12 salvage verb + gate/mission
 XO vocabulary (both playtest findings fixed: gate-as-contact, doubled
 shroud line) and the how-to-play CAMPAIGN tab.
 
-- [ ] **Gabriel's full-run playtest** — the one gate before merge/deploy.
-  Watch-list (do not pre-tune): Is greed a real decision (Stage 1's
-  question)? Does the arc land — "system five is when they start coming
-  in pairs" (Stage 2)? Does the score have a soul, and is the
-  Jaws-silence right (Stage 3, BY EAR)? Do the salvage teaser + abort
-  moments produce actual greed sweats? Multi-Hunter valve: if S5/S7 feel
-  unwinnable, the knob is SENSOR RANGE, never count. Dry-Hunter watch
-  item still open. Dev knobs: `{"mission":{"sigMult":..,"sensorMult":..,
-  "hunterSpawnS":..}}`.
+- [ ] **Post-release watch-list** (do not pre-tune): the deep-run arc —
+  "system five is when they start coming in pairs" (rows 5-8 were never
+  flown to). Does the score have a soul, and is the Jaws-silence right
+  (BY EAR)? Multi-Hunter valve: if S5/S7 feel unwinnable, the knob is
+  SENSOR RANGE, never count. Dry-Hunter watch item still open. Does the
+  Hunter's first desperation PING land as a moment (HUNTER_DRY_SPELL_S
+  75 is a first guess)? Dev knobs: `{"mission":{"sigMult":..,
+  "sensorMult":..,"hunterSpawnS":..}}`.
 - [ ] Ladder numbers are FIRST-DRAFT (rows 3-8 multipliers/contents were
   never flown) — expect a tuning pass from the playtest.
 - [ ] Wreck contents/counts (2 marked + 3 rumored, 35% dry rumors outside

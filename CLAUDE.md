@@ -71,10 +71,12 @@ and §3 separately, per the handoff). v5 design policy: archetypes
 differ in NUMBERS ONLY — stat blocks, no special abilities (explicitly a
 v5 policy, not permanent doctrine; the railgun loadout row is the first
 sanctioned asymmetry). **CAMPAIGN "Deep Black"
-(HANDOFF-CAMPAIGN-v1.md) BUILT 2026-07-12 on branch `campaign-deep-black`
-— NOT merged/deployed pending Gabriel's full-run playtest.** Stage 0
-(clock/Hunter/gate) passed its tension playtest ("very fun"); stages 1-4
-built in one authorized pass: salvage (§4, `salvage` verb — the ONLY new
+(HANDOFF-CAMPAIGN-v1.md) RELEASED 2026-07-12** (branch
+`campaign-deep-black`, playtested by Gabriel through four patch rounds:
+rumor resolve-by-presence, haul manifest + wreck rings, lettered sites +
+the 15 km one-command envelope, Hunter leash + ping/probe escalation,
+the B bearing compass). Stage 0 passed its tension playtest ("very
+fun"); stages 1-4 built in one authorized pass: salvage (§4, `salvage` verb — the ONLY new
 verb), run structure + §6 progression (pools persist; upgrades are
 multipliers at the sensorMult/sigMult/accelMult/hullMult choke points),
 the 8-row ladder (CAMPAIGN_LADDER — a table, not a formula; gate-camping
