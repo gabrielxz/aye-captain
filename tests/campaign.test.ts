@@ -325,6 +325,7 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
     x: 0,
     y: -C.SPAWN_RING_RADIUS_M + 1000, // 1 km off the spawn point
     marked: true,
+    checked: false,
     items: [
       { kind: "propellant", amount: 30 },
       { kind: "missiles", amount: 2 },
@@ -379,9 +380,9 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
 {
   const sim = missionSim({ hunterSpawnS: 1 });
   sim.mission!.wrecks.push(
-    { id: 1, x: 50000, y: 0, marked: true, items: [{ kind: "propellant", amount: 30 }] },
-    { id: 2, x: -50000, y: 0, marked: false, items: [{ kind: "missiles", amount: 2 }] },
-    { id: 3, x: 90000, y: 0, marked: true, items: [] } // stripped: no longer worth watching
+    { id: 1, x: 50000, y: 0, marked: true, checked: false, items: [{ kind: "propellant", amount: 30 }] },
+    { id: 2, x: -50000, y: 0, marked: false, checked: false, items: [{ kind: "missiles", amount: 2 }] },
+    { id: 3, x: 90000, y: 0, marked: true, checked: false, items: [] } // stripped: no longer worth watching
   );
   sim.tick();
   const intel = sim.hunterIntelFor(sim.ships.get("H")!);
@@ -445,6 +446,43 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
   const ev = sim.tick();
   assert(ev.some((e) => e.kind === "notice" && /We're through/.test((e as any).text)), "the exit call fires");
   assert(!ev.some((e) => e.kind === "notice" && /left the shroud/.test((e as any).text)), "…without the shroud line doubling it");
+}
+
+// 16. rumors resolve by PRESENCE (playtest fix): unknown until you fly
+// within RUMOR_RESOLVE_RANGE_M — then the XO calls loot or dry hole; a dry
+// hole exists on the map until checked, then vanishes. Sensors never do
+// this (dust or no dust — the trip is the price).
+{
+  const sim = missionSim();
+  const a = sim.ships.get("A")!;
+  sim.mission!.wrecks.push(
+    { id: 1, x: a.x, y: a.y - 40000, marked: false, checked: false, items: [{ kind: "missiles", amount: 2 }] },
+    { id: 2, x: a.x, y: a.y + 40000, marked: false, checked: false, items: [] } // the dry hole
+  );
+  let snap = sim.snapshotFor("A") as any;
+  const rumor = snap.wrecks.find((w: any) => w.id === 1);
+  const dry = snap.wrecks.find((w: any) => w.id === 2);
+  assert(!!rumor && rumor.items === null, "unresolved rumor: on the map, contents hidden");
+  assert(!!dry && dry.items === null, "a DRY rumor is also on the map — invisible dry holes were the bug");
+  // drift within resolve range of the loot rumor
+  a.y -= 40000 - C.RUMOR_RESOLVE_RANGE_M + 1000;
+  let ev = sim.tick();
+  assert(ev.some((e) => e.kind === "notice" && /wreck here alright/.test((e as any).text)), "presence resolves the rumor — the XO calls the loot");
+  snap = sim.snapshotFor("A") as any;
+  assert(snap.wrecks.find((w: any) => w.id === 1)?.items === 1, "…and the marker now names the count");
+  // now check the dry hole
+  const w2 = sim.mission!.wrecks.find((w) => w.id === 2)!;
+  a.x = w2.x;
+  a.y = w2.y - C.RUMOR_RESOLVE_RANGE_M + 1000;
+  ev = sim.tick();
+  assert(ev.some((e) => e.kind === "notice" && /dry hole/.test((e as any).text)), "the dry hole is announced once…");
+  snap = sim.snapshotFor("A") as any;
+  assert(!snap.wrecks.some((w: any) => w.id === 2), "…and struck off the map");
+  assert(sim.tick().filter((e) => e.kind === "notice" && /dry hole/.test((e as any).text)).length === 0, "checked is an edge — no repeat");
+  // fog: the Hunter's intel never carries rumors, checked or not
+  sim.mission!.hunterSpawnS = sim.tickCount + 1;
+  sim.tick();
+  assert(sim.hunterIntelFor(sim.ships.get("H")!).sites.length === 0, "a CHECKED rumor is still the player's secret — never Hunter intel");
 }
 
 console.log("done: campaign");

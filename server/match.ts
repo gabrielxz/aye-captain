@@ -234,6 +234,7 @@ export class Match {
         id: id++,
         ...p,
         marked: true,
+        checked: false,
         items: [
           { kind: "propellant", amount: 30 },
           { kind: "pdc_ammo", amount: 20 },
@@ -252,6 +253,7 @@ export class Match {
         id: id++,
         ...p,
         marked: false,
+        checked: false,
         items: empty
           ? []
           : ([

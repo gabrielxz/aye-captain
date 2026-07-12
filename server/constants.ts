@@ -448,6 +448,11 @@ export const SALVAGE_DOCK_RANGE_M = 2000; // come alongside — the XO won't gra
 export const SALVAGE_ITEM_S = 10; // per item; the haul is sequential, worst -> best (§4.2 — a greed curve, not a progress bar)
 export const SALVAGE_MARKED_SITES = 2; // reliable contents. WATCHED by the Hunter (§4.3/§4.4)
 export const SALVAGE_RUMORED_SITES = 3; // might be empty, might be the run-maker; the Hunter doesn't know them; the richest sit in dust
+// A rumor RESOLVES by going and looking (playtest 2026-07-12: a dust rumor
+// read as unresolvable — sensors can't do it, and mustn't: the trip IS the
+// price). Inside this range the XO eyeballs the hulk and calls it — loot
+// count or dry hole. Dust doesn't matter; you're alongside.
+export const RUMOR_RESOLVE_RANGE_M = 5000;
 // Progression is a multiplier table over constants that already exist (§6)
 // — no tech tree. −signature is deliberately the strongest lever in the
 // game (it directly degrades the Hunter's advantage; the economy teaches

@@ -335,9 +335,8 @@ function drawVectorOverlay(you) {
   ctx.closePath();
   ctx.fillStyle = COLORS.own;
   ctx.fill();
-  ctx.font = "10px monospace";
-  ctx.fillText(`+${VECTOR_SECONDS}s · ${Math.round(speed)} m/s`, ex + 8, ey);
-  ctx.globalAlpha = 1;
+  // (vector label drawn below, after the stop point is known — the two
+  // labels dodge each other when the projections coincide)
 
   // projected stop point for an immediate full-stop maneuver: coast through
   // the retrograde flip, then decelerate at full burn (cheap, educational)
@@ -374,9 +373,32 @@ function drawVectorOverlay(you) {
     const kmLabel = km < 10 ? `${km.toFixed(1)} km` : `${Math.round(km)} km`;
     ctx.font = "10px monospace";
     ctx.fillStyle = COLORS.own;
-    ctx.fillText(`all stop · ${kmLabel}`, px + 10, py + 3);
+    // label collision (playtest 2026-07-12): decelerating or zoomed out,
+    // the stop bracket lands on the arrowhead and the two labels print on
+    // top of each other. When their anchors are close, STACK them — the
+    // vector label above the line, all-stop below the bracket.
+    let stopLabelX = px + 10;
+    let stopLabelY = py + 3;
+    if (Math.abs(px - ex) < 90 && Math.abs(py - ey) < 14) {
+      stopLabelY = Math.max(py, ey) + 16;
+      stopLabelX = Math.max(px, ex) + 10;
+    }
+    ctx.fillText(`all stop · ${kmLabel}`, stopLabelX, stopLabelY);
     ctx.globalAlpha = 1;
+    if (Math.abs(px - ex) < 90 && Math.abs(py - ey) < 14) {
+      // vector label takes the high slot in the stacked case
+      ctx.globalAlpha = 0.7;
+      ctx.fillText(`+${VECTOR_SECONDS}s · ${Math.round(speed)} m/s`, Math.max(px, ex) + 10, Math.min(py, ey) - 8);
+      ctx.globalAlpha = 1;
+      return;
+    }
   }
+  // labels clear of each other (or no stop point): vector label at the arrowhead
+  ctx.globalAlpha = 0.7;
+  ctx.font = "10px monospace";
+  ctx.fillStyle = COLORS.own;
+  ctx.fillText(`+${VECTOR_SECONDS}s · ${Math.round(speed)} m/s`, ex + 8, ey);
+  ctx.globalAlpha = 1;
 }
 
 // ---------- starfield (multi-layer parallax; subtle, navigational) ----------
@@ -915,7 +937,14 @@ function drawWrecks() {
     ctx.closePath();
     ctx.stroke();
     ctx.globalAlpha = 0.75;
-    ctx.fillText(w.marked ? `wreck ·${w.items}` : "rumor ·?", sx + 8, sy + 3);
+    // a rumor shows "?" until resolved by presence; once checked it names
+    // its count (or vanishes, if it was a dry hole — the server stops
+    // sending it)
+    ctx.fillText(
+      w.marked ? `wreck ·${w.items}` : w.items !== null ? `rumor ·${w.items}` : "rumor ·?",
+      sx + 8,
+      sy + 3
+    );
   }
   ctx.restore();
 }

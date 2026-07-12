@@ -418,11 +418,14 @@ export interface SalvageItem {
 // A wreck: a known location where a ship will predictably be, stationary,
 // for thirty seconds (§4.3). marked = public knowledge, WATCHED by the
 // Hunter; rumored = the player's private lead — the Hunter never learns it.
+// checked: the player has been close enough to eyeball a rumor (contents
+// revealed, or the dry hole discovered and struck off the map).
 export interface Wreck {
   id: number;
   x: number;
   y: number;
   marked: boolean;
+  checked: boolean;
   items: SalvageItem[];
 }
 
@@ -1947,6 +1950,7 @@ export class Sim {
         x: target.x,
         y: target.y,
         marked: true,
+        checked: false,
         items: [
           { kind: "pdc_ammo", amount: 30 },
           { kind: "propellant", amount: 40 },
@@ -2537,9 +2541,10 @@ export class Sim {
       }
 
       // campaign: gate-solution XO lines (edge-triggered, rate-limited)
-      // + the salvage transfer clock (§4.2)
+      // + rumor resolution by presence + the salvage transfer clock (§4.2)
       if (this.mission) {
         this.updateGateXO(events);
+        this.stepRumors(events);
         this.stepSalvage(events);
       }
     }
@@ -3348,6 +3353,13 @@ export class Sim {
         text: now
           ? "We're in the cloud — sensors are blind, but so are theirs."
           : "Clear of the cloud — sensors are back.",
+        // playtest 2026-07-12: the em-dash synthesis garbled its tail and
+        // the bad take was disk-cached forever. Plain punctuation for the
+        // voice (new text = new cache key = fresh take); transcript keeps
+        // the dash.
+        speak: now
+          ? "We're in the cloud. Our sensors are blind, but so are theirs."
+          : "Clear of the cloud. Sensors are back.",
       });
     }
     ship.wasInDust = now;
@@ -4067,6 +4079,36 @@ export class Sim {
     }
   }
 
+  // Rumor resolution (§4.4, playtest fix): a rumored site resolves by
+  // PRESENCE, not sensors — fly within RUMOR_RESOLVE_RANGE_M and the XO
+  // eyeballs the hulk. Dust is irrelevant at that range (you're alongside),
+  // which is the point: the dust rumors are reachable-blind on purpose.
+  // A dry hole is announced once and struck off the map.
+  private stepRumors(events: SimEvent[]): void {
+    const m = this.mission!;
+    const player = this.ships.get(m.playerId);
+    if (!player) return;
+    for (const w of m.wrecks) {
+      if (w.marked || w.checked) continue;
+      if (dist(player.x, player.y, w.x, w.y) > C.RUMOR_RESOLVE_RANGE_M) continue;
+      w.checked = true;
+      events.push(
+        w.items.length > 0
+          ? {
+              kind: "notice",
+              ship: player.id,
+              text: `There's a wreck here alright, Captain — ${w.items.length} pieces worth taking.`,
+              speak: "There's a wreck here alright, Captain. Worth taking.",
+            }
+          : {
+              kind: "notice",
+              ship: player.id,
+              text: "Nothing here, Captain — that rumor was a dry hole.",
+            }
+      );
+    }
+  }
+
   // Campaign salvage transfer (§4.2), one command tick. The maneuver holds
   // the transfer clock; drifting out of dock range or losing the stop
   // pauses it (the clock, not the loot, is what's at risk — landed items
@@ -4096,6 +4138,7 @@ export class Sim {
       return;
     }
     if (this.speedOf(player) >= C.SALVAGE_STOP_SPEED_MPS) return; // still killing velocity
+    if (!wreck.checked) wreck.checked = true; // docking is the closest look there is
     if (!m.salvaging || m.salvaging.wreckId !== wreck.id) {
       m.salvaging = { wreckId: wreck.id, t: 0 };
       events.push({ kind: "notice", ship: player.id, text: "Alongside. Transfer's running, Captain." });
@@ -4370,13 +4413,17 @@ export class Sim {
       lines.push(
         `MISSION (system ${m.system}/${C.CAMPAIGN_SYSTEMS} — "${m.systemName}"): THE GATE bears ${gBearing}, range ${gRange} km. The gate is FLOWN through (helm orders — there is no gate verb; 'head for the gate' = set_heading absolute ${gBearing}). ${clock}.`
       );
-      const live = m.wrecks.filter((w) => w.items.length > 0);
+      const live = m.wrecks.filter((w) => w.items.length > 0 || (!w.marked && !w.checked));
       if (live.length > 0) {
         lines.push(
           `Salvage on the board: ${live
             .map(
               (w) =>
-                `${w.marked ? "marked wreck" : "rumored wreck"} bearing ${fmtBearing(bearingTo(ship.x, ship.y, w.x, w.y))}, ${(dist(ship.x, ship.y, w.x, w.y) / 1000).toFixed(0)} km${w.marked ? ` (${w.items.length} items)` : " (contents unknown)"}`
+                `${w.marked ? "marked wreck" : "rumored wreck"} bearing ${fmtBearing(bearingTo(ship.x, ship.y, w.x, w.y))}, ${(dist(ship.x, ship.y, w.x, w.y) / 1000).toFixed(0)} km${
+                  w.marked || w.checked
+                    ? ` (${w.items.length} items)`
+                    : ` (contents unknown — a rumor resolves by PRESENCE: fly within ${C.RUMOR_RESOLVE_RANGE_M / 1000} km and I'll call what's there; sensors and pings can't do it, dust or no dust)`
+                }`
             )
             .join("; ")}. The salvage verb docks the nearest wreck — we must be alongside (${C.SALVAGE_DOCK_RANGE_M / 1000} km) and it needs a full stop.`
         );
@@ -4703,12 +4750,15 @@ export class Sim {
             : `${Math.max(0, m.hunterSpawnS - this.tickCount)}s`,
           hunters_alive: m.hunterIds.filter((h) => this.ships.has(h)).length,
           wrecks: m.wrecks
-            .filter((w) => w.items.length > 0)
+            .filter((w) => w.items.length > 0 || (!w.marked && !w.checked))
             .map((w) => ({
               type: w.marked ? "marked" : "rumored",
               bearing: fmtBearing(bearingTo(ship.x, ship.y, w.x, w.y)),
               range_km: Math.round(dist(ship.x, ship.y, w.x, w.y) / 1000),
-              items: w.marked ? w.items.length : "unknown",
+              items:
+                w.marked || w.checked
+                  ? w.items.length
+                  : `unknown — resolves by presence (fly within ${C.RUMOR_RESOLVE_RANGE_M / 1000} km; sensors/pings cannot resolve a rumor)`,
             })),
           salvage_note: `salvage docks the nearest wreck: be alongside (${C.SALVAGE_DOCK_RANGE_M / 1000} km) and come to a full stop; items land one per ${C.SALVAGE_ITEM_S}s, worst first`,
         };
@@ -4943,19 +4993,21 @@ export class Sim {
           : {}),
       },
       // campaign wrecks: landmarks, not contacts — the player knows where
-      // every site is (§4.4: MARKED sites have reliable known contents,
-      // RUMORED sites hide their haul until you dock — `items` is a count
-      // for marked, null for untouched rumors)
+      // every site is (§4.4: MARKED sites have reliable known contents;
+      // RUMORED sites hide their haul until CHECKED by presence — `items`
+      // is a count once known, null for unresolved rumors). A dry hole
+      // stays on the map until visited: the rumor of a place is real even
+      // when the loot isn't.
       ...(this.mission && id === this.mission.playerId
         ? {
             wrecks: this.mission.wrecks
-              .filter((w) => w.items.length > 0)
+              .filter((w) => w.items.length > 0 || (!w.marked && !w.checked))
               .map((w) => ({
                 id: w.id,
                 x: w.x,
                 y: w.y,
                 marked: w.marked,
-                items: w.marked ? w.items.length : null,
+                items: w.marked || w.checked ? w.items.length : null,
               })),
           }
         : {}),
