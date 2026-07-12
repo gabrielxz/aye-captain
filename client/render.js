@@ -197,6 +197,12 @@ document.addEventListener("keydown", (e) => {
     camera.showInset = !camera.showInset;
   } else if (k === "v") {
     vectorLatched = !vectorLatched; // local toggle, no XO round-trip
+  } else if (k === "b") {
+    // bearing compass on the 50 km ring (player request 2026-07-12).
+    // B, not Alt: bare Alt focuses the browser menu bar and Alt-combos
+    // are OS shortcuts.
+    compassOn = !compassOn;
+    localStorage.setItem("compass", compassOn ? "1" : "0");
   }
 });
 document.addEventListener("keyup", (e) => heldKeys.delete(e.key.toLowerCase()));
@@ -645,6 +651,12 @@ function drawGrid() {
 // rings in one line (v4.3 §4). The 10 and 100 km rings read as mystery
 // circles in the playtest and are gone.
 const RANGE_RINGS_M = [50000];
+// Bearing compass (toggle: B) — the 50 km ring becomes a protractor:
+// degree ticks + labels, and the current RUMBLE bearings pinned to it so
+// crossing bearings stops being mental math. Pure presentation: every
+// number drawn here is already the player's information.
+let compassOn = localStorage.getItem("compass") === "1";
+
 function drawRangeRings(you) {
   const span = Math.max(canvas.clientWidth, canvas.clientHeight);
   for (const r of RANGE_RINGS_M) {
@@ -663,7 +675,53 @@ function drawRangeRings(you) {
     ctx.fillText(`${r / 1000} km`, sx, sy - rpx - 4);
     ctx.textAlign = "left";
     ctx.globalAlpha = 1;
+    if (compassOn) drawCompass(sx, sy, rpx, alpha);
   }
+}
+
+function drawCompass(sx, sy, rpx, ringAlpha) {
+  if (rpx < 100) return; // too small to read — the ring fade handles the rest
+  ctx.save();
+  ctx.strokeStyle = COLORS.rings;
+  ctx.fillStyle = COLORS.rings;
+  ctx.font = "9px monospace";
+  ctx.textAlign = "center";
+  for (let deg = 0; deg < 360; deg += 10) {
+    const rad = (deg * Math.PI) / 180;
+    const dx = Math.sin(rad);
+    const dy = -Math.cos(rad); // compass: 0 = north/up, clockwise
+    const major = deg % 30 === 0;
+    const tick = major ? 8 : 4;
+    ctx.globalAlpha = ringAlpha * (major ? 0.7 : 0.4);
+    ctx.beginPath();
+    ctx.moveTo(sx + dx * rpx, sy + dy * rpx);
+    ctx.lineTo(sx + dx * (rpx + tick), sy + dy * (rpx + tick));
+    ctx.stroke();
+    if (major) {
+      ctx.fillText(String(deg).padStart(3, "0"), sx + dx * (rpx + 18), sy + dy * (rpx + 18) + 3);
+    }
+  }
+  // rumble bearings pinned to the ring: the plotting table draws itself
+  for (const rum of state.lastSnap?.rumbles ?? []) {
+    const rad = (rum.bearing * Math.PI) / 180;
+    const dx = Math.sin(rad);
+    const dy = -Math.cos(rad);
+    const loud = Math.max(0.35, Math.min(1, rum.loud ?? 0.5));
+    ctx.strokeStyle = COLORS.warn ?? "#f6ad55";
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.globalAlpha = ringAlpha * (0.5 + 0.5 * loud);
+    ctx.lineWidth = 2;
+    ctx.beginPath(); // a chevron riding the ring, pointing outward
+    ctx.moveTo(sx + dx * rpx - dy * 6, sy + dy * rpx + dx * 6);
+    ctx.lineTo(sx + dx * (rpx + 9), sy + dy * (rpx + 9));
+    ctx.lineTo(sx + dx * rpx + dy * 6, sy + dy * rpx - dx * 6);
+    ctx.stroke();
+    ctx.lineWidth = 1;
+    labelText(String(Math.round(rum.bearing)).padStart(3, "0"), sx + dx * (rpx + 30) - 10, sy + dy * (rpx + 30) + 3, ctx.strokeStyle, ringAlpha);
+  }
+  ctx.textAlign = "left";
+  ctx.globalAlpha = 1;
+  ctx.restore();
 }
 
 // Thrust flare color runs cold amber -> hot blue-white with throttle.
