@@ -117,6 +117,7 @@ const TOPICS = [
   "standing_orders",
   "zone",
   "full_report",
+  "mission", // campaign: gate bearing/range, the clock, wrecks on the board
 ];
 
 function validTubesParam(v: unknown): number[] | null {
@@ -246,6 +247,16 @@ export function validateCommand(raw: unknown, nested = false): Command | null {
     case "maneuver": {
       if (p.type !== "full_stop") return null;
       return out({ type: p.type });
+    }
+    case "salvage": {
+      // campaign: resolution is by proximity server-side; a named target
+      // rides along as flavor but is never required
+      const clean: Record<string, unknown> = {};
+      if (p.target !== undefined) {
+        if (typeof p.target !== "string") return null;
+        clean.target = p.target;
+      }
+      return out(clean);
     }
     case "show_vector":
       return out({});

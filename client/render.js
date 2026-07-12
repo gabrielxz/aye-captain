@@ -773,6 +773,7 @@ function draw() {
   }
   drawGate(now); // campaign: the one thing you always know (world-space, always visible)
   drawTerrain();
+  drawWrecks();
   if (you) drawRangeRings(you);
 
   drawParticles();
@@ -797,9 +798,61 @@ function draw() {
   drawDriftMarker(you);
   drawVectorOverlay(you);
   drawDustShroud();
+  drawExitFx(now);
   if (shaking) ctx.restore();
   drawCursorReadout(you);
   drawInset(you);
+}
+
+// §8 the exit spectacle: flashbulb, an expanding ring (the ping-ring
+// trick), and the starfield streaking along the exit velocity — the
+// cheapest cinema in the game. The beat of silence + rising tone is
+// audio.musicExit(); this is the picture.
+let exitFx = null;
+export function gateExitFx() {
+  const you = state.lastSnap?.you;
+  exitFx = { at: performance.now(), vx: you?.vx ?? 0, vy: you?.vy ?? 1 };
+  kickShake(true);
+}
+function drawExitFx(now) {
+  if (!exitFx) return;
+  const age = (now - exitFx.at) / 1000;
+  if (age > 2.6) {
+    exitFx = null;
+    return;
+  }
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  const you = state.lastSnap?.you;
+  if (you) {
+    const [sx, sy] = worldToScreen(you.x, you.y);
+    ctx.strokeStyle = `rgba(140, 220, 255, ${Math.max(0, 0.8 - age / 2)})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(sx, sy, 30 + age * 700, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  // the streak: stable pseudo-stars smearing along the exit vector
+  const speed = Math.hypot(exitFx.vx, exitFx.vy) || 1;
+  const dx = exitFx.vx / speed;
+  const dy = -exitFx.vy / speed; // screen y is down
+  const k = Math.max(0, 1 - age / 2.2);
+  const len = 60 + age * 420;
+  ctx.strokeStyle = `rgba(205, 225, 255, ${0.45 * k})`;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let i = 0; i < 70; i++) {
+    const px = (Math.sin(i * 78.233) * 0.5 + 0.5) * w;
+    const py = (Math.sin(i * 12.9898) * 0.5 + 0.5) * h;
+    ctx.moveTo(px, py);
+    ctx.lineTo(px - dx * len, py - dy * len);
+  }
+  ctx.stroke();
+  // flashbulb on top
+  if (age < 0.35) {
+    ctx.fillStyle = `rgba(230, 245, 255, ${0.75 * (1 - age / 0.35)})`;
+    ctx.fillRect(0, 0, w, h);
+  }
 }
 
 // Campaign gate (Stage 0): the pylons are terrain rocks and render with the
@@ -838,6 +891,32 @@ function drawGate(now) {
   ctx.font = "10px 'Share Tech Mono', monospace";
   const [gx, gy] = worldToScreen(g.x, g.y);
   ctx.fillText("GATE", gx + 8, gy - 8);
+  ctx.restore();
+}
+
+// Campaign salvage sites (§4): landmarks, not contacts — the player knows
+// where every wreck is; what a RUMOR holds is the gamble. Diamond marker,
+// item count for marked sites, "?" for rumors.
+function drawWrecks() {
+  const wrecks = state.lastSnap?.wrecks;
+  if (!wrecks || wrecks.length === 0) return;
+  ctx.save();
+  ctx.font = "9px 'Share Tech Mono', monospace";
+  for (const w of wrecks) {
+    const [sx, sy] = worldToScreen(w.x, w.y);
+    ctx.strokeStyle = w.marked ? "#b8a86a" : "#8a7fb0";
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.globalAlpha = 0.9;
+    ctx.beginPath(); // a small diamond
+    ctx.moveTo(sx, sy - 5);
+    ctx.lineTo(sx + 5, sy);
+    ctx.lineTo(sx, sy + 5);
+    ctx.lineTo(sx - 5, sy);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.globalAlpha = 0.75;
+    ctx.fillText(w.marked ? `wreck ·${w.items}` : "rumor ·?", sx + 8, sy + 3);
+  }
   ctx.restore();
 }
 

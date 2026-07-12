@@ -84,6 +84,7 @@
     #room-panel { display: flex; flex-direction: column; align-items: center; gap: 10px; }
     #practice-panel { flex-direction: column; align-items: center; gap: 6px; }
     #campaign-panel { flex-direction: column; align-items: center; gap: 6px; max-width: 560px; }
+    body.campaign #music-mix { display: inline !important; }
     #room-panel .room-code { font-size: 22px; letter-spacing: 6px; color: var(--accent); }
     #room-roster { display: flex; flex-direction: column; gap: 3px; min-width: 240px; }
     #room-roster .seat { display: flex; justify-content: space-between; gap: 16px; padding: 3px 8px; border: 1px solid #223; }
@@ -312,9 +313,11 @@
         something with better ears than yours wakes up.
       </div>
       <div class="join-row" style="margin-top:14px; justify-content:center">
-        <button id="btn-campaign-start">START RUN</button>
+        <button id="btn-campaign-continue" style="display:none">CONTINUE RUN</button>
+        <button id="btn-campaign-start">NEW RUN</button>
         <button id="btn-campaign-back">BACK</button>
       </div>
+      <div id="campaign-best" class="sub"></div>
     </div>
   </div>
 
@@ -330,6 +333,8 @@
         <div class="banner-buttons">
           <button id="btn-rematch">REMATCH — SAME FIELD</button>
           <button id="btn-rematch-new">REMATCH — NEW FIELD</button>
+          <!-- campaign run map: shown instead of the rematch pair -->
+          <button id="btn-next-system" style="display:none">NEXT SYSTEM</button>
         </div>
         <div id="rematch-status"></div>
         <!-- v5.1 §7.2: outside .banner-buttons so spectators keep it -->
@@ -346,6 +351,9 @@
         <input type="range" id="vol-sfx" min="0" max="1" step="0.05" style="width:64px" />
         <span>VOX</span>
         <input type="range" id="vol-voice" min="0" max="1" step="0.05" style="width:64px" />
+        <!-- §7.7: the score's own slider — campaign only (body.campaign) -->
+        <span id="music-mix" style="display:none"><span>MUS</span>
+        <input type="range" id="vol-music" min="0" max="1" step="0.05" style="width:64px" /></span>
         <button id="verbosity" class="verbosity-btn" title="XO verbosity — FULL: everything &middot; TERSE: warnings and news only &middot; SILENT: warnings only">XO: FULL</button>
         <button id="btn-menu" class="verbosity-btn" style="display:none" title="leave to the main menu">EXIT</button>
       </div>

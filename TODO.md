@@ -1,34 +1,53 @@
 # TODO — next steps
 
-## Campaign "Deep Black" STAGE 0 (HANDOFF-CAMPAIGN-v1.md) — BUILT 2026-07-12, NOT DEPLOYED
+## Campaign "Deep Black" (HANDOFF-CAMPAIGN-v1.md) — ALL STAGES BUILT 2026-07-12, NOT MERGED/DEPLOYED
 
-One system, the clock, one "Sharp Ears" corvette Hunter (fog-based AI —
-`hunterDecide` in server/hunter.ts reads ONLY its own `snapshotFor`
-snapshot), gate on the rim (pylons are rocks, swept aperture crossing,
-§5.4 approach-solution HUD row + XO calls), honest fuel, retry via the
-rematch buttons. 843 assertions (77 new in hunter/campaign.test.ts).
-Runtime-verified in Chrome end to end: clock → spawn (no pop-in; first
-sign was a drifting rumble) → Hunter chased a full-burn player across
-the map → loss path (dry tanks + rock = HUNTER WINS, death→spectator) →
-retry → coast-and-regen approach → SOLUTION GOOD → SYSTEM CLEARED.
+Branch `campaign-deep-black`. Stage 0 passed its tension playtest
+(Gabriel, two runs, "very fun"); Gabriel authorized building stages 1-4
+in ONE pass with one playtest at the end (supersedes the spec's
+between-stages law — the core-loop fear it guarded was retired by the
+Stage 0 verdict). Built: §4 salvage (marked/rumored wrecks, full-stop
+cost, sequential worst-first haul, abort keeps landed items, Hunter
+drops the best wreck), §6 progression (pools persist across jumps;
+upgrade modules = multipliers at the ship stat choke points), §1
+multi-system runs (localStorage run state — client-owned BY DESIGN,
+invariant 21 — run map between systems, CONTINUE RUN from the menu), §3
+the 8-row ladder (Drifter → Wolfpack; multi-Hunter spawns with pack
+spacing; gate-camping pickets late rows only; named spawn lines), §9
+run summary + best run, §7 the adaptive score (music-brain.js PURE and
+fog-tested BEFORE the oscillators — tests/music.test.ts is
+mandatory-green; audio driver with speech/alarm ducking + the rumble
+sidechain; MUS slider), §8 exit spectacle (silence beat, rising tone,
+flash, starfield streak, resolve), §11-12 salvage verb + gate/mission
+XO vocabulary (both playtest findings fixed: gate-as-contact, doubled
+shroud line) and the how-to-play CAMPAIGN tab.
 
-- [ ] **Gabriel plays Stage 0 — THE gate for everything below** (spec §0:
-  "if Stage 0 isn't tense, stop"). The deliverable is not "was it fun"
-  but **which asymmetry pair (sensorMult, sigMult) is the game** — sweep
-  live from the dev harness: `{"mission":{"sigMult":0.7,"sensorMult":1.5}}`
-  (also `"hunterSpawnS":40` to compress the clock). Starting pair
-  1.4 / 0.75; the tuned pair drops into the Stage 2 ladder table as row 2.
-- [ ] **Dry-Hunter watch item**: bait its 4 birds with decoys, then see if
-  a missile-less Hunter still scares (it keeps closing, PDCs only — by
-  design; if it reads as harmless, that's a finding, not a bug).
-- [ ] Minor observed: crossing the gate also fires "We've left the shroud"
-  (the gate sits ON the rim, so the zone-exit edge triggers alongside
-  "We're through"). Harmless but doubles the exit lines — candidate
-  one-line suppression when `gateCleared`.
-- [ ] NOT built (later stages, spec §14): salvage, progression, run map,
-  ladder, score/music, exit spectacle, how-to-play tab. Gate-clear →
-  gameover is STAGE-0-ONLY (comment at the crossing site); Stage 1 must
-  decouple it. No deploy, no docs updates until Stage 4.
+- [ ] **Gabriel's full-run playtest** — the one gate before merge/deploy.
+  Watch-list (do not pre-tune): Is greed a real decision (Stage 1's
+  question)? Does the arc land — "system five is when they start coming
+  in pairs" (Stage 2)? Does the score have a soul, and is the
+  Jaws-silence right (Stage 3, BY EAR)? Do the salvage teaser + abort
+  moments produce actual greed sweats? Multi-Hunter valve: if S5/S7 feel
+  unwinnable, the knob is SENSOR RANGE, never count. Dry-Hunter watch
+  item still open. Dev knobs: `{"mission":{"sigMult":..,"sensorMult":..,
+  "hunterSpawnS":..}}`.
+- [ ] Ladder numbers are FIRST-DRAFT (rows 3-8 multipliers/contents were
+  never flown) — expect a tuning pass from the playtest.
+- [ ] Wreck contents/counts (2 marked + 3 rumored, 35% dry rumors outside
+  dust) are first-draft economy — same.
+- [ ] **Live finding (Chrome run-through 2026-07-12): the Hunter killed
+  ITSELF on terrain** — went quiet with no shot fired (it appears to have
+  hit the gate pylons or a rock while pursuing near the rim). Free wins
+  cheapen the trap-or-run decision; watch how often it happens in real
+  play. Candidate fixes if frequent: pylons in the Hunter's AVOID pad
+  list get a bigger margin, or the AVOID lookahead scales with speed. Do
+  not fix preemptively — one occurrence, maybe seed-specific.
+- [ ] Same run-through validated by accident: the pylon clip at speed is
+  survivable (hull 100→31, "so close"), the shroud overshoot recovery is
+  a real (miserable, correct) loop, and dry-tanks-mid-brake is the
+  dominant failure for a greedy pilot — all three §5 failure modes fired
+  organically in one session. The XO's terminal salvage approach
+  ("Coming alongside") flew a 300 m dock from a 5 km handoff.
 
 ## v5.1 "Discipline" (HANDOFF-v5.1.md) — BUILT 2026-07-12
 

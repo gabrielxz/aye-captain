@@ -16,11 +16,19 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
   sim.addShip("A", 0, -C.SPAWN_RING_RADIUS_M, 0);
   sim.mission = {
     playerId: "A",
+    system: 2, // "Sharp Ears" — the Stage 0 baseline row
+    systemName: "Sharp Ears",
     gate: { x: 0, y: C.REGION_RADIUS_M, apertureW: C.APERTURE_W_M },
     hunterSpawnS: C.CAMPAIGN_HUNTER_SPAWN_S,
     hunterSpawned: false,
-    hunterId: null,
-    hunter: { archetype: "corvette", sensorMult: C.HUNTER_SENSOR_MULT, sigMult: C.HUNTER_SIG_MULT },
+    hunterIds: [],
+    hunters: [{ archetype: "corvette", sensorMult: C.HUNTER_SENSOR_MULT, sigMult: C.HUNTER_SIG_MULT, gateCamp: false }],
+    spawnLine: "Clock's run out, Captain — a drive just lit off in-system.",
+    wrecks: [],
+    salvaging: null,
+    cleared: false,
+    stats: { huntersKilled: 0, salvaged: 0, pingsFired: 0, upgrades: 0 },
+    upgradeCounts: { sig: 0, sensor: 0, accel: 0, hull: 0 },
     solGood: false,
     solCooldownS: 0,
     ...over,
@@ -147,24 +155,38 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
   assert(C.APERTURE_W_M / 2 > 0 && C.APERTURE_W_M / 2 < missAt(6) - authority(frigate, V), `APERTURE_W_M/2 sits inside the derived band (${C.APERTURE_W_M / 2} < ${(missAt(6) - authority(frigate, V)).toFixed(0)})`);
 }
 
-// 6. gate crossing: swept, outward-only, one substep at full speed
+// 6. gate crossing: swept, outward-only, one substep at full speed.
+// Stage 1: a NON-final system emits system_clear (a transition — the run
+// continues); only system 8's crossing is the run-complete gameover.
 {
-  // outward crossing wins
-  const sim = missionSim();
+  // non-final system: transition, not victory
+  const sim = missionSim(); // system 2
   const a = sim.ships.get("A")!;
   a.x = 0; a.y = C.REGION_RADIUS_M - 500; a.vx = 0; a.vy = 3000;
   const ev = sim.tick();
-  assert(sim.winner === "A", "outward crossing at 3 km/s: caught by the swept test in one substep");
-  const over = ev.find((e) => e.kind === "gameover") as any;
-  assert(!!over && over.gateCleared === true && over.winner === "A", "gameover carries gateCleared");
+  assert(sim.winner === null && sim.mission!.cleared, "non-final crossing: cleared, no winner — the gate is a TRANSITION");
+  const clear = ev.find((e) => e.kind === "system_clear") as any;
+  assert(!!clear && clear.system === 2, "system_clear event carries the system number");
+  assert(!ev.some((e) => e.kind === "gameover"), "…and no gameover rides along");
   assert(ev.some((e) => e.kind === "notice" && /We're through/.test((e as any).text)), "the XO calls the exit");
+  sim.tick();
+  assert(sim.tick().filter((e) => e.kind === "system_clear").length === 0, "cleared flag: the crossing never re-fires");
+
+  // FINAL system: the run is complete — gameover with gateCleared
+  const simF = missionSim({ system: C.CAMPAIGN_SYSTEMS });
+  const aF = simF.ships.get("A")!;
+  aF.x = 0; aF.y = C.REGION_RADIUS_M - 500; aF.vx = 0; aF.vy = 3000;
+  const evF = simF.tick();
+  assert(simF.winner === "A", "system-eight crossing at 3 km/s: caught by the swept test, run complete");
+  const over = evF.find((e) => e.kind === "gameover") as any;
+  assert(!!over && over.gateCleared === true && over.winner === "A", "final gameover carries gateCleared");
 
   // inward crossing does not win (you fly OUT through the gate)
   const sim2 = missionSim();
   const a2 = sim2.ships.get("A")!;
   a2.x = 0; a2.y = C.REGION_RADIUS_M + 500; a2.vx = 0; a2.vy = -3000;
   sim2.tick();
-  assert(sim2.winner === null, "inward crossing is not an exit");
+  assert(sim2.winner === null && !sim2.mission!.cleared, "inward crossing is not an exit");
 
   // a wide miss sails past into the shroud overshoot (§5.2), no win
   const sim3 = missionSim();
@@ -240,35 +262,189 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
   assert(Math.abs(dist(pylons[0].x, pylons[0].y, pylons[1].x, pylons[1].y) - (C.APERTURE_W_M + 2 * C.GATE_PYLON_RADIUS_M)) < 1, "pylons flank the aperture exactly");
   assert(ws.sent.some((m) => m.type === "transcript" && /Deep black/.test(m.text)), "campaign welcome line");
   const mission = match.sim.mission!;
-  assert(mission.hunter.archetype === "corvette" && mission.hunterSpawnS === C.CAMPAIGN_HUNTER_SPAWN_S, "mission spec armed");
+  assert(mission.hunters[0].archetype === "corvette" && mission.hunterSpawnS === C.CAMPAIGN_HUNTER_SPAWN_S, "mission spec armed");
   assert(match.sim.ships.get("A")!.archetype === "corvette", "player flies the picked hull");
 
   // dev-harness runtime knobs
   match.handleUtterance(ws as any, '{"mission":{"sigMult":0.5,"sensorMult":2}}');
-  assert(mission.hunter.sigMult === 0.5 && mission.hunter.sensorMult === 2, "mission tune updates the spec live");
+  assert(mission.hunters[0].sigMult === 0.5 && mission.hunters[0].sensorMult === 2, "mission tune updates the spec live");
   assert(ws.sent.some((m) => m.type === "transcript" && m.who === "xo-note" && /mission tune/.test(m.text)), "tune echoes as an XO note");
 
-  // fly out: place the player on the aperture line, moving outward
-  const g = mission.gate;
-  const R = Math.hypot(g.x, g.y);
-  const ux = g.x / R;
-  const uy = g.y / R;
-  const a = match.sim.ships.get("A")!;
-  a.x = g.x - ux * 400;
-  a.y = g.y - uy * 400;
-  a.vx = ux * 3000;
-  a.vy = uy * 3000;
-  for (let i = 0; i < 20 && !match.sim.winner; i++) (match as any).physicsStep();
-  const over = ws.sent.find((m) => m.type === "gameover");
-  assert(!!over && over.youWin === true && over.gateCleared === true, "gate clear reaches the client as a gateCleared win");
+  // fly out through system 1's gate: a TRANSITION (system_clear + run
+  // state export), not a gameover
+  const crossGate = () => {
+    const g = match.sim.mission!.gate;
+    const R = Math.hypot(g.x, g.y);
+    const ux = g.x / R;
+    const uy = g.y / R;
+    const a = match.sim.ships.get("A")!;
+    a.x = g.x - ux * 400;
+    a.y = g.y - uy * 400;
+    a.vx = ux * 3000;
+    a.vy = uy * 3000;
+    for (let i = 0; i < 20 && !match.sim.mission!.cleared; i++) (match as any).physicsStep();
+  };
+  // spend some pool so persistence is observable
+  match.sim.ships.get("A")!.propellant = 61;
+  crossGate();
+  const clearMsg = ws.sent.find((m) => m.type === "system_clear");
+  assert(!!clearMsg && clearMsg.system === 1 && clearMsg.nextSystem === 2, "system_clear reaches the client with the next system");
+  assert(clearMsg.runState.pools.propellant === 61, "run state exports the pools as they stand (§6: pools persist)");
+  assert(!ws.sent.some((m) => m.type === "gameover"), "a transition is not a gameover");
 
-  // retry: the ready-up needs exactly one vote, and the clock re-arms
-  assert(match.canRematch(), "campaign can retry");
+  // the client hands the run state back: same match, next system
+  match.nextSystem(ws as any, clearMsg.runState);
+  const m2 = match.sim.mission!;
+  assert(m2.system === 2 && m2.systemName === C.CAMPAIGN_LADDER[1].name, "next system instantiates ladder row 2");
+  assert(match.sim.ships.get("A")!.propellant === 61, "pools arrive as you left them — the campaign economy");
+  assert(match.sim.tickCount === 0 && !m2.hunterSpawned, "fresh system: clock re-armed");
+  assert(ws.sent.some((m) => m.type === "transcript" && /System 2/.test(m.text)), "the XO names the new system");
+
+  // jump to the last system and fly out: the run completes as a win
+  m2.system = C.CAMPAIGN_SYSTEMS;
+  crossGate();
+  const over = ws.sent.find((m) => m.type === "gameover");
+  assert(!!over && over.youWin === true && over.gateCleared === true && over.runComplete === true, "system eight's crossing ends the run as a win");
+  assert(over.runSummary && over.runSummary.systemsCleared === C.CAMPAIGN_SYSTEMS, "the summary scores systems cleared");
+
+  // rematch after a run ends = a NEW RUN from system one (stakes survive)
+  assert(match.canRematch(), "campaign can start a new run");
   (match as any).voteRematch(ws as any, false);
-  assert(match.sim.winner === null && match.sim.tickCount === 0, "retry rebuilds the mission sim");
-  assert(match.sim.mission !== null && !match.sim.mission.hunterSpawned, "retry re-arms the clock");
-  assert(match.sim.ships.has("A") && !match.sim.ships.has("H"), "fresh system: captain alone again");
+  assert(match.sim.mission !== null && match.sim.mission.system === 1, "new run starts at system one");
+  assert(match.sim.winner === null && match.sim.tickCount === 0 && !match.sim.mission.hunterSpawned, "fresh sim, clock re-armed");
+  assert(match.sim.ships.has("A") && !match.sim.ships.has("H"), "captain alone again");
   match.destroy();
+}
+
+// 9. SALVAGE (§4): the stop is the cost; the haul is sequential worst->
+// best; walking away keeps what landed; drifting off aborts
+{
+  const sim = missionSim();
+  sim.mission!.wrecks.push({
+    id: 1,
+    x: 0,
+    y: -C.SPAWN_RING_RADIUS_M + 1000, // 1 km off the spawn point
+    marked: true,
+    items: [
+      { kind: "propellant", amount: 30 },
+      { kind: "missiles", amount: 2 },
+      { kind: "upgrade", amount: 1, upgrade: "sig" },
+    ],
+  });
+  const a = sim.ships.get("A")!;
+  a.propellant = 10;
+  a.vy = C.SALVAGE_STOP_SPEED_MPS + 40; // too fast to dock
+  sim.enqueue("A", [{ verb: "salvage", params: {} } as any]);
+  let ev = sim.tick();
+  assert(ev.some((e) => e.kind === "notice" && /Coming alongside/.test((e as any).text)), "salvage accepted: the XO takes the conn");
+  // the maneuver kills velocity first; no items land while moving
+  for (let t = 0; t < C.SALVAGE_ITEM_S - 1 && sim.speedOf(a) >= C.SALVAGE_STOP_SPEED_MPS; t++) sim.tick();
+  assert(sim.mission!.stats.salvaged === 0, "no transfer above SALVAGE_STOP_SPEED_MPS — the stop is the cost");
+  // now stopped: items land one per SALVAGE_ITEM_S, worst first
+  const before = a.propellant;
+  let got = 0;
+  for (let t = 0; t < C.SALVAGE_ITEM_S * 2 + 4 && got === 0; t++) {
+    ev = sim.tick();
+    if (ev.some((e) => e.kind === "notice" && /Propellant aboard/.test((e as any).text))) got = 1;
+  }
+  assert(got === 1 && a.propellant > before, "worst item first: propellant lands and is applied");
+  const sigBefore = a.sigMult;
+  // teaser fires when only the upgrade remains
+  let teased = false;
+  for (let t = 0; t < C.SALVAGE_ITEM_S + 2 && !teased; t++) {
+    ev = sim.tick();
+    if (ev.some((e) => e.kind === "notice" && /something else in here/.test((e as any).text))) teased = true;
+  }
+  assert(teased, "the §4.2 teaser: the last item is the reason to stay put");
+  // abort NOW: any thrust order breaks off — landed items stay
+  sim.enqueue("A", [{ verb: "set_thrust", params: { percent: 50 } } as any]);
+  ev = sim.tick();
+  assert(ev.some((e) => e.kind === "notice" && /Breaking off the salvage/.test((e as any).text)), "a thrust order breaks off the transfer");
+  assert(a.sigMult === sigBefore && sim.mission!.wrecks[0].items.length === 1, "the upgrade stays on the wreck; what landed stayed aboard");
+  assert(a.propellant > before, "abort keeps everything already landed");
+}
+
+// 10. §6 progression: an upgrade module applies as a multiplier and is
+// counted for the run-state export
+{
+  const sim = missionSim();
+  const a = sim.ships.get("A")!;
+  (sim as any).applySalvageItem(a, { kind: "upgrade", amount: 1, upgrade: "sig" }, []);
+  assert(Math.abs(a.sigMult - C.UPGRADE_SIG_MULT) < 1e-9, "engine baffles: player sigMult scales down through the same choke point as the Hunter's");
+  assert(sim.mission!.upgradeCounts.sig === 1 && sim.mission!.stats.upgrades === 1, "module counted for the export");
+}
+
+// 11. §4.4 THE INTEL PIN: the Hunter's intel struct carries MARKED sites
+// only — a rumored wreck is the player's private lead
+{
+  const sim = missionSim({ hunterSpawnS: 1 });
+  sim.mission!.wrecks.push(
+    { id: 1, x: 50000, y: 0, marked: true, items: [{ kind: "propellant", amount: 30 }] },
+    { id: 2, x: -50000, y: 0, marked: false, items: [{ kind: "missiles", amount: 2 }] },
+    { id: 3, x: 90000, y: 0, marked: true, items: [] } // stripped: no longer worth watching
+  );
+  sim.tick();
+  const intel = sim.hunterIntelFor(sim.ships.get("H")!);
+  assert(intel.sites.length === 1 && intel.sites[0].x === 50000, "the Hunter knows the MARKED site, never the rumor, never a stripped hulk");
+}
+
+// 12. §2.3: a dead Hunter drops the best wreck in the system — the trap pays
+{
+  const sim = missionSim({ hunterSpawnS: 1 });
+  sim.tick();
+  const h = sim.ships.get("H")!;
+  h.hull = 1;
+  const ev: SimEvent[] = [];
+  (sim as any).damageShip(h, 10, "missile", ev, "A");
+  const wreck = sim.mission!.wrecks.find((w) => w.marked && w.items.some((i) => i.kind === "upgrade"));
+  assert(!!wreck && sim.mission!.stats.huntersKilled === 1, "the Hunter's wreck lands, marked, carrying an upgrade module");
+}
+
+// 13. THE LADDER (§3): a table, not a formula — 8 rows, one new problem
+// each; gate-camping is a LATE escalation only; the clock NEVER shrinks
+// (one constant for all rows — pinned here so a future 'per-system clock'
+// refactor trips a red test); spawn lines carry no bearings or numbers
+{
+  assert(C.CAMPAIGN_LADDER.length === C.CAMPAIGN_SYSTEMS, "eight rows for eight systems");
+  assert(C.CAMPAIGN_LADDER.every((r) => r.hunters.length >= 1 && r.hunters.length <= 2), "1-2 hunters per row (the count is an identity, not a dial)");
+  C.CAMPAIGN_LADDER.forEach((row, i) => {
+    const camp = row.hunters.some((h) => h.gateCamp);
+    assert(camp === (i >= 6), `gate-camping ${camp ? "present" : "absent"} in "${row.name}" — late rows only (the sprint fantasy is precious)`);
+    assert(!/\d|bearing/i.test(row.spawnLine), `"${row.name}" spawn line carries no bearing and no number`);
+  });
+  const row2 = C.CAMPAIGN_LADDER[1].hunters[0];
+  assert(row2.sensorMult === C.HUNTER_SENSOR_MULT && row2.sigMult === C.HUNTER_SIG_MULT, "row 2 IS the Stage 0 pair (Sharp Ears)");
+  // the clock is a single constant — there is no per-row field to shrink
+  assert(!("hunterSpawnS" in (C.CAMPAIGN_LADDER[0] as any)), "no per-row clock exists: CAMPAIGN_HUNTER_SPAWN_S is the only clock");
+}
+
+// 14. THE PAIR (§3 row 5): two hunters spawn, both beyond detection, and
+// spaced apart — two bearings, not one blob
+{
+  const row = C.CAMPAIGN_LADDER[4];
+  const sim = missionSim({ hunterSpawnS: 1, hunters: row.hunters.map((h) => ({ ...h })), spawnLine: row.spawnLine, system: 5, systemName: row.name });
+  const ev = sim.tick();
+  const h1 = sim.ships.get("H");
+  const h2 = sim.ships.get("H2");
+  assert(!!h1 && !!h2, "the Pair: both hunters spawn");
+  const a = sim.ships.get("A")!;
+  const sig = (C.ARCHETYPES.corvette.sigBase + C.HUNTER_HUNT_THROTTLE) * row.hunters[0].sigMult;
+  const floor = sim.detectionRange(sig, a);
+  assert(dist(h1!.x, h1!.y, a.x, a.y) > floor && dist(h2!.x, h2!.y, a.x, a.y) > floor, "both beyond detection — the no-pop-in law holds for packs");
+  assert(dist(h1!.x, h1!.y, h2!.x, h2!.y) > 40000, "spaced ≥40 km: two drives means two BEARINGS");
+  assert(ev.some((e) => e.kind === "notice" && /pair/i.test((e as any).text)), "the XO names the problem: 'They've sent a pair.'");
+  assert(((sim.snapshotFor("A") as any).contacts as any[]).length === 0, "zero contacts on the spawn tick, still");
+}
+
+// 15. gate-clear suppresses the shroud double-line (playtest finding):
+// "We're through" + "We've left the shroud" said the same thing twice
+{
+  const sim = missionSim();
+  const a = sim.ships.get("A")!;
+  a.x = 0; a.y = C.REGION_RADIUS_M - 500; a.vx = 0; a.vy = 3000;
+  const ev = sim.tick();
+  assert(ev.some((e) => e.kind === "notice" && /We're through/.test((e as any).text)), "the exit call fires");
+  assert(!ev.some((e) => e.kind === "notice" && /left the shroud/.test((e as any).text)), "…without the shroud line doubling it");
 }
 
 console.log("done: campaign");

@@ -1,7 +1,8 @@
 // ws handling + client state store
-import { startRenderLoop, bigBoomAt, showVector, setOverlay, resetOverlays, kickShake, camera } from "./render.js";
-import { initUI, addTranscript, updateHUD, showLobbyStatus, enterGame, showBanner, showReveal, hideBanner, showRematchTally, setMenuVisible, updateWatching, setSpectator, showRoomLobby, hideRoomLobby } from "./ui.js";
+import { startRenderLoop, bigBoomAt, showVector, setOverlay, resetOverlays, kickShake, camera, gateExitFx } from "./render.js";
+import { initUI, addTranscript, updateHUD, showLobbyStatus, enterGame, showBanner, showReveal, hideBanner, showRematchTally, setMenuVisible, updateWatching, setSpectator, showRoomLobby, hideRoomLobby, setCampaignBanner } from "./ui.js";
 import * as audio from "./audio.js";
+import { musicView, computeMusic } from "./music-brain.js";
 
 export const state = {
   config: null, // {zoneRadius, stt} from server hello
@@ -10,8 +11,9 @@ export const state = {
   team: null, // "red" | "blue" | null (v5 teams mode)
   callsign: null, // spectator callsign (cosmetic, server-assigned)
   practice: false,
-  campaign: false, // Deep Black solo mission (Stage 0)
+  campaign: false, // Deep Black solo run
   gate: null, // campaign gate geometry {x, y, apertureW} — fixed public landmark
+  musicPrev: null, // last music-brain view (edge-triggers the stings)
   prevSnap: null, // previous snapshot (for interpolation)
   lastSnap: null, // latest snapshot
   lastSnapAt: 0, // performance.now() when lastSnap arrived
@@ -71,6 +73,7 @@ function handleMessage(msg) {
       updateWatching([]); // fresh roster arrives right behind the start
       setSpectator(msg.role === "spectator" ? msg.callsign : null);
       showRematchTally(0, 0); // a fresh start clears any ready-up tally
+      setCampaignBanner(state.campaign ? "reset" : "off"); // banner buttons to mode default
       // §7.2: practice, campaign, and spectating get a live MENU control
       setMenuVisible(!!msg.practice || state.campaign || msg.role === "spectator");
       if (msg.role === "spectator") {
@@ -123,6 +126,13 @@ function handleMessage(msg) {
       }
       soundFromSnapshot(msg);
       updateHUDFromSnapshot(msg);
+      // campaign adaptive score: brain (pure, fog-tested) -> driver.
+      // 🔴 the ONLY input is this wire snapshot — never sim truth (§7.1)
+      if (state.campaign && !state.gameOver) {
+        const view = musicView(msg);
+        audio.setMusic(computeMusic(view, state.musicPrev ?? null));
+        state.musicPrev = view;
+      }
       break;
     }
     case "gameover": {
@@ -159,6 +169,40 @@ function handleMessage(msg) {
           else if (msg.youWin && contact) bigBoomAt(contact.x, contact.y);
         }
       }
+      if (state.campaign && msg.runSummary) {
+        // §9: SYSTEMS CLEARED is the headline and the score. The run is
+        // over either way — clear the save, keep the best.
+        const s = msg.runSummary;
+        localStorage.removeItem("campaignRun");
+        const best = Math.max(Number(localStorage.getItem("campaignBest") ?? 0), s.systemsCleared);
+        localStorage.setItem("campaignBest", String(best));
+        const tm = `${Math.floor(s.timeS / 60)}:${String(s.timeS % 60).padStart(2, "0")}`;
+        const cause = msg.runComplete
+          ? "eight of eight — the deep black, crossed"
+          : String(msg.winner ?? "").startsWith("H")
+            ? "the Hunter got us"
+            : "lost to misadventure";
+        if (msg.runComplete) {
+          // the final gate gets the full §8 exit before the scoreboard
+          audio.musicExit();
+          gateExitFx();
+        }
+        const showSummary = () => {
+          showBanner(
+            `SYSTEMS CLEARED: ${s.systemsCleared}`,
+            `${cause} — hunters killed ${s.huntersKilled} · salvage ${s.salvaged} · upgrades ${s.upgrades} · pings fired ${s.pingsFired} · run time ${tm} · best run ${best}`
+          );
+          setCampaignBanner("over");
+        };
+        if (msg.runComplete) setTimeout(showSummary, 1500);
+        else showSummary();
+        addTranscript(
+          "sys",
+          msg.runComplete ? "The run is complete, Captain. Eight systems." : `run over — made it to system ${s.systemsCleared + 1}`,
+          !msg.runComplete
+        );
+        break;
+      }
       showBanner(
         msg.gateCleared ? "SYSTEM CLEARED" : msg.youWin ? "VICTORY" : "SHIP LOST",
         (msg.forfeit ? "win by forfeit — " : "") + timeLine + standings
@@ -173,6 +217,30 @@ function handleMessage(msg) {
             : "Hull breach — we're done. Abandon ship.",
         !msg.youWin
       );
+      break;
+    }
+    case "system_clear": {
+      // campaign transition: the run map — a breath between systems. The
+      // run state is OURS to keep (single-player suspends server
+      // authority; localStorage is the save file).
+      state.gameOver = true; // freeze inputs-to-sim mattering; sim is stopped server-side
+      audio.stopContinuous();
+      audio.musicExit(); // §8: the beat of silence, the rising tone, the resolve
+      gateExitFx(); // …and the flash + streak
+      localStorage.setItem("campaignRun", JSON.stringify(msg.runState));
+      const dots = Array.from({ length: msg.totalSystems }, (_, i) =>
+        i < msg.system ? "◆" : "◇"
+      ).join(" ");
+      const t = msg.runState?.totals ?? {};
+      setTimeout(() => {
+        // §8.6: the streak lands first, then the fade to the run map
+        showBanner(
+          `SYSTEM ${msg.system} CLEARED`,
+          `${msg.systemName ?? ""} — ${dots} hunters ${t.huntersKilled ?? 0} · salvage ${t.salvaged ?? 0} · upgrades ${t.upgrades ?? 0}`
+        );
+        setCampaignBanner("next", msg.nextSystem);
+      }, 1500);
+      addTranscript("sys", `system ${msg.system} clear — ${msg.totalSystems - msg.system} to go`);
       break;
     }
     case "created":
@@ -369,10 +437,15 @@ function updateHUDFromSnapshot(snap) {
     { label: "HULL", value: `${you.hull}`, cls: you.hull <= 35 ? "alert" : you.hull <= 65 ? "warn" : "" },
     { label: "EN HULL", value: enemyHull, cls: idContact && idContact.hull <= (idContact.hullMax ?? 100) / 2 ? "good" : "" },
     { label: "CONTACTS", value: contactsLine, cls: contacts.some((c) => c.tier >= 2) ? "good" : contacts.length ? "warn" : "", full: true },
-    // campaign (Stage 0): the mission clock + the gate approach solution.
-    // Server-owned numbers, PING-LIT-style rendering — no client timers.
+    // campaign: the mission clock + the gate approach solution + the
+    // transfer. Server-owned numbers, PING-LIT-style rendering — no
+    // client timers.
     ...(you.mission
       ? [
+          {
+            label: "SYS",
+            value: `${you.mission.system}/8 · ${you.mission.systemName ?? ""}`,
+          },
           {
             label: "HUNTER",
             value: you.mission.hunterActive
@@ -382,6 +455,15 @@ function updateHUDFromSnapshot(snap) {
                 : "gone quiet",
             cls: you.mission.hunterActive ? "alert" : you.mission.spawnInS > 0 ? "warn" : "good",
           },
+          ...(you.mission.salvaging
+            ? [
+                {
+                  label: "SALVAGE",
+                  value: `next in ${you.mission.salvaging.nextInS}s · ${you.mission.salvaging.itemsLeft} left`,
+                  cls: "good",
+                },
+              ]
+            : []),
           {
             label: "GATE",
             value: you.gate

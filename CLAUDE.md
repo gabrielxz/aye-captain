@@ -70,7 +70,20 @@ pre-tune) — v5.1's audio changes are only assessable BY EAR (playtest §1
 and §3 separately, per the handoff). v5 design policy: archetypes
 differ in NUMBERS ONLY — stat blocks, no special abilities (explicitly a
 v5 policy, not permanent doctrine; the railgun loadout row is the first
-sanctioned asymmetry).
+sanctioned asymmetry). **CAMPAIGN "Deep Black"
+(HANDOFF-CAMPAIGN-v1.md) BUILT 2026-07-12 on branch `campaign-deep-black`
+— NOT merged/deployed pending Gabriel's full-run playtest.** Stage 0
+(clock/Hunter/gate) passed its tension playtest ("very fun"); stages 1-4
+built in one authorized pass: salvage (§4, `salvage` verb — the ONLY new
+verb), run structure + §6 progression (pools persist; upgrades are
+multipliers at the sensorMult/sigMult/accelMult/hullMult choke points),
+the 8-row ladder (CAMPAIGN_LADDER — a table, not a formula; gate-camping
+late rows only), §9 run summary (systems cleared IS the score), the §7
+adaptive procedural score (music-brain.js pure + fog-tested BEFORE the
+oscillators; audio.js driver with rumble sidechain), the §8 exit
+spectacle, and the how-to-play CAMPAIGN tab. The Hunter's AI
+(server/hunter.ts `hunterDecide`) and the music brain are PURE FUNCTIONS
+OF WIRE SNAPSHOTS — the function signature is the fog guarantee.
 
 ## Commands
 
@@ -238,6 +251,23 @@ Note: on this machine's rootless Docker, `-p` port publishing doesn't route
     transcript line critical/news/chatter (no alert boolean); alarms obey
     the alarm law (onset + change carry the information, sustains decay —
     setMissileProximity is the reference and must not be touched).
+20. Campaign fog firewalls: the Hunter's AI (`hunterDecide`) is a pure
+    function of ITS OWN wire snapshot + public intel (marked wrecks only
+    — rumored sites are the player's private leads and never reach it);
+    THE MUSIC IS UNDER THE SAME LAW (`music-brain.js` — a pure function
+    of the player's snapshot; an undetected Hunter near and far must
+    sound identical; tests/music.test.ts is mandatory-green). The
+    function signatures ARE the guarantee — never hand either one a Sim.
+21. Campaign run state is CLIENT-OWNED (localStorage), handed to the
+    server at each system start — single-player deliberately suspends
+    server authority (nobody to cheat but yourself). Sanitize for
+    finiteness only; do not "fix" with accounts or server persistence.
+22. The campaign clock never shrinks: CAMPAIGN_HUNTER_SPAWN_S is the
+    only clock, identical across all 8 ladder rows (pinned) — the ladder
+    escalates the HUNTER (numbers only), never the budget. Player-facing
+    sigMult scales TOTAL signature and is therefore also an
+    anti-lock/anti-seeker stat — deliberate double-axis, documented at
+    HUNTER_SIG_MULT.
 
 ## Judgment calls already made (user-visible, flagged in check-ins)
 

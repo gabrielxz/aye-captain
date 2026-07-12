@@ -42,6 +42,17 @@ export interface HunterMem {
   lockedCid: string | null; // contact we last designated (avoid re-issuing)
 }
 
+// Public mission knowledge — nothing here is fog-gated by nature: MARKED
+// wreck sites are common knowledge (§4.4 — rumored sites are the player's
+// private leads and DELIBERATELY never appear in this struct; pinned in
+// tests), the gate is a fixed landmark, gateCamp is this Hunter's ladder
+// role (§3: a late-run escalation only).
+export interface HunterIntel {
+  sites: { x: number; y: number }[];
+  gate: { x: number; y: number };
+  gateCamp: boolean;
+}
+
 export function initialHunterMem(): HunterMem {
   return { fireCooldownS: 0, dodge: 0, lowFuel: false, wpIdx: 0, lockedCid: null };
 }
@@ -69,7 +80,8 @@ function patrolWaypoints(terrain: Terrain): { x: number; y: number }[] {
 export function hunterDecide(
   snap: HunterSnap,
   mem: HunterMem,
-  terrain: Terrain
+  terrain: Terrain,
+  intel: HunterIntel
 ): { commands: Command[]; mem: HunterMem } {
   const you = snap.you;
   const next: HunterMem = { ...mem, fireCooldownS: Math.max(0, mem.fireCooldownS - 1) };
@@ -129,10 +141,32 @@ export function hunterDecide(
         next.fireCooldownS = C.HUNTER_FIRE_COOLDOWN_S;
       }
     }
+  } else if (intel.gateCamp) {
+    // PICKET (§3, late rows): hold station just inside the gate and let
+    // the door do the hunting. Deliberately deaf to rumbles and ghosts —
+    // a picket that chases every noise abandons the thing it exists to
+    // deny. Contacts (the branch above) still pull it into a fight.
+    next.lockedCid = null;
+    const gl = Math.max(1, Math.hypot(intel.gate.x, intel.gate.y));
+    const station = {
+      x: intel.gate.x * (1 - 20000 / gl), // 20 km inward of the aperture
+      y: intel.gate.y * (1 - 20000 / gl),
+    };
+    const d = dist(you.x, you.y, station.x, station.y);
+    if (d > C.HUNTER_PATROL_ARRIVE_M) {
+      heading = bearingTo(you.x, you.y, station.x, station.y);
+      throttle = C.HUNTER_HUNT_THROTTLE;
+    } else {
+      // on station: a slow, quiet loiter — the picket barely breathes
+      heading = norm360(bearingTo(you.x, you.y, intel.gate.x, intel.gate.y) + 90);
+      throttle = 15;
+    }
   } else {
     // HUNT: no contact. Ears first (a rumble is a live bearing), then the
-    // last-known ghost, then the patrol route. Never "wait where you lost
-    // him" — go where the game is.
+    // last-known ghost, then the SALVAGE SITES (§4.3 — a site is a known
+    // place where a ship will predictably be, stationary, for thirty
+    // seconds; this is the three-line choice that makes a dumb state
+    // machine look like it's thinking), then the rock-flank patrol.
     next.lockedCid = null;
     const loudest = snap.rumbles.reduce<HunterSnap["rumbles"][number] | null>(
       (a, r) => (a === null || r.loud > a.loud ? r : a),
@@ -145,10 +179,10 @@ export function hunterDecide(
       heading = bearingTo(you.x, you.y, snap.ghost.x, snap.ghost.y);
       throttle = C.HUNTER_HUNT_THROTTLE;
     } else {
-      const wps = patrolWaypoints(terrain);
+      const wps = intel.sites.length > 0 ? intel.sites : patrolWaypoints(terrain);
       let wp = wps[next.wpIdx % wps.length];
       if (dist(you.x, you.y, wp.x, wp.y) <= C.HUNTER_PATROL_ARRIVE_M) {
-        next.wpIdx = (next.wpIdx + 7) % wps.length; // prime stride, like the drone
+        next.wpIdx = (next.wpIdx + (intel.sites.length > 0 ? 1 : 7)) % wps.length;
         wp = wps[next.wpIdx % wps.length];
       }
       heading = bearingTo(you.x, you.y, wp.x, wp.y);

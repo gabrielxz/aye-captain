@@ -103,6 +103,102 @@
       <a class="btn" href="/">&larr; BACK</a>
     </div>
 
+    <!-- §12: the tab bar — MULTIPLAYER (everything below, unchanged) /
+         CAMPAIGN (the solo run). Same voice: briefing, not manual. -->
+    <div style="display:flex; gap:8px; margin:14px 0 6px">
+      <button class="btn" id="tab-mp" onclick="showTab('mp')" style="cursor:pointer">MULTIPLAYER</button>
+      <button class="btn" id="tab-camp" onclick="showTab('camp')" style="cursor:pointer">CAMPAIGN — DEEP BLACK</button>
+    </div>
+    <script>
+      function showTab(which) {
+        document.getElementById("mp-content").style.display = which === "mp" ? "" : "none";
+        document.getElementById("campaign-content").style.display = which === "camp" ? "" : "none";
+        document.getElementById("tab-mp").style.opacity = which === "mp" ? "1" : "0.5";
+        document.getElementById("tab-camp").style.opacity = which === "camp" ? "1" : "0.5";
+      }
+      document.addEventListener("DOMContentLoaded", () => showTab(location.hash === "#campaign" ? "camp" : "mp"));
+    </script>
+
+    <div id="campaign-content" style="display:none">
+      <p class="lead">Alone, in somebody else's dark. Eight systems between you and home,
+      and every one of them has a door out and something that hunts by ear.</p>
+
+      <h2 id="the-run">DOCTRINE: THE RUN</h2>
+      <p>Eight systems. Get out of each one. <strong>Your score is how far you got.</strong></p>
+      <p>The clock in your HUD is not a threat. <strong>It is a budget.</strong> It is how
+      much greed you can afford — how long you can burn loud, chase wrecks, and take the
+      detour before something with better ears than yours wakes up.</p>
+      <p>You may fly straight to the gate at the first bell and leave with nothing. Nobody
+      will stop you. You will not survive system five that way — the wrecks you skipped
+      were the hull and the baffles you'll be missing when the Pair comes.</p>
+
+      <h2 id="two-silences">DOCTRINE: THE TWO SILENCES</h2>
+      <p><strong>Before the clock runs out, noise is free.</strong> Burn hard. Take the
+      detour. Be greedy — physics is your only enemy, and it is enough: rocks kill you at
+      speed, stopping takes an age, and hard burning drains propellant that only comes back
+      when you're gentle.</p>
+      <p><strong>After it runs out, noise is death.</strong> Cut your engines. Coast. Hide
+      in the dust. Break line of sight and stay broken.</p>
+      <p><em>This is the same ship and the same physics. Only the rules of survival have
+      inverted.</em></p>
+
+      <h2 id="the-hunter">DOCTRINE: THE HUNTER</h2>
+      <p>It does not have bigger guns. <strong>It has better ears.</strong></p>
+      <p>It hears you long before you hear it — but <strong>it is not all-seeing.</strong>
+      Go dark and it loses you. Sit in a rock's shadow and it passes by. Fire a decoy and
+      it believes you, and chases the lie with everything it has.</p>
+      <p><strong>You cannot out-shoot it. You can ambush it.</strong> Go dark near cover,
+      let it come down its own certainty, and put a salvo into it at knife range. And it is
+      worth the risk: the Hunter carries the best salvage in the system. Kill it, and
+      nothing replaces it. Take your time. Breathe.</p>
+      <p>Each system's hunter is a new problem with a name — you'll learn to fear the words
+      your XO uses at clock-zero. <em>"Two drives, Captain. They've sent a pair."</em></p>
+
+      <h2 id="salvage">DOCTRINE: SALVAGE</h2>
+      <p><strong>You must come to a full stop.</strong> In this game, that is the most
+      expensive thing you own — momentum takes forever to build and forever to kill, and
+      the burn that kills it screams.</p>
+      <p>Get alongside a wreck (within two klicks) and say <em>"salvage."</em> The haul
+      comes aboard <strong>one piece at a time, worst first</strong>. Leave whenever you
+      like — a thrust order breaks off the transfer, and you keep everything already
+      landed. Every ten seconds is a fresh decision, made stationary, beside a known
+      landmark, listening to a rumble grow.</p>
+      <p><strong>The Hunter knows where the marked wrecks are.</strong> It will come and
+      look. What it does not know about are the <em>rumors</em> — your private leads, maybe
+      empty, maybe the run-maker — and the best rumors sit in the dust, where you go blind
+      to get rich, and so does he.</p>
+      <p>Some wrecks carry <strong>modules</strong> — permanent fittings for this run:
+      quieter engines, longer ears, a harder burn, thicker plate. Quieter engines are worth
+      the most. Think about why.</p>
+
+      <h2 id="the-gate">DOCTRINE: THE GATE</h2>
+      <p><strong>You fly through it.</strong> There is no command for this, no docking, no
+      charge-up. A three-kilometre gap between two pylons, on the rim, marked on your map
+      from the first second.</p>
+      <p>Your hull points where you are aimed. <strong>The drift marker points where you
+      are going.</strong> Only one of them threads the gate. The GATE row on your HUD is
+      your approach solution: green means your current drift carries you through; red tells
+      you how far off the line you'll cross, and to which side.</p>
+      <p>Commit your line early and coast in silent, or come in slow and correct — but you
+      cannot do both, and something is listening to your engines. A heavy hull cannot
+      thread the gate at full speed at all: come in slow, and know that slow is when he
+      catches you.</p>
+      <p><strong>Miss, and you are outside the shroud</strong>: lit up, no cover, the
+      current against you, and a long screaming burn back to a door you already failed to
+      open once.</p>
+
+      <h2 id="campaign-phrases">CAMPAIGN PHRASEBOOK</h2>
+      <table>
+        <tr><td>"Head for the gate, full burn"</td><td>helm to the gate bearing + throttle</td></tr>
+        <tr><td>"How far to the gate?" / "What's the clock?"</td><td>mission report from the XO</td></tr>
+        <tr><td>"Salvage" / "Come alongside the wreck"</td><td>dock the nearest wreck (be within 2 km, stopped)</td></tr>
+        <tr><td>"Break off"</td><td>end the transfer, keep what's aboard</td></tr>
+        <tr><td>Everything in the multiplayer phrasebook</td><td>works here too — same ship, same XO</td></tr>
+      </table>
+      <p class="signoff">Get home, Captain.</p>
+    </div>
+
+    <div id="mp-content">
     <p>You command a warship with your voice. Your ship's AI — your XO — translates your
     orders, runs your systems, and tells you what it sees. It is capable, literal, and
     unfailingly calm. It does exactly what you say, which is not always what you meant.</p>
@@ -640,6 +736,7 @@
     questions. The captains who win aren't the ones who memorized this page — they're the
     ones in constant conversation with their ship.</p>
     <p class="signoff">Good hunting, Captain.</p>
+    </div><!-- /#mp-content -->
 
     <div class="footer-back">
       <a class="btn" href="/">&larr; BACK TO THE LOBBY</a>

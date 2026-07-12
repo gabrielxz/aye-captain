@@ -121,9 +121,16 @@ wss.on("connection", (ws: WebSocket) => {
         break;
       }
       case "campaign": {
-        // Deep Black (Stage 0): solo mission, practice-shaped lifecycle
+        // Deep Black: solo run, practice-shaped lifecycle. `runState`
+        // resumes a saved run from the client's localStorage (single-
+        // player deliberately suspends server authority — see match.ts).
         if (matchByWs.has(ws)) return;
-        matchByWs.set(ws, Match.createCampaign(ws, String(msg.archetype ?? "")));
+        matchByWs.set(ws, Match.createCampaign(ws, String(msg.archetype ?? ""), msg.runState));
+        break;
+      }
+      case "campaign_next": {
+        // through the gate, onto the next system (same match, same socket)
+        matchByWs.get(ws)?.nextSystem(ws, msg.runState);
         break;
       }
       case "create": {

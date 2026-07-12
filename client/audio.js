@@ -16,6 +16,7 @@ const legacyVol = Number(localStorage.getItem("vol") ?? 0.7);
 const mixVol = {
   sfx: Number(localStorage.getItem("vol_sfx") ?? legacyVol),
   voice: Number(localStorage.getItem("vol_voice") ?? legacyVol),
+  music: Number(localStorage.getItem("vol_music") ?? 0.6), // §7.7: the third slider
 };
 
 // v5.1 §4.3: XO verbosity — FULL (everything), TERSE (critical + news),
@@ -79,6 +80,8 @@ function setBedTarget(name, gain) {
 function speechBedDuck(on) {
   speechPlaying = on;
   updateBeds();
+  // §7.7: music ducks under speech — the XO always wins
+  musicDuckSet("speech", on ? MUSIC_DUCK_SPEECH : 1);
 }
 
 // v4.7 §4.6: hull hum — one filtered noise loop at very low gain, always on
@@ -102,9 +105,10 @@ function startHum() {
 let ducked = false;
 export function setMixVolume(kind, v) {
   mixVol[kind] = v;
-  localStorage.setItem(kind === "sfx" ? "vol_sfx" : "vol_voice", String(v));
+  localStorage.setItem(kind === "sfx" ? "vol_sfx" : kind === "music" ? "vol_music" : "vol_voice", String(v));
   if (!ctx) return;
   if (kind === "sfx") sfxBus.gain.value = 0.9 * v;
+  else if (kind === "music") applyMusicDuck();
   else speechBus.gain.value = v;
 }
 
@@ -152,7 +156,7 @@ function noiseBuffer() {
   return noiseBuf;
 }
 
-function noise(t0, dur, peak, filterFreq, filterEnd = null, type = "lowpass") {
+function noise(t0, dur, peak, filterFreq, filterEnd = null, type = "lowpass", dest = null) {
   if (!ctx) return;
   const src = ctx.createBufferSource();
   src.buffer = noiseBuffer();
@@ -163,7 +167,7 @@ function noise(t0, dur, peak, filterFreq, filterEnd = null, type = "lowpass") {
   if (filterEnd !== null) f.frequency.exponentialRampToValueAtTime(Math.max(filterEnd, 10), t0 + dur);
   const g = ctx.createGain();
   env(g, t0, peak, 0.01, dur);
-  src.connect(f).connect(g).connect(sfxBus);
+  src.connect(f).connect(g).connect(dest ?? sfxBus);
   src.start(t0);
   src.stop(t0 + dur + 0.05);
 }
@@ -365,6 +369,9 @@ export function setRumble(level) {
   const lvl = Math.max(0, Math.min(1, level));
   rumbleNodes.g.gain.linearRampToValueAtTime(lvl * 0.11, ctx.currentTime + 0.6);
   setBedTarget("rumble", lvl * 0.11);
+  // §7.7 sidechain: the rumble is INFORMATION (the Hunter's bearing) —
+  // the score's low layers make room for the threat. Never remove this.
+  musicDuckSet("rumble", lvl > 0.03 ? MUSIC_DUCK_RUMBLE : 1);
 }
 
 // v4.7 §4.3: dust immersion — a soft filtered-noise wash while inside a
@@ -495,6 +502,7 @@ export function stopContinuous() {
   if (thrustNodes && ctx) thrustNodes.g.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.4);
   if (rumbleNodes && ctx) rumbleNodes.g.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.4);
   if (dustNodes && ctx) dustNodes.g.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.4);
+  musicCut(); // the score dies with the session (gate exits run musicExit first)
 }
 
 // ---------- ship-AI speech queue ----------
@@ -582,4 +590,199 @@ export function enqueueSpeech(id, priority = "news") {
 // chatter. CRITICAL finishes, ducked. See speech-scheduler.js §1.4.
 export function bargeIn() {
   sched.bargeIn();
+}
+
+// ---------- campaign adaptive score (§7) — the DRIVER ----------
+// Decisions live in music-brain.js (pure, fog-tested in tests/music.test.ts
+// — the score reads the SNAPSHOT, never truth). This side is oscillators.
+// §7.2: procedural on purpose — zero assets, and it follows a scalar the
+// way stems never could. Palette: narrow. A phrygian pitch-class set, a
+// root that shifts by phase, layers that are rhythmic or textural. The
+// aesthetic is TENSION, not tune.
+// §7.7: its own bus (NOT under the bed ceiling). Music ducks under speech
+// and alarms — the XO always wins. And it must NEVER mask the hearing
+// rumble: the rumble is the Hunter's bearing, so the low layers sidechain
+// under it. The score literally makes room for the threat.
+const MUSIC_DUCK_SPEECH = 0.35;
+const MUSIC_DUCK_RUMBLE = 0.45; // sidechain — the rumble must survive
+const MUSIC_DUCK_ALARM = 0.5;
+const MUSIC_RAMP_S = 1.5; // smoothing; stings bypass (§7.3)
+const PHRYGIAN = [0, 1, 3, 5, 7, 8, 10];
+
+let musicBus = null;
+let musicLow = null; // bed + pulse live here (the sidechain target)
+let musicNodes = null;
+let musicTimer = null;
+let musicState = { intensity: 0, layers: { bed: 0, pulse: 0, arp: 0, pad: 0, perc: 0 }, phase: "quiet" };
+let musicRoot = 110; // A2 — the race root; the spawn sting drops it
+const musicDucks = { speech: 1, rumble: 1, alarm: 1 };
+
+function applyMusicDuck() {
+  if (!musicBus) return;
+  const duckAll = musicDucks.speech * musicDucks.alarm;
+  musicBus.gain.linearRampToValueAtTime(0.9 * mixVol.music * duckAll, ctx.currentTime + 0.2);
+  // the rumble sidechain hits only the LOW layers — the pad/arp stay,
+  // the floor opens so the drive rumble reads through
+  musicLow.gain.linearRampToValueAtTime(musicDucks.rumble, ctx.currentTime + 0.4);
+}
+
+function musicDuckSet(which, v) {
+  musicDucks[which] = v;
+  applyMusicDuck();
+}
+
+function noteHz(root, degree, octave = 0) {
+  return root * Math.pow(2, (PHRYGIAN[degree % PHRYGIAN.length] + 12 * octave) / 12);
+}
+
+function ensureMusic() {
+  if (musicNodes || !ctx) return;
+  musicBus = ctx.createGain();
+  musicBus.gain.value = 0.9 * mixVol.music;
+  musicBus.connect(master);
+  musicLow = ctx.createGain();
+  musicLow.gain.value = 1;
+  musicLow.connect(musicBus);
+
+  // BED: two detuned lows through a lowpass — this is space
+  const bedGain = ctx.createGain();
+  bedGain.gain.value = 0;
+  const bedFilter = ctx.createBiquadFilter();
+  bedFilter.type = "lowpass";
+  bedFilter.frequency.value = 140;
+  bedFilter.connect(bedGain).connect(musicLow);
+  const bedOscs = [ctx.createOscillator(), ctx.createOscillator()];
+  bedOscs[0].type = "sawtooth";
+  bedOscs[1].type = "triangle";
+  bedOscs.forEach((o) => {
+    o.frequency.value = musicRoot / 2;
+    o.connect(bedFilter);
+    o.start();
+  });
+  bedOscs[0].detune.value = -6;
+  bedOscs[1].detune.value = 5;
+
+  // PAD: a slow high swell — enters late, breathes
+  const padGain = ctx.createGain();
+  padGain.gain.value = 0;
+  padGain.connect(musicBus);
+  const padOscs = [ctx.createOscillator(), ctx.createOscillator()];
+  padOscs[0].type = "sine";
+  padOscs[1].type = "triangle";
+  padOscs.forEach((o) => {
+    o.connect(padGain);
+    o.start();
+  });
+
+  musicNodes = { bedGain, bedFilter, bedOscs, padGain, padOscs, nextPulse: 0, nextArp: 0, nextPerc: 0, percFlip: false };
+  // event scheduler for the rhythmic layers
+  musicTimer = setInterval(musicSchedule, 200);
+}
+
+function musicSchedule() {
+  if (!musicNodes || !ctx) return;
+  const t = ctx.currentTime;
+  const { layers } = musicState;
+  const i = musicState.intensity;
+  // PULSE: a slow heartbeat, rate scales with intensity (§7.3)
+  if (layers.pulse > 0.02 && t >= musicNodes.nextPulse) {
+    const g = ctx.createGain();
+    g.connect(musicLow);
+    env(g, t, 0.055 * layers.pulse, 0.02, 0.3);
+    const o = ctx.createOscillator();
+    o.type = "sine";
+    o.frequency.value = musicRoot / 2;
+    o.connect(g);
+    o.start(t);
+    o.stop(t + 0.4);
+    musicNodes.nextPulse = t + (2.1 - 1.5 * i);
+  }
+  // ARP: sparse plucks from the set — texture, never melody (§7.2)
+  if (layers.arp > 0.02 && t >= musicNodes.nextArp) {
+    if (Math.random() < 0.55) {
+      const deg = Math.floor(Math.random() * PHRYGIAN.length);
+      const oct = Math.random() < 0.3 ? 2 : 1;
+      const g = ctx.createGain();
+      g.connect(musicBus);
+      env(g, t, 0.028 * layers.arp, 0.005, 0.5);
+      const o = ctx.createOscillator();
+      o.type = "triangle";
+      o.frequency.value = noteHz(musicRoot, deg, oct);
+      o.connect(g);
+      o.start(t);
+      o.stop(t + 0.6);
+    }
+    musicNodes.nextArp = t + (0.95 - 0.4 * i);
+  }
+  // PERC: driving filtered-noise toms. BSG. (§7.3)
+  if (layers.perc > 0.02 && t >= musicNodes.nextPerc) {
+    const accent = musicNodes.percFlip;
+    musicNodes.percFlip = !musicNodes.percFlip;
+    noise(t, 0.16, 0.16 * layers.perc * (accent ? 1 : 0.6), 220, 90, "bandpass", musicBus);
+    musicNodes.nextPerc = t + (0.52 - 0.18 * i);
+  }
+}
+
+// The per-snapshot update (4 Hz): ramp the continuous layers toward the
+// brain's targets; stings snap the ramp and drop the root.
+export function setMusic(out) {
+  if (!ctx || !out) return;
+  ensureMusic();
+  musicState = out;
+  const t = ctx.currentTime;
+  const ramp = out.sting ? 0.1 : MUSIC_RAMP_S;
+  if (out.sting === "spawn") {
+    // §7.6 the spawn: a sting, and the bed drops to a darker root — the
+    // phase inversion made audible. NO bearing information.
+    musicRoot = 82.4; // E2
+    musicNodes.bedOscs.forEach((o) => o.frequency.setTargetAtTime(musicRoot / 2, t, 0.4));
+    osc("sawtooth", 660, t, 0.5, 0.22 * mixVol.music, 82, musicBus);
+    osc("sine", 41, t, 1.2, 0.3 * mixVol.music, 30, musicBus);
+  }
+  musicNodes.bedGain.gain.linearRampToValueAtTime(0.05 * out.layers.bed * (0.5 + 0.5 * out.intensity), t + ramp);
+  musicNodes.bedFilter.frequency.linearRampToValueAtTime(120 + 320 * out.intensity, t + ramp);
+  musicNodes.padGain.gain.linearRampToValueAtTime(0.024 * out.layers.pad, t + ramp);
+  musicNodes.padOscs[0].frequency.setTargetAtTime(noteHz(musicRoot, 0, 2), t, 1.2);
+  musicNodes.padOscs[1].frequency.setTargetAtTime(noteHz(musicRoot, 4, 2), t, 1.2);
+}
+
+// §8 the exit: one beat of silence, a rising tone, then a resolved chord
+// that decays to nothing. Reused by every gate crossing; the client's fx
+// (flash, streak, shake) run alongside in render.js/main.js.
+export function musicExit() {
+  if (!ctx) return;
+  ensureMusic();
+  const t = ctx.currentTime;
+  musicBus.gain.cancelScheduledValues(t);
+  musicBus.gain.setValueAtTime(0.0001, t); // the beat of silence (~200 ms)
+  osc("sine", 330, t + 0.05, 0.9, 0.24, 990, master); // the single rising tone
+  musicBus.gain.setValueAtTime(0.9 * mixVol.music, t + 0.95);
+  // release: one sustained resolve, then nothing (§8.5)
+  for (const [deg, oct, amp] of [[0, 1, 0.06], [4, 1, 0.045], [0, 2, 0.03]]) {
+    const g = ctx.createGain();
+    g.connect(musicBus);
+    g.gain.setValueAtTime(0.0001, t + 0.95);
+    g.gain.linearRampToValueAtTime(amp, t + 1.4);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 5.5);
+    const o = ctx.createOscillator();
+    o.type = "triangle";
+    o.frequency.value = noteHz(musicRoot, deg, oct);
+    o.connect(g);
+    o.start(t + 0.95);
+    o.stop(t + 5.6);
+  }
+  musicState = { intensity: 0, layers: { bed: 0, pulse: 0, arp: 0, pad: 0, perc: 0 }, phase: "quiet" };
+  if (musicNodes) {
+    musicNodes.bedGain.gain.linearRampToValueAtTime(0, t + 4);
+    musicNodes.padGain.gain.linearRampToValueAtTime(0, t + 2);
+  }
+}
+
+// Hard cut (death): the score dies with the ship.
+export function musicCut() {
+  if (!ctx || !musicNodes) return;
+  const t = ctx.currentTime;
+  musicNodes.bedGain.gain.linearRampToValueAtTime(0, t + 0.5);
+  musicNodes.padGain.gain.linearRampToValueAtTime(0, t + 0.5);
+  musicState = { intensity: 0, layers: { bed: 0, pulse: 0, arp: 0, pad: 0, perc: 0 }, phase: "quiet" };
 }

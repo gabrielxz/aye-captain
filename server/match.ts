@@ -12,7 +12,22 @@ import {
 import { llmAvailable, translateUtterance, phraseQueryAnswer } from "./translator.js";
 import { logUtterance } from "./datalog.js";
 import { ensureSpeech } from "./tts.js";
-import { hashSeed, mulberry32 } from "./terrain.js";
+import { hashSeed, mulberry32, insideDust } from "./terrain.js";
+import { missilesAboard, type Wreck, type SalvageItem } from "./sim.js";
+
+// Campaign run state (§1/§6). SINGLE-PLAYER DELIBERATELY SUSPENDS SERVER
+// AUTHORITY: this lives in the client's localStorage and is handed back at
+// each system start. There is nobody to cheat against but yourself — do
+// NOT "fix" this by adding accounts or server persistence. The sanitizer
+// below exists to keep numbers finite, not to keep players honest.
+export interface CampaignRun {
+  system: number; // the system ABOUT TO BE PLAYED (1..CAMPAIGN_SYSTEMS)
+  upgrades: { sig: number; sensor: number; accel: number; hull: number }; // module counts
+  // attrition pools PERSIST across jumps (§6 — "stop resetting the resource
+  // pools" is the campaign economy); null = fresh run, full loadout
+  pools: { propellant: number; missiles: number; decoys: number; pdcAmmoS: number; hull: number } | null;
+  totals: { huntersKilled: number; salvaged: number; pingsFired: number; upgrades: number; timeS: number };
+}
 
 export type RoomMode = "ffa" | "teams";
 export type Team = "red" | "blue";
@@ -120,7 +135,7 @@ export class Match {
     // replaces it with the spawned field (rematch keeps the seed unless
     // newField)
     this.sim = campaign
-      ? Match.buildCampaignSim(seed, practiceArch)
+      ? Match.buildCampaignSim(seed, practiceArch, this.run)
       : practice
         ? Match.buildPracticeSim(seed, practiceArch, practiceDroneArch)
         : new Sim(seed);
@@ -145,14 +160,139 @@ export class Match {
     return sim;
   }
 
-  // Campaign system (Stage 0: one, hard-coded): the captain alone on the
-  // classic spawn, the gate on the rim, the mission clock armed. Single-
-  // player deliberately runs on the same authoritative server sim — there
-  // is nobody to cheat against but yourself, and the fog/AI machinery is
-  // the whole point.
-  private static buildCampaignSim(seed: string, archetype: C.ArchetypeName): Sim {
+  // Campaign run state for THIS match (see CampaignRun — client-owned
+  // between systems, applied at each system start).
+  private run: CampaignRun = Match.freshRun();
+
+  static freshRun(): CampaignRun {
+    return {
+      system: 1,
+      upgrades: { sig: 0, sensor: 0, accel: 0, hull: 0 },
+      pools: null,
+      totals: { huntersKilled: 0, salvaged: 0, pingsFired: 0, upgrades: 0, timeS: 0 },
+    };
+  }
+
+  // Keep client-supplied numbers finite and in-band. Not an anti-cheat —
+  // single-player suspends server authority on purpose (see CampaignRun).
+  static sanitizeRun(raw: unknown): CampaignRun | null {
+    if (typeof raw !== "object" || raw === null) return null;
+    const r = raw as Record<string, any>;
+    const num = (v: unknown, lo: number, hi: number, dflt: number) =>
+      typeof v === "number" && Number.isFinite(v) ? Math.max(lo, Math.min(hi, Math.round(v))) : dflt;
+    const run = Match.freshRun();
+    run.system = num(r.system, 1, C.CAMPAIGN_SYSTEMS, 1);
+    for (const k of ["sig", "sensor", "accel", "hull"] as const) {
+      run.upgrades[k] = num(r.upgrades?.[k], 0, 32, 0);
+    }
+    if (typeof r.pools === "object" && r.pools !== null) {
+      run.pools = {
+        propellant: num(r.pools.propellant, 0, C.PROPELLANT_MAX, C.PROPELLANT_MAX),
+        missiles: num(r.pools.missiles, 0, 48, 0),
+        decoys: num(r.pools.decoys, 0, 48, 0),
+        pdcAmmoS: num(r.pools.pdcAmmoS, 0, 600, 0),
+        hull: num(r.pools.hull, 1, 1000, 1),
+      };
+    }
+    for (const k of ["huntersKilled", "salvaged", "pingsFired", "upgrades", "timeS"] as const) {
+      run.totals[k] = num(r.totals?.[k], 0, 1e6, 0);
+    }
+    return run;
+  }
+
+  // Salvage sites (§4): MARKED sites are reliable and watched; RUMORED
+  // sites are the player's leads — possibly empty, richest in the dust
+  // (where you go blind to get rich, and so does he).
+  private static generateWrecks(seed: string, sim: Sim): Wreck[] {
+    const rand = mulberry32(hashSeed(`${seed}:wrecks`));
+    const wrecks: Wreck[] = [];
+    let id = 1;
+    const place = (biasDust: boolean): { x: number; y: number } => {
+      for (let tries = 0; tries < 60; tries++) {
+        let x: number;
+        let y: number;
+        if (biasDust && sim.terrain.dust.length > 0 && tries < 40) {
+          const d = sim.terrain.dust[Math.floor(rand() * sim.terrain.dust.length)];
+          x = d.x + (rand() * 2 - 1) * d.rx * 0.8;
+          y = d.y + (rand() * 2 - 1) * d.ry * 0.8;
+        } else {
+          const ang = rand() * Math.PI * 2;
+          const r = Math.sqrt(rand()) * C.REGION_RADIUS_M * 0.7;
+          x = Math.cos(ang) * r;
+          y = Math.sin(ang) * r;
+        }
+        // not inside a rock, not on the spawn point
+        if (sim.terrain.rocks.some((rk) => Math.hypot(x - rk.x, y - rk.y) < rk.r + 3000)) continue;
+        if (Math.hypot(x - 0, y + C.SPAWN_RING_RADIUS_M) < 30000) continue;
+        return { x, y };
+      }
+      return { x: 0, y: 0 };
+    };
+    for (let i = 0; i < C.SALVAGE_MARKED_SITES; i++) {
+      const p = place(false);
+      wrecks.push({
+        id: id++,
+        ...p,
+        marked: true,
+        items: [
+          { kind: "propellant", amount: 30 },
+          { kind: "pdc_ammo", amount: 20 },
+          { kind: i % 2 === 0 ? "missiles" : "decoys", amount: 2 },
+        ] as SalvageItem[],
+      });
+    }
+    const cycle: ("sig" | "sensor" | "accel" | "hull")[] = ["sig", "accel", "sensor", "hull"];
+    for (let i = 0; i < C.SALVAGE_RUMORED_SITES; i++) {
+      const p = place(true);
+      const inDust = insideDust(p.x, p.y, sim.terrain);
+      // a rumor can be a dry hole — but never in the dust (the deep risk
+      // always pays; that's the §4.4 economy)
+      const empty = !inDust && rand() < 0.35;
+      wrecks.push({
+        id: id++,
+        ...p,
+        marked: false,
+        items: empty
+          ? []
+          : ([
+              { kind: "propellant", amount: 30 },
+              { kind: "hull", amount: 15 },
+              { kind: "missiles", amount: 2 },
+              ...(inDust || rand() < 0.4
+                ? [{ kind: "upgrade", amount: 1, upgrade: cycle[(id + i) % 4] }]
+                : []),
+            ] as SalvageItem[]),
+      });
+    }
+    return wrecks;
+  }
+
+  // One campaign system: the captain alone on the classic spawn, the gate
+  // on the rim, the ladder row armed, the field salted with wrecks.
+  // Single-player deliberately runs on the same authoritative server sim —
+  // the fog/AI machinery is the whole point.
+  private static buildCampaignSim(seed: string, archetype: C.ArchetypeName, run: CampaignRun): Sim {
     const sim = new Sim(seed);
-    sim.addShip("A", 0, -C.SPAWN_RING_RADIUS_M, 0, false, null, C.CALLSIGN_POOL[0], archetype);
+    const ship = sim.addShip("A", 0, -C.SPAWN_RING_RADIUS_M, 0, false, null, C.CALLSIGN_POOL[0], archetype);
+    // §6 progression: a multiplier table over constants that already exist
+    ship.sigMult = Math.pow(C.UPGRADE_SIG_MULT, run.upgrades.sig);
+    ship.sensorMult = Math.pow(C.UPGRADE_SENSOR_MULT, run.upgrades.sensor);
+    ship.accelMult = Math.pow(C.UPGRADE_ACCEL_MULT, run.upgrades.accel);
+    ship.hullMult = Math.pow(C.UPGRADE_HULL_MULT, run.upgrades.hull);
+    // pools persist across jumps (§6) — arrive as you left
+    if (run.pools) {
+      ship.propellant = Math.min(C.PROPELLANT_MAX, run.pools.propellant);
+      ship.decoys = run.pools.decoys;
+      ship.pdcAmmoS = run.pools.pdcAmmoS;
+      const stats = C.ARCHETYPES[archetype];
+      const loaded = Math.min(run.pools.missiles, stats.tubes);
+      ship.tubes.forEach((t, i) => {
+        t.loaded = i < loaded;
+        t.reload = 0;
+      });
+      ship.reserve = Math.max(0, run.pools.missiles - loaded);
+      ship.hull = Math.min(Math.round(stats.hull * ship.hullMult), run.pools.hull);
+    }
     // gate on the rim, seeded within ±GATE_BEARING_SPREAD_DEG of north —
     // the player spawns south, so the run is always a real crossing
     const rand = mulberry32(hashSeed(`${seed}:gate`));
@@ -171,36 +311,42 @@ export class Match {
       { x: gx - tx * off, y: gy - ty * off, r: C.GATE_PYLON_RADIUS_M },
       { x: gx + tx * off, y: gy + ty * off, r: C.GATE_PYLON_RADIUS_M }
     );
+    const row = C.CAMPAIGN_LADDER[run.system - 1];
     sim.mission = {
       playerId: "A",
+      system: run.system,
+      systemName: row.name,
       gate: { x: gx, y: gy, apertureW: C.APERTURE_W_M },
-      hunterSpawnS: C.CAMPAIGN_HUNTER_SPAWN_S,
+      hunterSpawnS: C.CAMPAIGN_HUNTER_SPAWN_S, // FIXED across all rows (§3)
       hunterSpawned: false,
-      hunterId: null,
-      hunter: {
-        archetype: "corvette",
-        sensorMult: C.HUNTER_SENSOR_MULT,
-        sigMult: C.HUNTER_SIG_MULT,
-      },
+      hunterIds: [],
+      hunters: row.hunters.map((h) => ({ ...h })), // dev-harness tunes copies, never the table
+      spawnLine: row.spawnLine,
+      wrecks: Match.generateWrecks(seed, sim),
+      salvaging: null,
+      cleared: false,
+      stats: { huntersKilled: 0, salvaged: 0, pingsFired: 0, upgrades: 0 },
+      upgradeCounts: { sig: 0, sensor: 0, accel: 0, hull: 0 },
       solGood: false,
       solCooldownS: 0,
     };
     return sim;
   }
 
-  static createCampaign(ws: WebSocket, archetype = "frigate"): Match {
+  static createCampaign(ws: WebSocket, archetype = "frigate", runRaw?: unknown): Match {
     const arch = (archetype in C.ARCHETYPES ? archetype : "frigate") as C.ArchetypeName;
     const match = new Match(false, null, Match.randomSeed(), arch, "frigate", true);
+    const resumed = Match.sanitizeRun(runRaw);
+    if (resumed) {
+      // resuming a saved run: rebuild the sim on the resumed state
+      match.run = resumed;
+      match.sim = Match.buildCampaignSim(Match.randomSeed(), arch, resumed);
+    }
     match.seats.push({ id: "A", ws, team: null, archetype: arch, dead: false, name: null });
     match.launched = true;
     match.sendStart(match.seats[0]);
     match.start();
-    match.sendTranscript(
-      "A",
-      "xo",
-      "Deep black, Captain. The gate's on the board and the clock is running.",
-      { priority: "chatter" }
-    );
+    match.sendTranscript("A", "xo", match.systemWelcome(), { priority: "chatter" });
     if (!llmAvailable()) {
       match.sendTranscript(
         "A",
@@ -210,6 +356,76 @@ export class Match {
       );
     }
     return match;
+  }
+
+  private systemWelcome(): string {
+    const m = this.sim.mission;
+    return m && m.system > 1
+      ? `System ${m.system}, Captain. The charts call this one ${m.systemName}. Clock's running.`
+      : "Deep black, Captain. The gate's on the board and the clock is running.";
+  }
+
+  // §6 progression export at system clear: pools as they stand, module
+  // counts folded in, totals accumulated. This object goes to the client,
+  // to localStorage, and comes back at the next system start.
+  private exportRun(nextSystem: number): CampaignRun {
+    const m = this.sim.mission!;
+    const ship = this.sim.ships.get(m.playerId);
+    const durationS = this.sim.tickCount / C.TICK_RATE_HZ;
+    return {
+      system: nextSystem,
+      upgrades: {
+        sig: this.run.upgrades.sig + m.upgradeCounts.sig,
+        sensor: this.run.upgrades.sensor + m.upgradeCounts.sensor,
+        accel: this.run.upgrades.accel + m.upgradeCounts.accel,
+        hull: this.run.upgrades.hull + m.upgradeCounts.hull,
+      },
+      pools: ship
+        ? {
+            propellant: Math.round(ship.propellant),
+            missiles: missilesAboard(ship),
+            decoys: ship.decoys,
+            pdcAmmoS: Math.round(ship.pdcAmmoS),
+            hull: Math.round(ship.hull),
+          }
+        : this.run.pools,
+      totals: {
+        huntersKilled: this.run.totals.huntersKilled + m.stats.huntersKilled,
+        salvaged: this.run.totals.salvaged + m.stats.salvaged,
+        pingsFired: this.run.totals.pingsFired + m.stats.pingsFired,
+        upgrades: this.run.totals.upgrades + m.stats.upgrades,
+        timeS: this.run.totals.timeS + durationS,
+      },
+    };
+  }
+
+  // The §9 summary — systems cleared is THE score ("you made it to system
+  // six" beats "score: 14,850").
+  private runSummary(systemsCleared: number): Record<string, unknown> {
+    const m = this.sim.mission;
+    const ship = m ? this.sim.ships.get(m.playerId) : undefined;
+    const durationS = this.sim.tickCount / C.TICK_RATE_HZ;
+    return {
+      systemsCleared,
+      huntersKilled: this.run.totals.huntersKilled + (m?.stats.huntersKilled ?? 0),
+      salvaged: this.run.totals.salvaged + (m?.stats.salvaged ?? 0),
+      pingsFired: this.run.totals.pingsFired + (m?.stats.pingsFired ?? 0),
+      upgrades: this.run.totals.upgrades + (m?.stats.upgrades ?? 0),
+      timeS: Math.round(this.run.totals.timeS + durationS),
+      hullRemaining: ship ? Math.round(ship.hull) : 0,
+    };
+  }
+
+  // NEXT SYSTEM (client clicked through the run map): the client hands the
+  // run state back and the same Match stages the next system.
+  nextSystem(ws: WebSocket, runRaw: unknown): void {
+    if (!this.campaign) return;
+    const seat = this.seats.find((s) => s.ws === ws);
+    if (!seat) return;
+    const run = Match.sanitizeRun(runRaw);
+    if (!run) return;
+    this.run = run;
+    this.beginMatch(Match.randomSeed()); // every system is a fresh field
   }
 
   static createPractice(ws: WebSocket, archetype = "frigate", droneArchetype = "frigate"): Match {
@@ -338,9 +554,9 @@ export class Match {
   private beginMatch(seed: string): void {
     this.stop();
     if (this.campaign) {
-      // campaign retry: same rule as practice — rebuild the mission sim
-      // (same seed = same field + same gate; newField rerolls both)
-      this.sim = Match.buildCampaignSim(seed, this.practiceArch);
+      // campaign: rebuild on the CURRENT run state (nextSystem sets it for
+      // a transition; reset() re-freshes it for a new run)
+      this.sim = Match.buildCampaignSim(seed, this.practiceArch, this.run);
     } else if (this.practice) {
       // v5 bug (found in v5.1 §7.3): practice rematch used spawnShips(),
       // which spawns SEATS — captain alone, no drone, an empty range
@@ -380,7 +596,7 @@ export class Match {
     if (this.spectators.size > 0) this.broadcastSpectators();
     this.start();
     const welcome = this.campaign
-      ? "Deep black, Captain. The gate's on the board and the clock is running."
+      ? this.systemWelcome()
       : this.seats.length > 2
         ? "Enemy ships are out there somewhere. Good hunting, Captain."
         : "Enemy ship is out there somewhere. Good hunting, Captain.";
@@ -690,7 +906,10 @@ export class Match {
 
   // Fresh sim in the same room ("Rematch" button): same field by default,
   // or a fresh seed when the players want a new one. Same seats and picks.
+  // Campaign: the run DIED with the ship — rematch means a NEW RUN from
+  // system one (a roguelike keeps its stakes), same hull pick.
   reset(newField = false): void {
+    if (this.campaign) this.run = Match.freshRun();
     this.beginMatch(newField ? Match.randomSeed() : this.sim.terrain.seed);
   }
 
@@ -752,6 +971,27 @@ export class Match {
       // quiet by design: free the seat, tell no one
       const seat = this.seats.find((s) => s.id === ev.ship);
       if (seat) seat.dead = true;
+    } else if (ev.kind === "system_clear") {
+      // campaign transition (§1): freeze the system, export the run, and
+      // hand the wheel to the client's run map. The next system starts
+      // when the client sends campaign_next with this state back.
+      this.stop();
+      this.broadcast(); // final frame — the client freezes on the crossing
+      const seat = this.seats.find((s) => s.id === ev.ship);
+      const runState = this.exportRun(ev.system + 1);
+      this.run = runState; // keep server-side copy in sync for the summary
+      if (seat?.ws && seat.ws.readyState === seat.ws.OPEN) {
+        seat.ws.send(
+          JSON.stringify({
+            type: "system_clear",
+            system: ev.system,
+            systemName: this.sim.mission?.systemName,
+            nextSystem: ev.system + 1,
+            totalSystems: C.CAMPAIGN_SYSTEMS,
+            runState,
+          })
+        );
+      }
     } else if (ev.kind === "gameover") {
       const durationS = this.sim.tickCount / C.TICK_RATE_HZ;
       const reveal = this.buildReveal();
@@ -769,6 +1009,16 @@ export class Match {
               durationS,
               reveal,
               ...(ev.gateCleared ? { gateCleared: true } : {}),
+              // campaign §9: the run summary rides the gameover — systems
+              // cleared is THE score; a gateCleared gameover is system 8
+              ...(this.campaign
+                ? {
+                    runSummary: this.runSummary(
+                      ev.gateCleared ? C.CAMPAIGN_SYSTEMS : this.run.system - 1
+                    ),
+                    runComplete: !!ev.gateCleared,
+                  }
+                : {}),
             })
           );
         }
@@ -880,33 +1130,37 @@ export class Match {
     void this.translate(seat.id, text);
   }
 
-  // Apply dev-harness mission multipliers to the spec AND the live Hunter
-  // (if it has already spawned). Echoes the active pair as an XO note —
-  // silent (unbounded numeric content is a TTS quota hazard, v4.6 lesson).
+  // Apply dev-harness mission multipliers to every hunter spec in the row
+  // AND any live Hunters. Echoes the active pair as an XO note — silent
+  // (unbounded numeric content is a TTS quota hazard, v4.6 lesson).
   private tuneMission(id: ShipId, raw: unknown): void {
     const m = this.sim.mission;
     if (!m || typeof raw !== "object" || raw === null) return;
     const r = raw as Record<string, unknown>;
     if (typeof r.sigMult === "number" && Number.isFinite(r.sigMult) && r.sigMult > 0) {
-      m.hunter.sigMult = r.sigMult;
+      for (const h of m.hunters) h.sigMult = r.sigMult;
     }
     if (typeof r.sensorMult === "number" && Number.isFinite(r.sensorMult) && r.sensorMult > 0) {
-      m.hunter.sensorMult = r.sensorMult;
+      for (const h of m.hunters) h.sensorMult = r.sensorMult;
     }
     // the clock too: "spawn it in 30" beats waiting out 240 s per sweep
     // (dev harness only — the shipped clock stays CAMPAIGN_HUNTER_SPAWN_S)
     if (typeof r.hunterSpawnS === "number" && Number.isFinite(r.hunterSpawnS) && r.hunterSpawnS >= 1) {
       m.hunterSpawnS = Math.round(r.hunterSpawnS);
     }
-    const hunter = m.hunterId ? this.sim.ships.get(m.hunterId) : undefined;
-    if (hunter) {
-      hunter.sigMult = m.hunter.sigMult;
-      hunter.sensorMult = m.hunter.sensorMult;
-    }
+    let live = 0;
+    m.hunterIds.forEach((hid, i) => {
+      const hunter = this.sim.ships.get(hid);
+      if (!hunter) return;
+      hunter.sigMult = m.hunters[Math.min(i, m.hunters.length - 1)].sigMult;
+      hunter.sensorMult = m.hunters[Math.min(i, m.hunters.length - 1)].sensorMult;
+      live++;
+    });
+    const pair = m.hunters[0];
     this.sendTranscript(
       id,
       "xo-note",
-      `mission tune: sensorMult ${m.hunter.sensorMult}, sigMult ${m.hunter.sigMult}${hunter ? " (live)" : ""}`,
+      `mission tune: sensorMult ${pair.sensorMult}, sigMult ${pair.sigMult}${live ? ` (${live} live)` : ""}`,
       { priority: "chatter", noSpeech: true }
     );
   }

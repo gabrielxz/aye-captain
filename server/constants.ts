@@ -439,3 +439,69 @@ export const HUNTER_FUEL_RESUME = 50; // ...until back above this (hysteresis)
 export const HUNTER_AVOID_LOOKAHEAD_S = 15; // rock-dodge projection window
 export const HUNTER_PATROL_ARRIVE_M = 15000; // waypoint arrival radius while HUNTing
 export const GATE_XO_COOLDOWN_S = 10; // min gap between gate-solution XO calls (§5.4: rate-limited HARD)
+
+// --- Stage 1: the run (§1) + salvage (§4) + progression (§6) ---
+export const CAMPAIGN_SYSTEMS = 8;
+// The stop is the cost (§4.1): momentum is the most precious thing you own.
+export const SALVAGE_STOP_SPEED_MPS = 25; // must be under this for the transfer to run
+export const SALVAGE_DOCK_RANGE_M = 2000; // come alongside — the XO won't grapple across the map
+export const SALVAGE_ITEM_S = 10; // per item; the haul is sequential, worst -> best (§4.2 — a greed curve, not a progress bar)
+export const SALVAGE_MARKED_SITES = 2; // reliable contents. WATCHED by the Hunter (§4.3/§4.4)
+export const SALVAGE_RUMORED_SITES = 3; // might be empty, might be the run-maker; the Hunter doesn't know them; the richest sit in dust
+// Progression is a multiplier table over constants that already exist (§6)
+// — no tech tree. −signature is deliberately the strongest lever in the
+// game (it directly degrades the Hunter's advantage; the economy teaches
+// the player what the game is about).
+export const UPGRADE_SIG_MULT = 0.92; // per module: player sigMult *= this
+export const UPGRADE_SENSOR_MULT = 1.08;
+export const UPGRADE_ACCEL_MULT = 1.08;
+export const UPGRADE_HULL_MULT = 1.12;
+
+// --- Stage 2: the ladder (§3). A TABLE, not a formula — each system adds
+// exactly ONE new problem, discrete and learnable ("system five is when
+// they start coming in pairs"). ESCALATE THE HUNTER, NEVER THE CLOCK:
+// CAMPAIGN_HUNTER_SPAWN_S is identical across all 8 rows (pinned in
+// tests/campaign.test.ts — shrinking the clock shrinks the GAME).
+// Multi-Hunter valve (§3 ⚠️): if S5/S7 feel unwinnable the knob is their
+// SENSOR RANGE, never the count — the count is those systems' identity.
+// gateCamp appears LATE ONLY: the sprint-for-the-door fantasy is precious.
+export interface HunterSpec {
+  archetype: ArchetypeName;
+  sensorMult: number;
+  sigMult: number;
+  gateCamp: boolean;
+}
+export interface LadderRow {
+  name: string; // named in the XO's mouth — the player should learn to fear a word
+  hunters: HunterSpec[];
+  spawnLine: string; // the clock-zero notice; NEVER carries a bearing
+}
+export const CAMPAIGN_LADDER: LadderRow[] = [
+  { name: "The Drifter", hunters: [{ archetype: "corvette", sensorMult: 1.0, sigMult: 1.0, gateCamp: false }],
+    spawnLine: "Clock's run out, Captain — a drive just lit off in-system." },
+  { name: "Sharp Ears", hunters: [{ archetype: "corvette", sensorMult: 1.4, sigMult: 0.75, gateCamp: false }],
+    spawnLine: "Clock's run out. This one has better ears than we do, Captain." },
+  { name: "The Lance", hunters: [{ archetype: "frigate", sensorMult: 1.4, sigMult: 0.75, gateCamp: false }],
+    spawnLine: "Clock's run out — heavier drive this time. It'll have a railgun, Captain." },
+  { name: "The Quiet One", hunters: [{ archetype: "frigate", sensorMult: 1.4, sigMult: 0.45, gateCamp: false }],
+    spawnLine: "Clock's run out. I can barely hear this one, Captain." },
+  { name: "The Pair", hunters: [
+      { archetype: "corvette", sensorMult: 1.3, sigMult: 0.8, gateCamp: false },
+      { archetype: "corvette", sensorMult: 1.3, sigMult: 0.8, gateCamp: false }],
+    spawnLine: "Two drives, Captain. They've sent a pair." },
+  { name: "The Anvil", hunters: [{ archetype: "cruiser", sensorMult: 1.5, sigMult: 1.0, gateCamp: false }],
+    spawnLine: "Clock's run out. That drive is enormous — do not trade with it, Captain." },
+  { name: "The Picket", hunters: [
+      { archetype: "corvette", sensorMult: 1.4, sigMult: 0.75, gateCamp: false },
+      { archetype: "corvette", sensorMult: 1.4, sigMult: 0.75, gateCamp: true }],
+    spawnLine: "Two drives — and one of them is making for the gate, Captain." },
+  { name: "The Wolfpack", hunters: [
+      { archetype: "frigate", sensorMult: 1.4, sigMult: 0.6, gateCamp: false },
+      { archetype: "corvette", sensorMult: 1.4, sigMult: 0.6, gateCamp: true }],
+    spawnLine: "Multiple drives, quiet ones. It's a wolfpack, Captain." },
+];
+
+// --- Stage 3: the adaptive score (client/music-brain.js + audio.js) ---
+// 🔴 THE FOG INVARIANT APPLIES TO MUSIC (§7.1): intensity is a function of
+// the player's SNAPSHOT, never the sim's truth — pinned in tests/music.test.ts.
+export const GATE_RUN_TTG_MAX_S = 90; // gateRun begins ramping here (client mirrors this via the hello config)

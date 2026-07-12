@@ -109,14 +109,30 @@ export async function getSpeech(id: string): Promise<Buffer | null> {
 // forever. Dynamic lines (bearings, hull numbers, novel acks) synthesize at
 // runtime; the translator keeps them short (<= 12 words).
 const STOCK_LINES = [
-  // campaign "Deep Black" (Stage 0)
+  // campaign "Deep Black"
   "Deep black, Captain. The gate's on the board and the clock is running.",
-  "Clock's run out, Captain — a drive just lit off in-system.",
+  ...C.CAMPAIGN_LADDER.map((r) => r.spawnLine), // the 8 clock-zero lines — the player learns to fear a word
   "Solution good, Captain.",
   "We're wide left, Captain.",
   "We're wide right, Captain.",
   "It's gone quiet, Captain. The system is ours.",
   "We're through, Captain.",
+  // salvage (§4): the haul narrates itself, one line per landing
+  "Coming alongside, Captain.",
+  "Alongside. Transfer's running, Captain.",
+  "Propellant aboard, Captain.",
+  "Missiles aboard.",
+  "PDC ammunition aboard.",
+  "Decoys aboard.",
+  "Patch crews report hull repairs holding.",
+  "Engine baffles, Captain — fitted. We run quieter now.",
+  "A sensor suite, Captain — fitted. We hear farther now.",
+  "Drive parts, Captain — fitted. She burns harder now.",
+  "Armor plate, Captain — fitted. She can take more now.",
+  "That's the last of it — wreck's stripped, Captain.",
+  "There's something else in here, Captain — big. Stay put.",
+  "We've drifted off the wreck, Captain.",
+  "Breaking off the salvage — what's aboard stays aboard, Captain.",
   "Aye, Captain.",
   "Say again, Captain?",
   "Acquiring missile lock...",

@@ -23,6 +23,7 @@
             "reload_tubes",
             "deploy_decoy",
             "maneuver",
+            "salvage",
             "show_vector",
             "set_overlay",
             "sensor_ping",
@@ -195,6 +196,15 @@
       "examples": [ { "type": "full_stop" } ]
     },
 
+    "salvage": {
+      "description": "CAMPAIGN ONLY (rejected in multiplayer). Dock the NEAREST wreck and run the salvage transfer: the XO velocity-matches (a full stop — the most expensive thing the ship owns), then items come aboard one at a time, worst first, ~10s each. The ship must already be alongside (within ~2 km; the server rejects with 'get us alongside first' otherwise — approach is the captain's flying). ANY subsequent set_thrust/set_heading breaks off the transfer; everything already landed stays aboard. `target` is optional flavor — resolution is always by proximity. Use on 'come alongside the wreck', 'salvage that', 'grab the salvage', 'strip the wreck'. 'Break off' during a transfer = set_thrust 0. Leave acknowledgement EMPTY — the ship speaks its own docking line.",
+      "type": "object",
+      "properties": {
+        "target": { "type": "string", "description": "Optional wreck reference; ignored by resolution (nearest wins)." }
+      },
+      "examples": [ {}, { "target": "the wreck" } ]
+    },
+
     "show_vector": {
       "description": "Draw the ship's velocity vector on the captain's map for a few seconds (a line showing 10 seconds of travel, with a speed label, plus the projected stop point if propellant remains). Purely informational — no effect on the ship. Use when the captain asks 'which way are we drifting', 'show me our vector', etc.",
       "type": "object",
@@ -345,9 +355,10 @@
             "missiles_inbound",
             "standing_orders",
             "zone",
-            "full_report"
+            "full_report",
+            "mission"
           ],
-          "description": "damage_report is answered by a fixed server template (hull, propellant, tubes, missiles, decoys, PDC) with no LLM phrasing — leave its acknowledgement empty. pdc = point-defense posture, ammo, and envelope."
+          "description": "damage_report is answered by a fixed server template (hull, propellant, tubes, missiles, decoys, PDC) with no LLM phrasing — leave its acknowledgement empty. pdc = point-defense posture, ammo, and envelope. mission (CAMPAIGN ONLY) = gate bearing/range, the hunter clock, wrecks on the board — 'how far to the gate', 'what's the clock', 'any salvage nearby'."
         }
       },
       "examples": [
@@ -726,6 +737,31 @@
         "commands": [
           { "verb": "query", "params": { "topic": "damage_report" }, "acknowledgement": "" }
         ]
+      },
+      {
+        "captain": "Come alongside the wreck and strip it",
+        "commands": [
+          { "verb": "salvage", "params": {}, "acknowledgement": "" }
+        ]
+      },
+      {
+        "captain": "Break off, get us moving",
+        "commands": [
+          { "verb": "set_thrust", "params": { "percent": 60 }, "acknowledgement": "Breaking off — underway." }
+        ]
+      },
+      {
+        "captain": "Head for the gate, full burn",
+        "commands": [
+          { "verb": "set_heading", "params": { "mode": "absolute", "degrees": 351 }, "acknowledgement": "Coming to three five one — the gate." },
+          { "verb": "set_thrust", "params": { "percent": 100 } }
+        ]
+      },
+      {
+        "captain": "How far to the gate?",
+        "commands": [
+          { "verb": "query", "params": { "topic": "mission" }, "acknowledgement": "" }
+        ]
       }
     ]
   },
@@ -755,7 +791,9 @@
       "Blind fire (guidance='bearing') ONLY when the captain explicitly asks for unlocked/blind/bearing fire. A plain 'fire missile' with no lock stays a locked attempt and gets the server's rejection, which offers blind fire as the follow-up.",
       "TRANSMIT: the message is VERBATIM — everything after the transmit intent ('broadcast:', 'tell them', 'tightbeam Mako:'), word for word, no paraphrase. Leave the acknowledgement EMPTY (the ship confirms with 'Transmission away.'). 'broadcast'/'hail everyone'/'on the open channel' = broadcast (remind nobody: it flares our position and callsign to all). Naming a recipient = tightbeam.",
       "PROBE acks: leave the acknowledgement EMPTY — the ship speaks its own launch line. 'probe out'/'launch a probe (down) bearing X' = launch_probe. Probes are the tooling for rumble triangulation: if the captain wants a fix on a rumble, a probe off-axis gives the second bearing — suggest it only when asked how.",
-      "RAILGUN acks: leave the acknowledgement EMPTY — the ship speaks its own stock line on fire ('Solution ready — firing.' / 'Slug away.'). 'put a slug on him/that solution' = fire_railgun solution; naming a bearing ('rail on 090') = bearing mode. The rail is a snapshot, not a duel-opener: remind the captain only when relevant that a thrusting target will dodge a solution."
+      "RAILGUN acks: leave the acknowledgement EMPTY — the ship speaks its own stock line on fire ('Solution ready — firing.' / 'Slug away.'). 'put a slug on him/that solution' = fire_railgun solution; naming a bearing ('rail on 090') = bearing mode. The rail is a snapshot, not a duel-opener: remind the captain only when relevant that a thrusting target will dodge a solution.",
+      "CAMPAIGN — THE GATE IS NOT A CONTACT: when CURRENT SHIP STATE carries a MISSION line, 'the gate' refers to the exit landmark on that line, never to an enemy. 'Head/make for the gate' = set_heading absolute at the gate bearing FROM THE STATE LINE (plus set_thrust if a speed was asked). 'How far to the gate' / 'what's the clock' / 'any salvage out there' = query topic 'mission'. The gate is FLOWN through — there is no gate verb, no docking, no charge-up; do not invent one.",
+      "CAMPAIGN — SALVAGE: 'salvage', 'come alongside the wreck', 'grab/strip the wreck' = the salvage verb (leave acknowledgement empty; the ship confirms). The wreck must already be close aboard — if the state line shows the nearest wreck far away, steer there first (set_heading absolute at its bearing) and SAY so; the salvage verb itself never flies the approach. 'Break off'/'belay the salvage' = set_thrust (any thrust/heading order ends the transfer; what's aboard stays aboard)."
     ]
   }
 }
