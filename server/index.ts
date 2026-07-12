@@ -9,6 +9,8 @@ import {
   TURN_RATE_DEG_PER_SEC,
   STT_MAX_AUDIO_BYTES,
   ARCHETYPES,
+  SALVAGE_DOCK_RANGE_M,
+  RUMOR_RESOLVE_RANGE_M,
 } from "./constants.js";
 import { Match, sanitizeName } from "./match.js";
 import { sttAvailable, transcribe, SttBusyError } from "./stt.js";
@@ -95,6 +97,9 @@ wss.on("connection", (ws: WebSocket) => {
         accel: ACCEL_FULL_THRUST_MPS2, // for the client-side stop-point projection
         turnRate: TURN_RATE_DEG_PER_SEC,
         stt: sttAvailable(),
+        // campaign client affordances: dock/resolve rings + in-range hints
+        salvageDockRangeM: SALVAGE_DOCK_RANGE_M,
+        rumorResolveRangeM: RUMOR_RESOLVE_RANGE_M,
         // v5.1 §6: the select screen renders stat bars straight from the
         // runtime source of truth — the client never hardcodes a number
         archetypes: ARCHETYPES,

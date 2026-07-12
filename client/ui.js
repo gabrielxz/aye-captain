@@ -537,6 +537,25 @@ export function showReveal(reveal) {
   }
 }
 
+// Campaign run map: the haul manifest — plain lines in the reveal slot,
+// loot first and large-ish (the counters live in the detail line). Call
+// AFTER showBanner (which clears the slot).
+export function showBannerLines(heading, lines) {
+  const el = document.getElementById("banner-reveal");
+  el.textContent = "";
+  if (!lines || lines.length === 0) return;
+  const h = document.createElement("div");
+  h.textContent = heading;
+  h.style.cssText = "opacity:0.6; letter-spacing:3px; font-size:11px; margin-bottom:6px";
+  el.appendChild(h);
+  for (const line of lines) {
+    const d = document.createElement("div");
+    d.textContent = line;
+    d.style.cssText = "font-size:14px; color: var(--accent); margin: 2px 0";
+    el.appendChild(d);
+  }
+}
+
 export function hideBanner() {
   bannerEl.classList.remove("active");
 }

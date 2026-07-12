@@ -300,6 +300,20 @@ function drawDriftMarker(you) {
   ctx.globalAlpha = 1;
 }
 
+// Dark-backed overlay text: readable over the own-ship sprite, rocks,
+// terrain — anything (playtest: own-color label over own-color hull).
+function labelText(text, x, y, color, alpha = 0.9) {
+  ctx.font = "10px monospace";
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = "rgba(6, 9, 13, 0.92)";
+  ctx.lineWidth = 3;
+  ctx.lineJoin = "round";
+  ctx.strokeText(text, x, y);
+  ctx.fillStyle = color;
+  ctx.fillText(text, x, y);
+  ctx.globalAlpha = 1;
+}
+
 function drawVectorOverlay(you) {
   if (!you) return;
   if (!vectorLatched && performance.now() > vectorUntil) return;
@@ -371,34 +385,30 @@ function drawVectorOverlay(you) {
     ctx.setLineDash([]);
     const km = stopDist / 1000;
     const kmLabel = km < 10 ? `${km.toFixed(1)} km` : `${Math.round(km)} km`;
-    ctx.font = "10px monospace";
-    ctx.fillStyle = COLORS.own;
-    // label collision (playtest 2026-07-12): decelerating or zoomed out,
-    // the stop bracket lands on the arrowhead and the two labels print on
-    // top of each other. When their anchors are close, STACK them — the
-    // vector label above the line, all-stop below the bracket.
+    // label placement (playtest 2026-07-12, twice): the bracket goes where
+    // physics puts it, but the TEXT dodges — off the own-ship sprite when
+    // the stop point sits on the hull, and stacked when it would print
+    // over the vector label. All overlay text is dark-backed (labelText).
     let stopLabelX = px + 10;
     let stopLabelY = py + 3;
-    if (Math.abs(px - ex) < 90 && Math.abs(py - ey) < 14) {
-      stopLabelY = Math.max(py, ey) + 16;
+    const onShip = Math.hypot(px - sx, py - sy) < 28;
+    const onVectorLabel = Math.abs(px - ex) < 90 && Math.abs(py - ey) < 14;
+    if (onShip) {
+      stopLabelX = sx + 14;
+      stopLabelY = sy + 30;
+    } else if (onVectorLabel) {
       stopLabelX = Math.max(px, ex) + 10;
+      stopLabelY = Math.max(py, ey) + 16;
     }
-    ctx.fillText(`all stop · ${kmLabel}`, stopLabelX, stopLabelY);
-    ctx.globalAlpha = 1;
-    if (Math.abs(px - ex) < 90 && Math.abs(py - ey) < 14) {
+    labelText(`all stop · ${kmLabel}`, stopLabelX, stopLabelY, COLORS.own, 0.9);
+    if (onVectorLabel && !onShip) {
       // vector label takes the high slot in the stacked case
-      ctx.globalAlpha = 0.7;
-      ctx.fillText(`+${VECTOR_SECONDS}s · ${Math.round(speed)} m/s`, Math.max(px, ex) + 10, Math.min(py, ey) - 8);
-      ctx.globalAlpha = 1;
+      labelText(`+${VECTOR_SECONDS}s · ${Math.round(speed)} m/s`, Math.max(px, ex) + 10, Math.min(py, ey) - 8, COLORS.own, 0.7);
       return;
     }
   }
   // labels clear of each other (or no stop point): vector label at the arrowhead
-  ctx.globalAlpha = 0.7;
-  ctx.font = "10px monospace";
-  ctx.fillStyle = COLORS.own;
-  ctx.fillText(`+${VECTOR_SECONDS}s · ${Math.round(speed)} m/s`, ex + 8, ey);
-  ctx.globalAlpha = 1;
+  labelText(`+${VECTOR_SECONDS}s · ${Math.round(speed)} m/s`, ex + 8, ey, COLORS.own, 0.7);
 }
 
 // ---------- starfield (multi-layer parallax; subtle, navigational) ----------
@@ -922,13 +932,40 @@ function drawGate(now) {
 function drawWrecks() {
   const wrecks = state.lastSnap?.wrecks;
   if (!wrecks || wrecks.length === 0) return;
+  const you = state.lastSnap?.you ?? null;
+  const salv = you?.mission?.salvaging ?? null;
+  const dockM = state.config?.salvageDockRangeM ?? 2000;
+  const resolveM = state.config?.rumorResolveRangeM ?? 5000;
   ctx.save();
-  ctx.font = "9px 'Share Tech Mono', monospace";
   for (const w of wrecks) {
     const [sx, sy] = worldToScreen(w.x, w.y);
-    ctx.strokeStyle = w.marked ? "#b8a86a" : "#8a7fb0";
-    ctx.fillStyle = ctx.strokeStyle;
+    const color = w.marked ? "#b8a86a" : "#8a7fb0";
+    // the interaction ring: dock range on lootable wrecks, resolve range
+    // on unresolved rumors — and it BRIGHTENS when you're inside it, so
+    // "I can act now" is a visible state, not a guess (playtest ask)
+    const ringM = !w.marked && w.items === null ? resolveM : dockM;
+    const inRange = you ? Math.hypot(you.x - w.x, you.y - w.y) <= ringM : false;
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = inRange ? 0.85 : 0.28;
+    ctx.setLineDash([4, 4]);
+    ctx.lineWidth = inRange ? 1.5 : 1;
+    ctx.beginPath();
+    ctx.arc(sx, sy, Math.max(6, ringM * camera.zoom), 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // active transfer: a progress arc fills over each item interval —
+    // the countdown lives where the captain is looking
+    if (salv && salv.wreckId === w.id) {
+      const frac = 1 - salv.nextInS / (salv.itemS || 10);
+      ctx.globalAlpha = 0.95;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(sx, sy, 11, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.fillStyle = color;
     ctx.globalAlpha = 0.9;
+    ctx.lineWidth = 1;
     ctx.beginPath(); // a small diamond
     ctx.moveTo(sx, sy - 5);
     ctx.lineTo(sx + 5, sy);
@@ -936,15 +973,12 @@ function drawWrecks() {
     ctx.lineTo(sx - 5, sy);
     ctx.closePath();
     ctx.stroke();
-    ctx.globalAlpha = 0.75;
     // a rumor shows "?" until resolved by presence; once checked it names
     // its count (or vanishes, if it was a dry hole — the server stops
     // sending it)
-    ctx.fillText(
-      w.marked ? `wreck ·${w.items}` : w.items !== null ? `rumor ·${w.items}` : "rumor ·?",
-      sx + 8,
-      sy + 3
-    );
+    ctx.font = "9px 'Share Tech Mono', monospace";
+    const tag = w.marked ? `wreck ·${w.items}` : w.items !== null ? `rumor ·${w.items}` : "rumor ·?";
+    labelText(inRange ? `${tag} — in range` : tag, sx + 8, sy + 3, color, inRange ? 1 : 0.75);
   }
   ctx.restore();
 }

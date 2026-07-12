@@ -135,6 +135,7 @@ const STOCK_LINES = [
   "Breaking off the salvage — what's aboard stays aboard, Captain.",
   "There's a wreck here alright, Captain. Worth taking.",
   "Nothing here, Captain — that rumor was a dry hole.",
+  "Decoy's away — it holds our old course. We should change ours, Captain.",
   "Aye, Captain.",
   "Say again, Captain?",
   "Acquiring missile lock...",

@@ -1,6 +1,6 @@
 // ws handling + client state store
 import { startRenderLoop, bigBoomAt, showVector, setOverlay, resetOverlays, kickShake, camera, gateExitFx } from "./render.js";
-import { initUI, addTranscript, updateHUD, showLobbyStatus, enterGame, showBanner, showReveal, hideBanner, showRematchTally, setMenuVisible, updateWatching, setSpectator, showRoomLobby, hideRoomLobby, setCampaignBanner } from "./ui.js";
+import { initUI, addTranscript, updateHUD, showLobbyStatus, enterGame, showBanner, showReveal, showBannerLines, hideBanner, showRematchTally, setMenuVisible, updateWatching, setSpectator, showRoomLobby, hideRoomLobby, setCampaignBanner } from "./ui.js";
 import * as audio from "./audio.js";
 import { musicView, computeMusic } from "./music-brain.js";
 
@@ -236,7 +236,15 @@ function handleMessage(msg) {
         // §8.6: the streak lands first, then the fade to the run map
         showBanner(
           `SYSTEM ${msg.system} CLEARED`,
-          `${msg.systemName ?? ""} — ${dots} hunters ${t.huntersKilled ?? 0} · salvage ${t.salvaged ?? 0} · upgrades ${t.upgrades ?? 0}`
+          `${msg.systemName ?? ""} — ${dots} · run totals: hunters ${t.huntersKilled ?? 0} · salvage ${t.salvaged ?? 0} · upgrades ${t.upgrades ?? 0}`
+        );
+        // the HAUL is the headline (playtest: "the end screen didn't
+        // tell me what I got")
+        showBannerLines(
+          "BROUGHT ABOARD THIS SYSTEM",
+          (msg.haul ?? []).length > 0
+            ? [...msg.haul, ...(msg.huntersKilledHere > 0 ? [`hunter kills · ${msg.huntersKilledHere}`] : [])]
+            : ["nothing — a clean sprint"]
         );
         setCampaignBanner("next", msg.nextSystem);
       }, 1500);
@@ -455,15 +463,20 @@ function updateHUDFromSnapshot(snap) {
                 : "gone quiet",
             cls: you.mission.hunterActive ? "alert" : you.mission.spawnInS > 0 ? "warn" : "good",
           },
-          ...(you.mission.salvaging
-            ? [
-                {
-                  label: "SALVAGE",
-                  value: `next in ${you.mission.salvaging.nextInS}s · ${you.mission.salvaging.itemsLeft} left`,
-                  cls: "good",
-                },
-              ]
-            : []),
+          ...(() => {
+            // SALVAGE row: transfer progress while docked; an in-range
+            // hint when a lootable wreck's dock ring is around us
+            // (playtest: the actable moment must be visible)
+            const s = you.mission.salvaging;
+            if (s) {
+              return [{ label: "SALVAGE", value: `next in ${s.nextInS}s · ${s.itemsLeft} left`, cls: "good" }];
+            }
+            const dockM = state.config?.salvageDockRangeM ?? 2000;
+            const near = (snap.wrecks ?? []).some(
+              (w) => w.items !== null && w.items !== 0 && Math.hypot(w.x - you.x, w.y - you.y) <= dockM
+            );
+            return near ? [{ label: "SALVAGE", value: 'in range — say "salvage"', cls: "good" }] : [];
+          })(),
           {
             label: "GATE",
             value: you.gate

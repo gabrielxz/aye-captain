@@ -452,6 +452,11 @@ export interface Mission {
   cleared: boolean; // aperture crossed — the system is over (transition or final win)
   // run bookkeeping for the §9 summary + §6 progression export
   stats: { huntersKilled: number; salvaged: number; pingsFired: number; upgrades: number };
+  // everything that came aboard THIS system, in landing order — the run
+  // map's manifest (playtest: "the end screen didn't tell me what I got")
+  haul: SalvageItem[];
+  // the decoy doctrine line fires at most once per system (teach, don't nag)
+  decoyTaught: boolean;
   // modules collected THIS system, by kind — the Match folds them into the
   // run state at system clear (counts, not multipliers: the client's
   // localStorage carries counts and the server re-derives the multipliers)
@@ -1455,6 +1460,22 @@ export class Sim {
       }
       case "deploy_decoy": {
         if (ship.decoys <= 0) return "No decoys left, Captain.";
+        // campaign doctrine moment (once per system, only when it matters):
+        // a decoy dropped mid-burn holds your OLD course — the lie only
+        // works if you then change yours. Teach, don't nag.
+        if (
+          this.mission &&
+          ship.id === this.mission.playerId &&
+          !this.mission.decoyTaught &&
+          effectiveThrust(ship) >= 60
+        ) {
+          this.mission.decoyTaught = true;
+          events.push({
+            kind: "notice",
+            ship: ship.id,
+            text: "Decoy's away — it holds our old course. We should change ours, Captain.",
+          });
+        }
         ship.decoys--;
         const driftAngle = Math.random() * Math.PI * 2;
         this.decoys.push({
@@ -2596,6 +2617,11 @@ export class Sim {
 
     this.phase = (this.phase + 1) % C.PHYSICS_SUBSTEPS;
     if (this.phase !== 0) return;
+
+    // campaign: once the crossing has registered, "We're through" is the
+    // last word — the system is over, and a tier-demotion ceremony on a
+    // Hunter receding behind you is noise (playtest 2026-07-12)
+    if (this.mission?.cleared) return;
 
     // 6. sensors: per-viewer enemy visibility, last-known tracking, contact
     // notices; then ship-to-ship missile locks (needs fresh visibility) and
@@ -4141,7 +4167,14 @@ export class Sim {
     if (!wreck.checked) wreck.checked = true; // docking is the closest look there is
     if (!m.salvaging || m.salvaging.wreckId !== wreck.id) {
       m.salvaging = { wreckId: wreck.id, t: 0 };
-      events.push({ kind: "notice", ship: player.id, text: "Alongside. Transfer's running, Captain." });
+      // the count sets the captain's expectations up front (playtest:
+      // "I wasn't sure how long the process was going to take")
+      events.push({
+        kind: "notice",
+        ship: player.id,
+        text: `Alongside. Transfer's running — ${wreck.items.length} piece${wreck.items.length === 1 ? "" : "s"} to move, Captain.`,
+        speak: "Alongside. Transfer's running, Captain.",
+      });
     }
     m.salvaging.t += 1;
     if (m.salvaging.t < C.SALVAGE_ITEM_S) return;
@@ -4161,6 +4194,7 @@ export class Sim {
   }
 
   private applySalvageItem(ship: Ship, item: SalvageItem, events: SimEvent[]): void {
+    this.mission!.haul.push(item);
     const say = (text: string) => events.push({ kind: "notice", ship: ship.id, text });
     switch (item.kind) {
       case "propellant":
@@ -4971,7 +5005,9 @@ export class Sim {
                 hunterActive: this.mission.hunterIds.some((h) => this.ships.has(h)),
                 salvaging: this.mission.salvaging
                   ? {
+                      wreckId: this.mission.salvaging.wreckId,
                       nextInS: Math.max(0, C.SALVAGE_ITEM_S - this.mission.salvaging.t),
+                      itemS: C.SALVAGE_ITEM_S,
                       itemsLeft:
                         this.mission.wrecks.find((w) => w.id === this.mission!.salvaging!.wreckId)
                           ?.items.length ?? 0,

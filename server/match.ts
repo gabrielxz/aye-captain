@@ -328,6 +328,8 @@ export class Match {
       salvaging: null,
       cleared: false,
       stats: { huntersKilled: 0, salvaged: 0, pingsFired: 0, upgrades: 0 },
+      haul: [],
+      decoyTaught: false,
       upgradeCounts: { sig: 0, sensor: 0, accel: 0, hull: 0 },
       solGood: false,
       solCooldownS: 0,
@@ -416,6 +418,40 @@ export class Match {
       timeS: Math.round(this.run.totals.timeS + durationS),
       hullRemaining: ship ? Math.round(ship.hull) : 0,
     };
+  }
+
+  // The run map's manifest: what came aboard THIS system, aggregated and
+  // human-named — the loot is the headline, not a counter (playtest:
+  // "the end screen didn't tell me what I got").
+  private haulManifest(): string[] {
+    const m = this.sim.mission;
+    if (!m) return [];
+    const names: Record<string, string> = {
+      propellant: "propellant",
+      missiles: "missiles",
+      pdc_ammo: "PDC ammunition",
+      decoys: "decoys",
+      hull: "hull repair",
+    };
+    const moduleNames = {
+      sig: "ENGINE BAFFLES — we run quieter",
+      sensor: "SENSOR SUITE — we hear farther",
+      accel: "DRIVE PARTS — we burn harder",
+      hull: "ARMOR PLATE — we take more",
+    } as const;
+    const agg = new Map<string, number>();
+    const lines: string[] = [];
+    for (const it of m.haul) {
+      if (it.kind === "upgrade") {
+        lines.push(`\u25c6 ${moduleNames[it.upgrade ?? "sig"]}`);
+      } else {
+        agg.set(it.kind, (agg.get(it.kind) ?? 0) + it.amount);
+      }
+    }
+    for (const [kind, amount] of agg) {
+      lines.push(`${names[kind] ?? kind} +${amount}`);
+    }
+    return lines;
   }
 
   // NEXT SYSTEM (client clicked through the run map): the client hands the
@@ -990,6 +1026,8 @@ export class Match {
             systemName: this.sim.mission?.systemName,
             nextSystem: ev.system + 1,
             totalSystems: C.CAMPAIGN_SYSTEMS,
+            haul: this.haulManifest(), // what THIS system paid — the headline
+            huntersKilledHere: this.sim.mission?.stats.huntersKilled ?? 0,
             runState,
           })
         );

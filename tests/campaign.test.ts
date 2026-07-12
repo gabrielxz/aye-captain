@@ -28,6 +28,8 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
     salvaging: null,
     cleared: false,
     stats: { huntersKilled: 0, salvaged: 0, pingsFired: 0, upgrades: 0 },
+    haul: [],
+    decoyTaught: false,
     upgradeCounts: { sig: 0, sensor: 0, accel: 0, hull: 0 },
     solGood: false,
     solCooldownS: 0,
@@ -338,6 +340,11 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
   sim.enqueue("A", [{ verb: "salvage", params: {} } as any]);
   let ev = sim.tick();
   assert(ev.some((e) => e.kind === "notice" && /Coming alongside/.test((e as any).text)), "salvage accepted: the XO takes the conn");
+  let dockLine: any = null;
+  for (let t = 0; t < 30 && !dockLine; t++) {
+    dockLine = sim.tick().find((e) => e.kind === "notice" && /pieces to move/.test((e as any).text));
+  }
+  assert(!!dockLine && /3 pieces/.test(dockLine.text), "the docking line states the count up front — the captain knows how long");
   // the maneuver kills velocity first; no items land while moving
   for (let t = 0; t < C.SALVAGE_ITEM_S - 1 && sim.speedOf(a) >= C.SALVAGE_STOP_SPEED_MPS; t++) sim.tick();
   assert(sim.mission!.stats.salvaged === 0, "no transfer above SALVAGE_STOP_SPEED_MPS — the stop is the cost");
@@ -349,6 +356,7 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
     if (ev.some((e) => e.kind === "notice" && /Propellant aboard/.test((e as any).text))) got = 1;
   }
   assert(got === 1 && a.propellant > before, "worst item first: propellant lands and is applied");
+  assert(sim.mission!.haul.length === 1 && sim.mission!.haul[0].kind === "propellant", "the haul manifest records the landing (the run map's headline)");
   const sigBefore = a.sigMult;
   // teaser fires when only the upgrade remains
   let teased = false;
@@ -483,6 +491,41 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
   sim.mission!.hunterSpawnS = sim.tickCount + 1;
   sim.tick();
   assert(sim.hunterIntelFor(sim.ships.get("H")!).sites.length === 0, "a CHECKED rumor is still the player's secret — never Hunter intel");
+}
+
+// 17. the decoy doctrine line: once per system, only when it matters
+// (deployed mid-burn — the decoy holds your OLD course; teach, don't nag)
+{
+  const sim = missionSim();
+  const a = sim.ships.get("A")!;
+  a.thrust = 80;
+  sim.enqueue("A", [{ verb: "deploy_decoy", params: {} } as any]);
+  let ev = sim.tick();
+  assert(ev.some((e) => e.kind === "notice" && /holds our old course/.test((e as any).text)), "decoy dropped mid-burn: the XO teaches the doctrine");
+  sim.enqueue("A", [{ verb: "deploy_decoy", params: {} } as any]);
+  ev = sim.tick();
+  assert(!ev.some((e) => e.kind === "notice" && /holds our old course/.test((e as any).text)), "…once per system — teach, don't nag");
+  const sim2 = missionSim();
+  sim2.enqueue("A", [{ verb: "deploy_decoy", params: {} } as any]);
+  ev = sim2.tick();
+  assert(!ev.some((e) => e.kind === "notice" && /holds our old course/.test((e as any).text)), "dropped while quiet: no lecture (the doctrine moment is the burn)");
+}
+
+// 18. once the crossing registers, "We're through" is the last word: the
+// contact/sensor ceremony is silenced (playtest: a tier-demotion line on
+// the receding Hunter landed after the exit)
+{
+  const sim = missionSim({ hunterSpawnS: 1 });
+  sim.tick(); // spawn
+  const h = sim.ships.get("H")!;
+  const a = sim.ships.get("A")!;
+  h.x = a.x;
+  h.y = a.y + 40000; // close: would fire full contact ceremony next pass
+  h.thrust = 100;
+  h.hunterAI = false;
+  sim.mission!.cleared = true; // the exit has registered
+  const ev = [...sim.tick(), ...sim.tick()];
+  assert(!ev.some((e) => e.kind === "notice" && /contact|track|readout|rumble/i.test((e as any).text)), "no sensor ceremony after the exit — the system is over");
 }
 
 console.log("done: campaign");
