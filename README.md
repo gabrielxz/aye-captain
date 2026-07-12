@@ -156,7 +156,25 @@ be going somewhere — not both.
   drift") and a chevron rides your hull pointing where you're *going* —
   your hull points where you're *aimed*, and the gap between them is what
   kills people. No hotkey; it's asked for, like everything on this boat.
-- Win by reducing the enemy hull to zero. Rematch from the banner.
+- **The XO's speech discipline** (v5.1): he speaks when he knows something
+  you don't — rejections, delayed completions, threats. Acks of things the
+  HUD already shows stay text-only, rumble calls batch into one line
+  ("Three drives out there — bearings 040, 180, and 295"), and far-away
+  contact changes log silently once the board gets busy. Keying the mic
+  cuts him off (life-or-death warnings finish, ducked). The lock alarm
+  blares 4 s then decays to a heartbeat — one thump per ship holding you.
+  Topbar: separate SFX/VOX sliders + an XO verbosity cycle
+  (FULL/TERSE/SILENT), changeable mid-match.
+- **Names** (v5.1): type one in the lobby — teammates and spectators see
+  it, enemies never do, the XO never speaks it. The gameover screen
+  reveals every callsign→name mapping plus the kill ledger ("Vagrant
+  (Marcus) → Kestrel (Gabriel)").
+- **Practice** (v5.1) opens a ship-select for your hull AND the sparring
+  drone's — stat cards with signature front and center ("no railgun" is a
+  corvette headline, not a footnote).
+- Win by reducing the enemy hull to zero. Rematch from the banner is a
+  ready-up vote (majority picks same/new field; leavers never block), and
+  MAIN MENU exits cleanly.
 
 Debug/dev harness: any input starting with `{` or `[` is parsed as raw
 schema-JSON commands and bypasses the LLM.

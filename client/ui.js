@@ -44,6 +44,7 @@ function playerName() {
 export function initUI() {
   const nameEl = document.getElementById("player-name");
   nameEl.value = localStorage.getItem("playerName") ?? "";
+  nameEl.addEventListener("input", () => localStorage.setItem("playerName", nameEl.value.trim()));
   document.getElementById("btn-create").addEventListener("click", () => {
     send({ type: "create", name: playerName() });
   });
