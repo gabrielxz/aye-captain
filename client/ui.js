@@ -92,6 +92,64 @@ export function initUI() {
     send({ type: "practice", archetype: practicePick.ship, droneArchetype: practicePick.drone });
   });
 
+  // campaign "Deep Black": same select-screen flow as practice, one hull
+  // row (the Hunter's is the mission's business). A saved run (the
+  // localStorage save file — single-player suspends server authority)
+  // offers CONTINUE; NEW RUN wipes it.
+  const campaignPick = { ship: localStorage.getItem("campaignArch") ?? "frigate" };
+  const campaignPanel = document.getElementById("campaign-panel");
+  const savedRun = () => {
+    try {
+      const r = JSON.parse(localStorage.getItem("campaignRun") ?? "null");
+      return r && typeof r.system === "number" ? r : null;
+    } catch {
+      return null;
+    }
+  };
+  const buildCampaignCards = () => {
+    buildShipSelect(document.getElementById("campaign-arch-row"), {
+      archetypes: state.config?.archetypes,
+      selected: campaignPick.ship,
+      onPick: (arch) => {
+        campaignPick.ship = arch;
+        localStorage.setItem("campaignArch", arch);
+        buildCampaignCards();
+      },
+    });
+    const run = savedRun();
+    const cont = document.getElementById("btn-campaign-continue");
+    cont.style.display = run ? "" : "none";
+    if (run) cont.textContent = `CONTINUE RUN — SYSTEM ${run.system}`;
+    const best = Number(localStorage.getItem("campaignBest") ?? 0);
+    document.getElementById("campaign-best").textContent =
+      best > 0 ? `best run: ${best} system${best === 1 ? "" : "s"} cleared` : "";
+  };
+  document.getElementById("btn-campaign").addEventListener("click", () => {
+    buildCampaignCards();
+    campaignPanel.style.display = "flex";
+  });
+  document.getElementById("btn-campaign-back").addEventListener("click", () => {
+    campaignPanel.style.display = "none";
+  });
+  document.getElementById("btn-campaign-start").addEventListener("click", () => {
+    campaignPanel.style.display = "none";
+    localStorage.removeItem("campaignRun"); // a new run buries the old save
+    send({ type: "campaign", archetype: campaignPick.ship });
+  });
+  document.getElementById("btn-campaign-continue").addEventListener("click", () => {
+    const run = savedRun();
+    if (!run) return;
+    campaignPanel.style.display = "none";
+    send({ type: "campaign", archetype: campaignPick.ship, runState: run });
+  });
+  // run map: NEXT SYSTEM hands the save back to the same match
+  document.getElementById("btn-next-system").addEventListener("click", () => {
+    const run = savedRun();
+    if (!run) return;
+    hideBanner();
+    send({ type: "campaign_next", runState: run });
+  });
+
   // v5.1 §7.2: a way OUT that isn't closing the tab. Reloading drops the
   // socket; the server's close handler detaches us and tears down empty
   // rooms — the one already-tested leave path.
@@ -180,7 +238,7 @@ export function initUI() {
   document.addEventListener("pointerdown", initAudio);
   document.addEventListener("keydown", initAudio);
   // v5.1 §4.2: SFX and VOICE ride separate sliders
-  for (const [id, kind] of [["vol-sfx", "sfx"], ["vol-voice", "voice"]]) {
+  for (const [id, kind] of [["vol-sfx", "sfx"], ["vol-voice", "voice"], ["vol-music", "music"]]) {
     const el = document.getElementById(id);
     el.value = String(getMixVolume(kind));
     el.addEventListener("input", () => setMixVolume(kind, Number(el.value)));
@@ -479,6 +537,25 @@ export function showReveal(reveal) {
   }
 }
 
+// Campaign run map: the haul manifest — plain lines in the reveal slot,
+// loot first and large-ish (the counters live in the detail line). Call
+// AFTER showBanner (which clears the slot).
+export function showBannerLines(heading, lines) {
+  const el = document.getElementById("banner-reveal");
+  el.textContent = "";
+  if (!lines || lines.length === 0) return;
+  const h = document.createElement("div");
+  h.textContent = heading;
+  h.style.cssText = "opacity:0.6; letter-spacing:3px; font-size:11px; margin-bottom:6px";
+  el.appendChild(h);
+  for (const line of lines) {
+    const d = document.createElement("div");
+    d.textContent = line;
+    d.style.cssText = "font-size:14px; color: var(--accent); margin: 2px 0";
+    el.appendChild(d);
+  }
+}
+
 export function hideBanner() {
   bannerEl.classList.remove("active");
 }
@@ -487,6 +564,32 @@ export function hideBanner() {
 export function showRematchTally(ready, total) {
   document.getElementById("rematch-status").textContent =
     ready > 0 ? `REMATCH ${ready}/${total} — waiting for the room` : "";
+}
+
+// Campaign banner-button modes. "next" = the run map (ENTER SYSTEM n);
+// "over"/"reset" = campaign defaults (one NEW RUN button — a dead run
+// restarts, it doesn't rematch); "off" = multiplayer defaults.
+export function setCampaignBanner(mode, nextSystem = 0) {
+  const same = document.getElementById("btn-rematch");
+  const nw = document.getElementById("btn-rematch-new");
+  const next = document.getElementById("btn-next-system");
+  if (mode === "next") {
+    same.style.display = "none";
+    nw.style.display = "none";
+    next.style.display = "";
+    next.textContent = `ENTER SYSTEM ${nextSystem}`;
+  } else if (mode === "over" || mode === "reset") {
+    same.style.display = "none";
+    nw.style.display = "";
+    nw.textContent = "NEW RUN";
+    next.style.display = "none";
+  } else {
+    same.style.display = "";
+    same.textContent = "REMATCH — SAME FIELD";
+    nw.style.display = "";
+    nw.textContent = "REMATCH — NEW FIELD";
+    next.style.display = "none";
+  }
 }
 
 // v5.1 §7.2: the in-match MENU control (practice + spectators — captains

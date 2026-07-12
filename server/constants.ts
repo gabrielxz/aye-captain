@@ -365,3 +365,162 @@ export const TTS_MAX_CONCURRENT = 2;
 export const TTS_MODEL = "eleven_flash_v2_5"; // low latency
 export const VOICE_ID = "JBFqnCBsd6RMkjVDRZzb"; // "George" — calm, dry. Browse elevenlabs.io/voice-library and swap.
 export const TTS_TIMEOUT_MS = 10000;
+
+// ---------------------------------------------------------------------------
+// Campaign "Deep Black" — Stage 0 (HANDOFF-CAMPAIGN-v1.md). Single-player.
+// None of these touch multiplayer balance; the mission block on a Sim is the
+// only gate to any of this code running.
+
+// The clock is a BUDGET, not a threat (spec §1). FIXED per system — the
+// difficulty ladder (Stage 2) escalates the Hunter, never the clock.
+export const CAMPAIGN_HUNTER_SPAWN_S = 240;
+
+// Gate aperture — SOLVED from the §5.3 constraint, not guessed. Constraint:
+// committed at 40 km at full speed (3000 m/s), a 3° aim error must be
+// correctable with a lateral burn, a 6° error must not. Frigate baseline:
+// ttg = 40 km / 3000 = 13.3 s; a 90° flip at 20°/s eats 4.5 s; lateral
+// authority in the 8.8 s left = ½·60·8.8² ≈ 2.3 km. 3° = 40 km·tan3° ≈
+// 2.1 km (correctable); 6° ≈ 4.2 km → ≥1.9 km of residual miss. Half-width
+// must sit inside (0, 1.9 km): 1.5 km.
+//
+// THE ARCHETYPE SPREAD AT THIS WIDTH IS INTENTIONAL AND LOAD-BEARING — DO
+// NOT WIDEN TO "BALANCE" IT. At max speed the gate is forgiving in a
+// corvette (~6.2° correctable), exactly-as-specced in a frigate (~3.3°),
+// and unthreadable in a cruiser (~1.4°). The cruiser still makes it — at
+// ~2400 m/s instead of 3000 — so the heavy ship must come in slow, and slow
+// is when the Hunter catches you. The archetype's defining weakness surfaces
+// at the climax of every system with zero special-casing. Pinned per
+// archetype in tests/campaign.test.ts.
+export const APERTURE_W_M = 3000;
+export const GATE_SOLUTION_RANGE_M = 80000; // HUD panel + XO solution lines appear inside this
+// Pylons are rocks (collide, block LOS, render for free). Small ON PURPOSE:
+// the common failure must be the §5.2 shroud overshoot (lit up, current
+// against you, long burn back), not an instant crunch — a near miss clips a
+// pylon, a blown line sails through the gap's shoulder into the dark.
+export const GATE_PYLON_RADIUS_M = 800;
+export const GATE_BEARING_SPREAD_DEG = 80; // gate rim bearing seeded within ±this of north (player spawns south — the run is always real)
+
+// Hunter spawn. INSIDE the region (outside = signature-max = free tier-ID
+// leak, sim invariant), on this fraction of the region radius. Placement
+// law (Stage 0 review): OUT OF THE PLAYER'S DETECTION RANGE IS A HARD
+// FLOOR, away-from-the-gate is a soft preference — the first the player
+// knows is the clock, the second is a rumble they worked for. Never a
+// contact pop-in.
+export const HUNTER_SPAWN_RADIUS_FRAC = 0.85;
+export const HUNTER_SPAWN_DETECT_MARGIN = 1.3; // spawn at ≥ this × the player's live detection range for the Hunter's hunt-throttle signature
+
+// Stage 0 is "Sharp Ears" (ladder row 2), NOT row 1's near-parity Drifter —
+// the experiment is "hunted by something with better ears", and a parity
+// Hunter doesn't test that. Both are mission-spec fields (the Stage 2
+// ladder table drops in without refactor) and BOTH are runtime-sweepable
+// from the dev harness ({"mission":{"sigMult":0.7,"sensorMult":1.5}}) —
+// Stage 0's playtest deliverable is WHICH PAIR IS THE GAME, not "was it
+// fun".
+export const HUNTER_SENSOR_MULT = 1.4;
+// sigMult scales TOTAL emitted signature (sigBase + thrust + spikes), NOT
+// sigBase alone — "engine baffling", numbers-only. A base-only multiplier
+// would save ~8 pts against +55 from hunt throttle, and ladder row 4 "The
+// Quiet One" (whose identity is a floored sigMult) would be a dud.
+// DELIBERATE COUPLING — DO NOT "FIX": because every detection consumer
+// flows through signatureOf(), sigMult also shrinks missile-seeker
+// acquisition (seekers key on signatureOf) and delays lock eligibility
+// (the tier-2 gate). One physical model per invariant 9; still an
+// information advantage, not a hull buff. Ladder note: every sigMult rung
+// is therefore ALSO an anti-lock/anti-seeker rung — double-axis.
+export const HUNTER_SIG_MULT = 0.75;
+
+// Hunter AI (server/hunter.ts — a pure function of snapshotFor(hunter)).
+export const HUNTER_ENGAGE_RANGE_M = 60000; // inside this with a track: lock and shoot
+export const HUNTER_FIRE_COOLDOWN_S = 25; // missile cadence (corvette carries 4 — spent birds stay spent)
+export const HUNTER_PURSUE_THROTTLE = 100;
+export const HUNTER_HUNT_THROTTLE = 55; // regen band cruise; its own rumble discipline is the player's tell
+export const HUNTER_FUEL_FLOOR = 20; // % propellant: below this, coast and regen...
+export const HUNTER_FUEL_RESUME = 50; // ...until back above this (hysteresis)
+export const HUNTER_AVOID_LOOKAHEAD_S = 15; // rock-dodge projection window
+export const HUNTER_PATROL_ARRIVE_M = 15000; // waypoint arrival radius while HUNTing
+// Soft leash: beyond this fraction of the region radius, an outward HUNT
+// heading bends back toward the interior (rumble bearings carry no range —
+// a noise pointing outward was marching hunters off the map). PURSUE of a
+// real contact and the gate picket are exempt.
+export const HUNTER_LEASH_FRAC = 0.9;
+// Escalation (playtest ask): every dry spell this long — no contact, no
+// rumble, no ghost — the Hunter spends something: an active PING first
+// (which reveals IT map-wide: the frustrated scream is the player's gift),
+// then probes (gate first — the player must come there eventually — then
+// down the last bearing it heard). Numbers-only; ladder rows can retune.
+export const HUNTER_DRY_SPELL_S = 75;
+export const GATE_XO_COOLDOWN_S = 10; // min gap between gate-solution XO calls (§5.4: rate-limited HARD)
+
+// --- Stage 1: the run (§1) + salvage (§4) + progression (§6) ---
+export const CAMPAIGN_SYSTEMS = 8;
+// The stop is the cost (§4.1): momentum is the most precious thing you own.
+export const SALVAGE_STOP_SPEED_MPS = 25; // must be under this for the transfer to run
+export const SALVAGE_DOCK_RANGE_M = 2000; // come alongside — the XO won't grapple across the map
+export const SALVAGE_ITEM_S = 10; // per item; the haul is sequential, worst -> best (§4.2 — a greed curve, not a progress bar)
+export const SALVAGE_MARKED_SITES = 2; // reliable contents. WATCHED by the Hunter (§4.3/§4.4)
+export const SALVAGE_RUMORED_SITES = 3; // might be empty, might be the run-maker; the Hunter doesn't know them; the richest sit in dust
+// A rumor RESOLVES by going and looking (playtest 2026-07-12: a dust rumor
+// read as unresolvable — sensors can't do it, and mustn't: the trip IS the
+// price). Inside this range the XO eyeballs the hulk and calls it — loot
+// count or dry hole. Dust doesn't matter; you're alongside.
+export const RUMOR_RESOLVE_RANGE_M = 5000;
+// The XO flies the whole terminal approach: name a site inside this and
+// "come alongside wreck B" is one command. THE one ring drawn per site.
+export const SALVAGE_APPROACH_RANGE_M = 15000;
+// Progression is a multiplier table over constants that already exist (§6)
+// — no tech tree. −signature is deliberately the strongest lever in the
+// game (it directly degrades the Hunter's advantage; the economy teaches
+// the player what the game is about).
+export const UPGRADE_SIG_MULT = 0.92; // per module: player sigMult *= this
+export const UPGRADE_SENSOR_MULT = 1.08;
+export const UPGRADE_ACCEL_MULT = 1.08;
+export const UPGRADE_HULL_MULT = 1.12;
+
+// --- Stage 2: the ladder (§3). A TABLE, not a formula — each system adds
+// exactly ONE new problem, discrete and learnable ("system five is when
+// they start coming in pairs"). ESCALATE THE HUNTER, NEVER THE CLOCK:
+// CAMPAIGN_HUNTER_SPAWN_S is identical across all 8 rows (pinned in
+// tests/campaign.test.ts — shrinking the clock shrinks the GAME).
+// Multi-Hunter valve (§3 ⚠️): if S5/S7 feel unwinnable the knob is their
+// SENSOR RANGE, never the count — the count is those systems' identity.
+// gateCamp appears LATE ONLY: the sprint-for-the-door fantasy is precious.
+export interface HunterSpec {
+  archetype: ArchetypeName;
+  sensorMult: number;
+  sigMult: number;
+  gateCamp: boolean;
+}
+export interface LadderRow {
+  name: string; // named in the XO's mouth — the player should learn to fear a word
+  hunters: HunterSpec[];
+  spawnLine: string; // the clock-zero notice; NEVER carries a bearing
+}
+export const CAMPAIGN_LADDER: LadderRow[] = [
+  { name: "The Drifter", hunters: [{ archetype: "corvette", sensorMult: 1.0, sigMult: 1.0, gateCamp: false }],
+    spawnLine: "Clock's run out, Captain — a drive just lit off in-system." },
+  { name: "Sharp Ears", hunters: [{ archetype: "corvette", sensorMult: 1.4, sigMult: 0.75, gateCamp: false }],
+    spawnLine: "Clock's run out. This one has better ears than we do, Captain." },
+  { name: "The Lance", hunters: [{ archetype: "frigate", sensorMult: 1.4, sigMult: 0.75, gateCamp: false }],
+    spawnLine: "Clock's run out — heavier drive this time. It'll have a railgun, Captain." },
+  { name: "The Quiet One", hunters: [{ archetype: "frigate", sensorMult: 1.4, sigMult: 0.45, gateCamp: false }],
+    spawnLine: "Clock's run out. I can barely hear this one, Captain." },
+  { name: "The Pair", hunters: [
+      { archetype: "corvette", sensorMult: 1.3, sigMult: 0.8, gateCamp: false },
+      { archetype: "corvette", sensorMult: 1.3, sigMult: 0.8, gateCamp: false }],
+    spawnLine: "Two drives, Captain. They've sent a pair." },
+  { name: "The Anvil", hunters: [{ archetype: "cruiser", sensorMult: 1.5, sigMult: 1.0, gateCamp: false }],
+    spawnLine: "Clock's run out. That drive is enormous — do not trade with it, Captain." },
+  { name: "The Picket", hunters: [
+      { archetype: "corvette", sensorMult: 1.4, sigMult: 0.75, gateCamp: false },
+      { archetype: "corvette", sensorMult: 1.4, sigMult: 0.75, gateCamp: true }],
+    spawnLine: "Two drives — and one of them is making for the gate, Captain." },
+  { name: "The Wolfpack", hunters: [
+      { archetype: "frigate", sensorMult: 1.4, sigMult: 0.6, gateCamp: false },
+      { archetype: "corvette", sensorMult: 1.4, sigMult: 0.6, gateCamp: true }],
+    spawnLine: "Multiple drives, quiet ones. It's a wolfpack, Captain." },
+];
+
+// --- Stage 3: the adaptive score (client/music-brain.js + audio.js) ---
+// 🔴 THE FOG INVARIANT APPLIES TO MUSIC (§7.1): intensity is a function of
+// the player's SNAPSHOT, never the sim's truth — pinned in tests/music.test.ts.
+export const GATE_RUN_TTG_MAX_S = 90; // gateRun begins ramping here (client mirrors this via the hello config)

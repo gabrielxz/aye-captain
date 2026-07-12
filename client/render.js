@@ -197,6 +197,12 @@ document.addEventListener("keydown", (e) => {
     camera.showInset = !camera.showInset;
   } else if (k === "v") {
     vectorLatched = !vectorLatched; // local toggle, no XO round-trip
+  } else if (k === "b") {
+    // bearing compass on the 50 km ring (player request 2026-07-12).
+    // B, not Alt: bare Alt focuses the browser menu bar and Alt-combos
+    // are OS shortcuts.
+    compassOn = !compassOn;
+    localStorage.setItem("compass", compassOn ? "1" : "0");
   }
 });
 document.addEventListener("keyup", (e) => heldKeys.delete(e.key.toLowerCase()));
@@ -300,6 +306,20 @@ function drawDriftMarker(you) {
   ctx.globalAlpha = 1;
 }
 
+// Dark-backed overlay text: readable over the own-ship sprite, rocks,
+// terrain — anything (playtest: own-color label over own-color hull).
+function labelText(text, x, y, color, alpha = 0.9) {
+  ctx.font = "10px monospace";
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = "rgba(6, 9, 13, 0.92)";
+  ctx.lineWidth = 3;
+  ctx.lineJoin = "round";
+  ctx.strokeText(text, x, y);
+  ctx.fillStyle = color;
+  ctx.fillText(text, x, y);
+  ctx.globalAlpha = 1;
+}
+
 function drawVectorOverlay(you) {
   if (!you) return;
   if (!vectorLatched && performance.now() > vectorUntil) return;
@@ -335,9 +355,8 @@ function drawVectorOverlay(you) {
   ctx.closePath();
   ctx.fillStyle = COLORS.own;
   ctx.fill();
-  ctx.font = "10px monospace";
-  ctx.fillText(`+${VECTOR_SECONDS}s · ${Math.round(speed)} m/s`, ex + 8, ey);
-  ctx.globalAlpha = 1;
+  // (vector label drawn below, after the stop point is known — the two
+  // labels dodge each other when the projections coincide)
 
   // projected stop point for an immediate full-stop maneuver: coast through
   // the retrograde flip, then decelerate at full burn (cheap, educational)
@@ -372,11 +391,30 @@ function drawVectorOverlay(you) {
     ctx.setLineDash([]);
     const km = stopDist / 1000;
     const kmLabel = km < 10 ? `${km.toFixed(1)} km` : `${Math.round(km)} km`;
-    ctx.font = "10px monospace";
-    ctx.fillStyle = COLORS.own;
-    ctx.fillText(`all stop · ${kmLabel}`, px + 10, py + 3);
-    ctx.globalAlpha = 1;
+    // label placement (playtest 2026-07-12, twice): the bracket goes where
+    // physics puts it, but the TEXT dodges — off the own-ship sprite when
+    // the stop point sits on the hull, and stacked when it would print
+    // over the vector label. All overlay text is dark-backed (labelText).
+    let stopLabelX = px + 10;
+    let stopLabelY = py + 3;
+    const onShip = Math.hypot(px - sx, py - sy) < 28;
+    const onVectorLabel = Math.abs(px - ex) < 90 && Math.abs(py - ey) < 14;
+    if (onShip) {
+      stopLabelX = sx + 14;
+      stopLabelY = sy + 30;
+    } else if (onVectorLabel) {
+      stopLabelX = Math.max(px, ex) + 10;
+      stopLabelY = Math.max(py, ey) + 16;
+    }
+    labelText(`all stop · ${kmLabel}`, stopLabelX, stopLabelY, COLORS.own, 0.9);
+    if (onVectorLabel && !onShip) {
+      // vector label takes the high slot in the stacked case
+      labelText(`+${VECTOR_SECONDS}s · ${Math.round(speed)} m/s`, Math.max(px, ex) + 10, Math.min(py, ey) - 8, COLORS.own, 0.7);
+      return;
+    }
   }
+  // labels clear of each other (or no stop point): vector label at the arrowhead
+  labelText(`+${VECTOR_SECONDS}s · ${Math.round(speed)} m/s`, ex + 8, ey, COLORS.own, 0.7);
 }
 
 // ---------- starfield (multi-layer parallax; subtle, navigational) ----------
@@ -613,6 +651,12 @@ function drawGrid() {
 // rings in one line (v4.3 §4). The 10 and 100 km rings read as mystery
 // circles in the playtest and are gone.
 const RANGE_RINGS_M = [50000];
+// Bearing compass (toggle: B) — the 50 km ring becomes a protractor:
+// degree ticks + labels, and the current RUMBLE bearings pinned to it so
+// crossing bearings stops being mental math. Pure presentation: every
+// number drawn here is already the player's information.
+let compassOn = localStorage.getItem("compass") === "1";
+
 function drawRangeRings(you) {
   const span = Math.max(canvas.clientWidth, canvas.clientHeight);
   for (const r of RANGE_RINGS_M) {
@@ -631,7 +675,53 @@ function drawRangeRings(you) {
     ctx.fillText(`${r / 1000} km`, sx, sy - rpx - 4);
     ctx.textAlign = "left";
     ctx.globalAlpha = 1;
+    if (compassOn) drawCompass(sx, sy, rpx, alpha);
   }
+}
+
+function drawCompass(sx, sy, rpx, ringAlpha) {
+  if (rpx < 100) return; // too small to read — the ring fade handles the rest
+  ctx.save();
+  ctx.strokeStyle = COLORS.rings;
+  ctx.fillStyle = COLORS.rings;
+  ctx.font = "9px monospace";
+  ctx.textAlign = "center";
+  for (let deg = 0; deg < 360; deg += 10) {
+    const rad = (deg * Math.PI) / 180;
+    const dx = Math.sin(rad);
+    const dy = -Math.cos(rad); // compass: 0 = north/up, clockwise
+    const major = deg % 30 === 0;
+    const tick = major ? 8 : 4;
+    ctx.globalAlpha = ringAlpha * (major ? 0.7 : 0.4);
+    ctx.beginPath();
+    ctx.moveTo(sx + dx * rpx, sy + dy * rpx);
+    ctx.lineTo(sx + dx * (rpx + tick), sy + dy * (rpx + tick));
+    ctx.stroke();
+    if (major) {
+      ctx.fillText(String(deg).padStart(3, "0"), sx + dx * (rpx + 18), sy + dy * (rpx + 18) + 3);
+    }
+  }
+  // rumble bearings pinned to the ring: the plotting table draws itself
+  for (const rum of state.lastSnap?.rumbles ?? []) {
+    const rad = (rum.bearing * Math.PI) / 180;
+    const dx = Math.sin(rad);
+    const dy = -Math.cos(rad);
+    const loud = Math.max(0.35, Math.min(1, rum.loud ?? 0.5));
+    ctx.strokeStyle = COLORS.warn ?? "#f6ad55";
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.globalAlpha = ringAlpha * (0.5 + 0.5 * loud);
+    ctx.lineWidth = 2;
+    ctx.beginPath(); // a chevron riding the ring, pointing outward
+    ctx.moveTo(sx + dx * rpx - dy * 6, sy + dy * rpx + dx * 6);
+    ctx.lineTo(sx + dx * (rpx + 9), sy + dy * (rpx + 9));
+    ctx.lineTo(sx + dx * rpx + dy * 6, sy + dy * rpx - dx * 6);
+    ctx.stroke();
+    ctx.lineWidth = 1;
+    labelText(String(Math.round(rum.bearing)).padStart(3, "0"), sx + dx * (rpx + 30) - 10, sy + dy * (rpx + 30) + 3, ctx.strokeStyle, ringAlpha);
+  }
+  ctx.textAlign = "left";
+  ctx.globalAlpha = 1;
+  ctx.restore();
 }
 
 // Thrust flare color runs cold amber -> hot blue-white with throttle.
@@ -771,7 +861,9 @@ function draw() {
   if (state.config) {
     drawRing(0, 0, state.config.zoneRadius, COLORS.zone, 1.25);
   }
+  drawGate(now); // campaign: the one thing you always know (world-space, always visible)
   drawTerrain();
+  drawWrecks();
   if (you) drawRangeRings(you);
 
   drawParticles();
@@ -796,9 +888,159 @@ function draw() {
   drawDriftMarker(you);
   drawVectorOverlay(you);
   drawDustShroud();
+  drawExitFx(now);
   if (shaking) ctx.restore();
   drawCursorReadout(you);
   drawInset(you);
+}
+
+// §8 the exit spectacle: flashbulb, an expanding ring (the ping-ring
+// trick), and the starfield streaking along the exit velocity — the
+// cheapest cinema in the game. The beat of silence + rising tone is
+// audio.musicExit(); this is the picture.
+let exitFx = null;
+export function gateExitFx() {
+  const you = state.lastSnap?.you;
+  exitFx = { at: performance.now(), vx: you?.vx ?? 0, vy: you?.vy ?? 1 };
+  kickShake(true);
+}
+function drawExitFx(now) {
+  if (!exitFx) return;
+  const age = (now - exitFx.at) / 1000;
+  if (age > 2.6) {
+    exitFx = null;
+    return;
+  }
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  const you = state.lastSnap?.you;
+  if (you) {
+    const [sx, sy] = worldToScreen(you.x, you.y);
+    ctx.strokeStyle = `rgba(140, 220, 255, ${Math.max(0, 0.8 - age / 2)})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(sx, sy, 30 + age * 700, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  // the streak: stable pseudo-stars smearing along the exit vector
+  const speed = Math.hypot(exitFx.vx, exitFx.vy) || 1;
+  const dx = exitFx.vx / speed;
+  const dy = -exitFx.vy / speed; // screen y is down
+  const k = Math.max(0, 1 - age / 2.2);
+  const len = 60 + age * 420;
+  ctx.strokeStyle = `rgba(205, 225, 255, ${0.45 * k})`;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let i = 0; i < 70; i++) {
+    const px = (Math.sin(i * 78.233) * 0.5 + 0.5) * w;
+    const py = (Math.sin(i * 12.9898) * 0.5 + 0.5) * h;
+    ctx.moveTo(px, py);
+    ctx.lineTo(px - dx * len, py - dy * len);
+  }
+  ctx.stroke();
+  // flashbulb on top
+  if (age < 0.35) {
+    ctx.fillStyle = `rgba(230, 245, 255, ${0.75 * (1 - age / 0.35)})`;
+    ctx.fillRect(0, 0, w, h);
+  }
+}
+
+// Campaign gate (Stage 0): the pylons are terrain rocks and render with the
+// field; this draws only the aperture — a dashed line between the pylons
+// with a slow beacon pulse — plus the GATE label. Fixed public geometry
+// from the start message (spec §5.1: always visible, from t=0).
+function drawGate(now) {
+  const g = state.gate;
+  if (!g) return;
+  const gl = Math.max(1, Math.hypot(g.x, g.y));
+  const tx = -g.y / gl; // rim tangent (matches the server's aperture segment)
+  const ty = g.x / gl;
+  const h = g.apertureW / 2;
+  const [ax, ay] = worldToScreen(g.x - tx * h, g.y - ty * h);
+  const [bx, by] = worldToScreen(g.x + tx * h, g.y + ty * h);
+  const pulse = 0.55 + 0.35 * Math.sin(now / 600);
+  ctx.save();
+  ctx.strokeStyle = "#6fd3a8";
+  ctx.globalAlpha = pulse;
+  ctx.setLineDash([6, 5]);
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(ax, ay);
+  ctx.lineTo(bx, by);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  // aperture end ticks (the pylon rocks themselves may be sub-pixel when
+  // zoomed out — the ticks keep the doorway legible at map scale)
+  for (const [px, py] of [[ax, ay], [bx, by]]) {
+    ctx.beginPath();
+    ctx.arc(px, py, 3, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 0.85;
+  ctx.fillStyle = "#6fd3a8";
+  ctx.font = "10px 'Share Tech Mono', monospace";
+  const [gx, gy] = worldToScreen(g.x, g.y);
+  ctx.fillText("GATE", gx + 8, gy - 8);
+  ctx.restore();
+}
+
+// Campaign salvage sites (§4): landmarks, not contacts — the player knows
+// where every wreck is; what a RUMOR holds is the gamble. Diamond marker,
+// item count for marked sites, "?" for rumors.
+function drawWrecks() {
+  const wrecks = state.lastSnap?.wrecks;
+  if (!wrecks || wrecks.length === 0) return;
+  const you = state.lastSnap?.you ?? null;
+  const salv = you?.mission?.salvaging ?? null;
+  const ringM = state.config?.salvageApproachRangeM ?? 15000;
+  ctx.save();
+  for (const w of wrecks) {
+    const [sx, sy] = worldToScreen(w.x, w.y);
+    const color = w.marked ? "#b8a86a" : "#8a7fb0";
+    // ONE ring, one rule: inside the approach ring, "come alongside
+    // wreck B" is a single command and the XO flies everything. It
+    // BRIGHTENS when you're inside — actable is a visible state.
+    const inRange = you ? Math.hypot(you.x - w.x, you.y - w.y) <= ringM : false;
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = inRange ? 0.85 : 0.28;
+    ctx.setLineDash([4, 4]);
+    ctx.lineWidth = inRange ? 1.5 : 1;
+    ctx.beginPath();
+    ctx.arc(sx, sy, Math.max(6, ringM * camera.zoom), 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // active transfer: a progress arc fills over each item interval —
+    // the countdown lives where the captain is looking
+    if (salv && salv.wreckId === w.id) {
+      const frac = 1 - salv.nextInS / (salv.itemS || 10);
+      ctx.globalAlpha = 0.95;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(sx, sy, 11, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.9;
+    ctx.lineWidth = 1;
+    ctx.beginPath(); // a small diamond
+    ctx.moveTo(sx, sy - 5);
+    ctx.lineTo(sx + 5, sy);
+    ctx.lineTo(sx, sy + 5);
+    ctx.lineTo(sx - 5, sy);
+    ctx.closePath();
+    ctx.stroke();
+    // a rumor shows "?" until resolved by presence; once checked it names
+    // its count (or vanishes, if it was a dry hole — the server stops
+    // sending it)
+    ctx.font = "9px 'Share Tech Mono', monospace";
+    const tag = w.marked
+      ? `wreck ${w.letter} ·${w.items}`
+      : w.items !== null
+        ? `rumor ${w.letter} ·${w.items}`
+        : `rumor ${w.letter} ·?`;
+    labelText(inRange ? `${tag} — in range` : tag, sx + 8, sy + 3, color, inRange ? 1 : 0.75);
+  }
+  ctx.restore();
 }
 
 // v4.7 §4.3: being inside a dust cloud is a STATE, not a voice line —
@@ -1124,6 +1366,15 @@ function drawInset(you) {
   ctx.globalAlpha = 0.9;
   ctx.stroke();
   ctx.globalAlpha = 1;
+
+  // campaign gate: a rim marker on the overview
+  if (state.gate) {
+    const [gx, gy] = toInset(state.gate.x, state.gate.y);
+    ctx.fillStyle = "#6fd3a8";
+    ctx.beginPath();
+    ctx.arc(gx, gy, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
 
   // terrain: rocks as dots, dust as faint blobs
   if (state.terrain) {

@@ -1,7 +1,8 @@
 // ws handling + client state store
-import { startRenderLoop, bigBoomAt, showVector, setOverlay, resetOverlays, kickShake, camera } from "./render.js";
-import { initUI, addTranscript, updateHUD, showLobbyStatus, enterGame, showBanner, showReveal, hideBanner, showRematchTally, setMenuVisible, updateWatching, setSpectator, showRoomLobby, hideRoomLobby } from "./ui.js";
+import { startRenderLoop, bigBoomAt, showVector, setOverlay, resetOverlays, kickShake, camera, gateExitFx } from "./render.js";
+import { initUI, addTranscript, updateHUD, showLobbyStatus, enterGame, showBanner, showReveal, showBannerLines, hideBanner, showRematchTally, setMenuVisible, updateWatching, setSpectator, showRoomLobby, hideRoomLobby, setCampaignBanner } from "./ui.js";
 import * as audio from "./audio.js";
+import { musicView, computeMusic } from "./music-brain.js";
 
 export const state = {
   config: null, // {zoneRadius, stt} from server hello
@@ -10,6 +11,9 @@ export const state = {
   team: null, // "red" | "blue" | null (v5 teams mode)
   callsign: null, // spectator callsign (cosmetic, server-assigned)
   practice: false,
+  campaign: false, // Deep Black solo run
+  gate: null, // campaign gate geometry {x, y, apertureW} — fixed public landmark
+  musicPrev: null, // last music-brain view (edge-triggers the stings)
   prevSnap: null, // previous snapshot (for interpolation)
   lastSnap: null, // latest snapshot
   lastSnapAt: 0, // performance.now() when lastSnap arrived
@@ -51,19 +55,27 @@ function handleMessage(msg) {
       state.callsign = msg.callsign ?? null;
       hideRoomLobby();
       state.practice = !!msg.practice;
+      state.campaign = !!msg.campaign;
+      state.gate = msg.gate ?? null; // campaign: fixed public landmark
+      document.body.classList.toggle("campaign", state.campaign);
       state.terrain = msg.terrain ?? null;
       state.prevSnap = null;
       state.lastSnap = null;
       state.fxBuffer = [];
       state.gameOver = false;
       resetOverlays();
+      // campaign: the drift marker defaults ON — the gate is the climax
+      // and this is the instrument for flying it ("set_overlay off" still
+      // works; a Stage 0 playtester may never discover the phrase)
+      if (state.campaign) setOverlay("drift", true);
       prevTiers = null;
       pingListen = null;
       updateWatching([]); // fresh roster arrives right behind the start
       setSpectator(msg.role === "spectator" ? msg.callsign : null);
       showRematchTally(0, 0); // a fresh start clears any ready-up tally
-      // §7.2: practice and spectating get a live MENU control
-      setMenuVisible(!!msg.practice || msg.role === "spectator");
+      setCampaignBanner(state.campaign ? "reset" : "off"); // banner buttons to mode default
+      // §7.2: practice, campaign, and spectating get a live MENU control
+      setMenuVisible(!!msg.practice || state.campaign || msg.role === "spectator");
       if (msg.role === "spectator") {
         // death→spectator arrives as a fresh start: kill the RWR pulse,
         // klaxon, thrust hum — a ghost has no alarms (playtest 2026-07-12:
@@ -81,9 +93,11 @@ function handleMessage(msg) {
         "sys",
         msg.role === "spectator"
           ? `spectating as ${msg.callsign} — the room sees your callsign`
-          : msg.practice
-            ? "practice mode — drone contact inbound"
-            : `you are ship ${msg.role}`
+          : msg.campaign
+            ? "deep black — reach the gate; the clock is a budget"
+            : msg.practice
+              ? "practice mode — drone contact inbound"
+              : `you are ship ${msg.role}`
       );
       break;
     case "spectators":
@@ -112,6 +126,13 @@ function handleMessage(msg) {
       }
       soundFromSnapshot(msg);
       updateHUDFromSnapshot(msg);
+      // campaign adaptive score: brain (pure, fog-tested) -> driver.
+      // 🔴 the ONLY input is this wire snapshot — never sim truth (§7.1)
+      if (state.campaign && !state.gameOver) {
+        const view = musicView(msg);
+        audio.setMusic(computeMusic(view, state.musicPrev ?? null));
+        state.musicPrev = view;
+      }
       break;
     }
     case "gameover": {
@@ -136,20 +157,98 @@ function handleMessage(msg) {
         addTranscript("sys", `${isTeamWin ? `team ${winnerName}` : winnerName} wins — match over`);
         break;
       }
-      audio.sfxBoom(true, !msg.youWin);
-      if (!msg.youWin) kickShake(true);
-      // terminal explosion on the losing ship
-      if (snap) {
-        const contact = (snap.contacts ?? [])[0];
-        if (!msg.youWin && snap.you) bigBoomAt(snap.you.x, snap.you.y);
-        else if (msg.youWin && contact) bigBoomAt(contact.x, contact.y);
+      // campaign gate-clear: no terminal explosion, no boom — you left
+      // (the exit spectacle is Stage 4; the XO's "We're through" carries it)
+      if (!msg.gateCleared) {
+        audio.sfxBoom(true, !msg.youWin);
+        if (!msg.youWin) kickShake(true);
+        // terminal explosion on the losing ship
+        if (snap) {
+          const contact = (snap.contacts ?? [])[0];
+          if (!msg.youWin && snap.you) bigBoomAt(snap.you.x, snap.you.y);
+          else if (msg.youWin && contact) bigBoomAt(contact.x, contact.y);
+        }
+      }
+      if (state.campaign && msg.runSummary) {
+        // §9: SYSTEMS CLEARED is the headline and the score. The run is
+        // over either way — clear the save, keep the best.
+        const s = msg.runSummary;
+        localStorage.removeItem("campaignRun");
+        const best = Math.max(Number(localStorage.getItem("campaignBest") ?? 0), s.systemsCleared);
+        localStorage.setItem("campaignBest", String(best));
+        const tm = `${Math.floor(s.timeS / 60)}:${String(s.timeS % 60).padStart(2, "0")}`;
+        const cause = msg.runComplete
+          ? "eight of eight — the deep black, crossed"
+          : String(msg.winner ?? "").startsWith("H")
+            ? "the Hunter got us"
+            : "lost to misadventure";
+        if (msg.runComplete) {
+          // the final gate gets the full §8 exit before the scoreboard
+          audio.musicExit();
+          gateExitFx();
+        }
+        const showSummary = () => {
+          showBanner(
+            `SYSTEMS CLEARED: ${s.systemsCleared}`,
+            `${cause} — hunters killed ${s.huntersKilled} · salvage ${s.salvaged} · upgrades ${s.upgrades} · pings fired ${s.pingsFired} · run time ${tm} · best run ${best}`
+          );
+          setCampaignBanner("over");
+        };
+        if (msg.runComplete) setTimeout(showSummary, 1500);
+        else showSummary();
+        addTranscript(
+          "sys",
+          msg.runComplete ? "The run is complete, Captain. Eight systems." : `run over — made it to system ${s.systemsCleared + 1}`,
+          !msg.runComplete
+        );
+        break;
       }
       showBanner(
-        msg.youWin ? "VICTORY" : "SHIP LOST",
+        msg.gateCleared ? "SYSTEM CLEARED" : msg.youWin ? "VICTORY" : "SHIP LOST",
         (msg.forfeit ? "win by forfeit — " : "") + timeLine + standings
       );
       showReveal(msg.reveal); // §5.4: who everyone actually was
-      addTranscript("sys", msg.youWin ? "Enemy ship destroyed. Well fought, Captain." : "Hull breach — we're done. Abandon ship.", !msg.youWin);
+      addTranscript(
+        "sys",
+        msg.gateCleared
+          ? "Through the gate. System clear."
+          : msg.youWin
+            ? "Enemy ship destroyed. Well fought, Captain."
+            : "Hull breach — we're done. Abandon ship.",
+        !msg.youWin
+      );
+      break;
+    }
+    case "system_clear": {
+      // campaign transition: the run map — a breath between systems. The
+      // run state is OURS to keep (single-player suspends server
+      // authority; localStorage is the save file).
+      state.gameOver = true; // freeze inputs-to-sim mattering; sim is stopped server-side
+      audio.stopContinuous();
+      audio.musicExit(); // §8: the beat of silence, the rising tone, the resolve
+      gateExitFx(); // …and the flash + streak
+      localStorage.setItem("campaignRun", JSON.stringify(msg.runState));
+      const dots = Array.from({ length: msg.totalSystems }, (_, i) =>
+        i < msg.system ? "◆" : "◇"
+      ).join(" ");
+      const t = msg.runState?.totals ?? {};
+      setTimeout(() => {
+        // §8.6: the streak lands first, then the fade to the run map
+        showBanner(
+          `SYSTEM ${msg.system} CLEARED`,
+          `${msg.systemName ?? ""} — ${dots} · run totals: hunters ${t.huntersKilled ?? 0} · salvage ${t.salvaged ?? 0} · upgrades ${t.upgrades ?? 0}`
+        );
+        // the HAUL is the headline (playtest: "the end screen didn't
+        // tell me what I got")
+        showBannerLines(
+          "BROUGHT ABOARD THIS SYSTEM",
+          (msg.haul ?? []).length > 0
+            ? [...msg.haul, ...(msg.huntersKilledHere > 0 ? [`hunter kills · ${msg.huntersKilledHere}`] : [])]
+            : ["nothing — a clean sprint"]
+        );
+        setCampaignBanner("next", msg.nextSystem);
+      }, 1500);
+      addTranscript("sys", `system ${msg.system} clear — ${msg.totalSystems - msg.system} to go`);
       break;
     }
     case "created":
@@ -346,6 +445,52 @@ function updateHUDFromSnapshot(snap) {
     { label: "HULL", value: `${you.hull}`, cls: you.hull <= 35 ? "alert" : you.hull <= 65 ? "warn" : "" },
     { label: "EN HULL", value: enemyHull, cls: idContact && idContact.hull <= (idContact.hullMax ?? 100) / 2 ? "good" : "" },
     { label: "CONTACTS", value: contactsLine, cls: contacts.some((c) => c.tier >= 2) ? "good" : contacts.length ? "warn" : "", full: true },
+    // campaign: the mission clock + the gate approach solution + the
+    // transfer. Server-owned numbers, PING-LIT-style rendering — no
+    // client timers.
+    ...(you.mission
+      ? [
+          {
+            label: "SYS",
+            value: `${you.mission.system}/8 · ${you.mission.systemName ?? ""}`,
+          },
+          {
+            label: "HUNTER",
+            value: you.mission.hunterActive
+              ? "◤ IN SYSTEM ◥"
+              : you.mission.spawnInS > 0
+                ? `${Math.floor(you.mission.spawnInS / 60)}:${String(you.mission.spawnInS % 60).padStart(2, "0")}`
+                : "gone quiet",
+            cls: you.mission.hunterActive ? "alert" : you.mission.spawnInS > 0 ? "warn" : "good",
+          },
+          ...(() => {
+            // SALVAGE row: transfer progress while docked; an in-range
+            // hint when a lootable wreck's dock ring is around us
+            // (playtest: the actable moment must be visible)
+            const s = you.mission.salvaging;
+            if (s) {
+              return [{ label: "SALVAGE", value: `next in ${s.nextInS}s · ${s.itemsLeft} left`, cls: "good" }];
+            }
+            const rangeM = state.config?.salvageApproachRangeM ?? 15000;
+            const near = (snap.wrecks ?? [])
+              .filter((w) => w.items !== 0 && Math.hypot(w.x - you.x, w.y - you.y) <= rangeM)
+              .sort((a, b) => Math.hypot(a.x - you.x, a.y - you.y) - Math.hypot(b.x - you.x, b.y - you.y))[0];
+            return near
+              ? [{ label: "SALVAGE", value: `in range — "salvage ${near.letter}"`, cls: "good" }]
+              : [];
+          })(),
+          {
+            label: "GATE",
+            value: you.gate
+              ? you.gate.good
+                ? `SOLUTION GOOD · ${Math.floor(you.gate.ttg / 60)}:${String(you.gate.ttg % 60).padStart(2, "0")}`
+                : `ttg ${Math.floor(you.gate.ttg / 60)}:${String(you.gate.ttg % 60).padStart(2, "0")} · miss ${(you.gate.missM / 1000).toFixed(1)} km ${you.gate.side.toUpperCase()}`
+              : "no solution",
+            cls: you.gate ? (you.gate.good ? "good" : "alert") : "",
+            full: true,
+          },
+        ]
+      : []),
     { label: "SIG", value: `${Math.round(you.signature ?? 0)}`, cls: (you.signature ?? 0) > 100 ? "alert" : (you.signature ?? 0) > 50 ? "warn" : "good" },
     { label: "THRUST", value: `${Math.round(you.thrust)}%${tanksDry && you.thrust > 0 ? " (DRY)" : ""}`, cls: tanksDry && you.thrust > 0 ? "alert" : "" },
     { label: "SPD", value: `${you.speed} m/s` },

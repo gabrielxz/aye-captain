@@ -23,6 +23,21 @@ be going somewhere — not both.
   Echo, ...); players see who's watching.
 - **Practice**: solo mode against a drone that patrols the rocks — and
   shoots back.
+- **Campaign — Deep Black**: a solo, run-based roguelike. Eight systems;
+  get out of each one through a gate on the rim; your score is how far
+  you got. Each system gives you a fixed clock's worth of greed — burn
+  loud, chase salvage, strip wrecks (a full stop is the price; the haul
+  lands one item at a time, worst first) — and when the clock hits zero a
+  Hunter wakes up and comes looking by ear. It perceives through the same
+  fog of war you do: decoys fool it, dust blinds it, going dark works.
+  Kill it and it drops the best wreck in the system; the gate is flown
+  through, not commanded — thread a 3 km aperture on your drift, or
+  overshoot into the naked dark outside the shroud. Salvaged modules and
+  your remaining propellant/missiles/hull carry across systems; each
+  system's hunter is a new named problem ("system five is when they start
+  coming in pairs"), and an adaptive procedural score follows what YOU
+  know — never what the sim knows. Runs save to your browser; death ends
+  them.
 - **Input**: voice push-to-talk (hold Space — or the on-screen HOLD
   button on phones/tablets) or typed text.
 - **Output**: the ship AI talks back (ElevenLabs voice) and the ship itself

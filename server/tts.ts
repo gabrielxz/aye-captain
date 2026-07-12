@@ -109,6 +109,33 @@ export async function getSpeech(id: string): Promise<Buffer | null> {
 // forever. Dynamic lines (bearings, hull numbers, novel acks) synthesize at
 // runtime; the translator keeps them short (<= 12 words).
 const STOCK_LINES = [
+  // campaign "Deep Black"
+  "Deep black, Captain. The gate's on the board and the clock is running.",
+  ...C.CAMPAIGN_LADDER.map((r) => r.spawnLine), // the 8 clock-zero lines — the player learns to fear a word
+  "Solution good, Captain.",
+  "We're wide left, Captain.",
+  "We're wide right, Captain.",
+  "It's gone quiet, Captain. The system is ours.",
+  "We're through, Captain.",
+  // salvage (§4): the haul narrates itself, one line per landing
+  "Coming alongside, Captain.",
+  "Alongside. Transfer's running, Captain.",
+  "Propellant aboard, Captain.",
+  "Missiles aboard.",
+  "PDC ammunition aboard.",
+  "Decoys aboard.",
+  "Patch crews report hull repairs holding.",
+  "Engine baffles, Captain — fitted. We run quieter now.",
+  "A sensor suite, Captain — fitted. We hear farther now.",
+  "Drive parts, Captain — fitted. She burns harder now.",
+  "Armor plate, Captain — fitted. She can take more now.",
+  "That's the last of it — wreck's stripped, Captain.",
+  "There's something else in here, Captain — big. Stay put.",
+  "We've drifted off the wreck, Captain.",
+  "Breaking off the salvage — what's aboard stays aboard, Captain.",
+  "There's a wreck here alright, Captain. Worth taking.",
+  "Nothing here, Captain — that rumor was a dry hole.",
+  "Decoy's away — it holds our old course. We should change ours, Captain.",
   "Aye, Captain.",
   "Say again, Captain?",
   "Acquiring missile lock...",
@@ -156,8 +183,8 @@ const STOCK_LINES = [
   "Rock on our vector — impact in fifteen seconds!",
   "Rock on our vector — impact in ten seconds!",
   "Rock on our vector — impact in five seconds!",
-  "We're in the cloud — sensors are blind, but so are theirs.",
-  "Clear of the cloud — sensors are back.",
+  "We're in the cloud. Our sensors are blind, but so are theirs.",
+  "Clear of the cloud. Sensors are back.",
   // v4: maneuvers
   "Flipping to kill our velocity.",
   "Answering all stop.",
