@@ -92,6 +92,33 @@ export function initUI() {
     send({ type: "practice", archetype: practicePick.ship, droneArchetype: practicePick.drone });
   });
 
+  // campaign "Deep Black" (Stage 0): same select-screen flow as practice,
+  // one hull row (the Hunter's is the mission's business)
+  const campaignPick = { ship: localStorage.getItem("campaignArch") ?? "frigate" };
+  const campaignPanel = document.getElementById("campaign-panel");
+  const buildCampaignCards = () => {
+    buildShipSelect(document.getElementById("campaign-arch-row"), {
+      archetypes: state.config?.archetypes,
+      selected: campaignPick.ship,
+      onPick: (arch) => {
+        campaignPick.ship = arch;
+        localStorage.setItem("campaignArch", arch);
+        buildCampaignCards();
+      },
+    });
+  };
+  document.getElementById("btn-campaign").addEventListener("click", () => {
+    buildCampaignCards();
+    campaignPanel.style.display = "flex";
+  });
+  document.getElementById("btn-campaign-back").addEventListener("click", () => {
+    campaignPanel.style.display = "none";
+  });
+  document.getElementById("btn-campaign-start").addEventListener("click", () => {
+    campaignPanel.style.display = "none";
+    send({ type: "campaign", archetype: campaignPick.ship });
+  });
+
   // v5.1 §7.2: a way OUT that isn't closing the tab. Reloading drops the
   // socket; the server's close handler detaches us and tears down empty
   // rooms — the one already-tested leave path.

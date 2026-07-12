@@ -11,6 +11,7 @@ import {
   losClear,
   insideDust,
 } from "./terrain.js";
+import { hunterDecide, initialHunterMem, type HunterMem, type HunterSnap } from "./hunter.js";
 
 // v5 §2: N-player rooms. "A"/"B" remain the conventional ids in tests and
 // practice mode; rooms hand out seat ids from their own scheme.
@@ -206,6 +207,17 @@ export interface Ship {
   droneWaypoint: number; // drone-only: index into the patrol route
   droneDodge: -1 | 0 | 1; // drone-only: committed dodge direction (hysteresis)
   isDrone: boolean;
+  // Campaign (Deep Black): per-ship detection multipliers — mission-spec
+  // difficulty knobs, numbers only. 1 on every multiplayer hull. sigMult
+  // scales the TOTAL emitted signature in signatureOf (deliberately also
+  // seeker/lock-relevant — see the HUNTER_SIG_MULT comment in constants.ts);
+  // sensorMult scales this viewer's sensor base in detectionRange.
+  sensorMult: number;
+  sigMult: number;
+  // Campaign Hunter: when set, step() phase-0 feeds this ship's own fog
+  // snapshot to hunterDecide (server/hunter.ts — the fog firewall).
+  hunterAI: boolean;
+  hunterMem: HunterMem;
   standingOrders: StandingOrder[];
   orderCounter: number; // for generated labels
   // zone/dust transition tracking (edge-triggered transcript events)
@@ -378,7 +390,29 @@ export type SimEvent =
       winnerName: string;
       placements: string[];
       placementNames: string[];
+      // campaign (Stage 0): the player flew out through the gate
+      gateCleared?: boolean;
     };
+
+// Campaign "Deep Black" (HANDOFF-CAMPAIGN-v1.md, Stage 0). Set by Match on
+// a campaign sim, absent on every multiplayer sim — the presence of this
+// object is the ONLY gate to any campaign behavior in here.
+export interface Mission {
+  playerId: ShipId;
+  // gate center sits ON the region rim; the aperture segment is the rim
+  // tangent through it (perpendicular to the outward radial). Pylons are
+  // ordinary terrain rocks appended by the Match.
+  gate: { x: number; y: number; apertureW: number };
+  hunterSpawnS: number; // FIXED per system (spec §1 — the clock never shrinks)
+  hunterSpawned: boolean;
+  hunterId: ShipId | null;
+  // difficulty is numbers only (spec §2.1) — the Stage 2 ladder is rows of
+  // exactly this shape; the dev harness sweeps the multipliers live
+  hunter: { archetype: C.ArchetypeName; sensorMult: number; sigMult: number };
+  // gate-solution XO bookkeeping (edge-triggered, rate-limited)
+  solGood: boolean;
+  solCooldownS: number;
+}
 
 // ---------- angle helpers ----------
 
@@ -428,6 +462,23 @@ export function segmentMinDist(
   let t = a > 0 ? -(rx * dx + ry * dy) / a : 0;
   t = clamp(t, 0, 1);
   return Math.hypot(rx + t * dx, ry + t * dy);
+}
+
+// Proper segment-segment crossing (strict — collinear touches don't count;
+// at float precision a gate crossing is never exactly collinear). Used by
+// the campaign gate aperture test each physics substep (invariant 6: fast
+// objects are swept, never point-tested).
+export function segsIntersect(
+  ax: number, ay: number, bx: number, by: number,
+  cx: number, cy: number, dx: number, dy: number
+): boolean {
+  const orient = (px: number, py: number, qx: number, qy: number, rx: number, ry: number) =>
+    (qx - px) * (ry - py) - (qy - py) * (rx - px);
+  const o1 = orient(ax, ay, bx, by, cx, cy);
+  const o2 = orient(ax, ay, bx, by, dx, dy);
+  const o3 = orient(cx, cy, dx, dy, ax, ay);
+  const o4 = orient(cx, cy, dx, dy, bx, by);
+  return o1 * o2 < 0 && o3 * o4 < 0;
 }
 
 export function fmtBearing(deg: number): string {
@@ -483,6 +534,8 @@ export class Sim {
   private commsSpikes: { x: number; y: number; from: ShipId; callsign: string; expiresAtTick: number }[] = [];
   terrain: Terrain;
   tickCount = 0;
+  // Campaign (Deep Black): null on every multiplayer sim.
+  mission: Mission | null = null;
   // Ship id in FFA, team name in Teams mode; set when hostilities end.
   winner: string | null = null;
   // Death order (first element died first). Ghost scuttles count as deaths.
@@ -600,6 +653,10 @@ export class Sim {
       droneWaypoint: 0,
       droneDodge: 0,
       isDrone,
+      sensorMult: 1,
+      sigMult: 1,
+      hunterAI: false,
+      hunterMem: initialHunterMem(),
       standingOrders: [],
       orderCounter: 0,
       wasInsideZone: true, // spawn is well inside the zone
@@ -639,7 +696,11 @@ export class Sim {
     if (obj.sigSpikeLaunch > 0) sig += C.SIG_SPIKE_LAUNCH;
     if (obj.sigSpikePdc > 0) sig += C.SIG_SPIKE_PDC;
     if (obj.sigSpikeRail > 0) sig += C.RAIL_SIG_SPIKE;
-    return sig;
+    // campaign sigMult scales the TOTAL (base + thrust + spikes) — "engine
+    // baffling". 1 for every multiplayer hull. Every detection consumer
+    // (tiers, hearing, seekers, PDC slaving) flows through here, which is
+    // the point — see HUNTER_SIG_MULT in constants.ts.
+    return sig * obj.sigMult;
   }
 
   // Signature follows the engine: a coasting torpedo nearly vanishes.
@@ -652,7 +713,8 @@ export class Sim {
   // whenever there is one (the bare form keeps the frigate baseline for
   // formula notes).
   detectionRange(signature: number, viewer?: Ship): number {
-    return (viewer ? statsOf(viewer).sensorBase : C.SENSOR_BASE_M) * (signature / 100);
+    // campaign sensorMult: the viewer's suite quality (1 in multiplayer)
+    return (viewer ? statsOf(viewer).sensorBase * viewer.sensorMult : C.SENSOR_BASE_M) * (signature / 100);
   }
 
   // Contact tier this viewer earns on the enemy ship right now. Every
@@ -1863,6 +1925,34 @@ export class Sim {
   // ship alive in FFA, last team with a ship alive in Teams — one rule.
   private checkVictory(events: SimEvent[]): void {
     if (this.winner) return;
+    // Campaign (Stage 0): the GATE is the only victory. Killing the Hunter
+    // buys the system, not the match (spec §2.3) — the quiet line is the
+    // reward, and the player still has to fly out. Player death loses.
+    if (this.mission) {
+      const player = this.ships.get(this.mission.playerId);
+      if (player) {
+        if (this.mission.hunterSpawned && this.hostilesOf(player).length === 0) {
+          events.push({
+            kind: "notice",
+            ship: player.id,
+            text: "It's gone quiet, Captain. The system is ours.",
+          });
+        }
+        return;
+      }
+      // the player is dead: the system wins
+      const hunter = this.mission.hunterId ? this.ships.get(this.mission.hunterId) : undefined;
+      this.winner = hunter?.id ?? "nobody";
+      const placements = [...(hunter ? [hunter.id] : []), ...[...this.placements].reverse()];
+      events.push({
+        kind: "gameover",
+        winner: this.winner,
+        winnerName: hunter?.callsign ?? "the deep black",
+        placements,
+        placementNames: placements.map((id) => this.callsigns.get(id) ?? id),
+      });
+      return;
+    }
     const alive = [...this.ships.values()];
     if (alive.some((s) => this.hostilesOf(s).length > 0)) return;
     const first = alive[0];
@@ -2312,6 +2402,12 @@ export class Sim {
     if (this.phase === 0) {
       this.tickCount++;
 
+      // campaign: the clock is a budget — at zero, the Hunter enters the
+      // system (spec §1: phase 1 races, phase 2 hides; everything inverts)
+      if (this.mission && !this.mission.hunterSpawned && this.tickCount >= this.mission.hunterSpawnS) {
+        this.spawnHunter(events);
+      }
+
       // 1. drone behavior (fires on last tick's lock state), then standing
       // orders against each player's sensor picture. Ghost ships (v5 §2:
       // disconnected captains) have their standing orders SUSPENDED and
@@ -2323,6 +2419,7 @@ export class Sim {
           continue;
         }
         this.droneAct(ship, events, tickDt);
+        this.hunterAct(ship, events);
         this.evaluateStandingOrders(ship, events, tickDt);
       }
 
@@ -2347,12 +2444,21 @@ export class Sim {
       for (const ship of this.ships.values()) {
         this.refreshTrackGoals(ship, events);
       }
+
+      // campaign: gate-solution XO lines (edge-triggered, rate-limited)
+      if (this.mission) this.updateGateXO(events);
     }
 
     // 4. step physics (also: propellant, tube reloads, flash countdown)
     for (const ship of this.ships.values()) {
+      const preX = ship.x;
+      const preY = ship.y;
       this.stepShip(ship, events, dt);
       this.applyBounds(ship, events, dt);
+      // campaign gate: swept aperture crossing every substep (invariant 6)
+      if (this.mission && ship.id === this.mission.playerId) {
+        this.checkGateCrossing(ship, preX, preY, events);
+      }
     }
     for (const m of this.missiles) {
       this.stepMissile(m, dt);
@@ -3701,6 +3807,181 @@ export class Sim {
     return dist(ship.x, ship.y, 0, 0) <= C.REGION_RADIUS_M;
   }
 
+  // ---------- campaign "Deep Black" (Stage 0) ----------
+
+  // The aperture: the rim tangent segment through the gate center
+  // (perpendicular to the outward radial).
+  apertureSegment(): [number, number, number, number] {
+    const g = this.mission!.gate;
+    const gl = Math.max(1, Math.hypot(g.x, g.y));
+    const tx = -g.y / gl; // tangent = outward radial rotated 90°
+    const ty = g.x / gl;
+    const h = g.apertureW / 2;
+    return [g.x - tx * h, g.y - ty * h, g.x + tx * h, g.y + ty * h];
+  }
+
+  // Hunter spawn (clock at zero). Placement law: OUT OF THE PLAYER'S
+  // DETECTION RANGE IS A HARD FLOOR, away-from-the-gate is a soft
+  // preference — the first the player knows is the clock, the second a
+  // rumble they worked for. Never a contact pop-in. A gate-camping player
+  // therefore gets the Hunter behind them: a chase, which is correct.
+  private spawnHunter(events: SimEvent[]): void {
+    const m = this.mission!;
+    m.hunterSpawned = true;
+    const player = this.ships.get(m.playerId);
+    if (!player) return; // nobody left to hunt
+    const stats = C.ARCHETYPES[m.hunter.archetype];
+    const hunterSig = (stats.sigBase + C.HUNTER_HUNT_THROTTLE) * m.hunter.sigMult;
+    const floor = this.detectionRange(hunterSig, player) * C.HUNTER_SPAWN_DETECT_MARGIN;
+    const ring = C.REGION_RADIUS_M * C.HUNTER_SPAWN_RADIUS_FRAC;
+    let pos: { x: number; y: number } | null = null;
+    let bestGateDist = -Infinity;
+    let fallback = { x: 0, y: ring };
+    let fallbackDist = -Infinity;
+    for (let i = 0; i < 72; i++) {
+      const [dx, dy] = headingVec(i * 5);
+      const x = dx * ring;
+      const y = dy * ring;
+      const dPlayer = dist(x, y, player.x, player.y);
+      if (dPlayer > fallbackDist) {
+        fallbackDist = dPlayer;
+        fallback = { x, y };
+      }
+      if (dPlayer < floor) continue; // the hard floor
+      const dGate = dist(x, y, m.gate.x, m.gate.y);
+      if (dGate > bestGateDist) {
+        bestGateDist = dGate;
+        pos = { x, y };
+      }
+    }
+    // filter empty (player detection covers the whole ring): best effort is
+    // maximum distance — never a crash, never a silent lap-spawn
+    const at = pos ?? fallback;
+    const hunter = this.addShip(
+      "H",
+      at.x,
+      at.y,
+      bearingTo(at.x, at.y, 0, 0),
+      false, // real physics, real fuel — NOT the drone path
+      null,
+      "Hunter",
+      m.hunter.archetype
+    );
+    hunter.sensorMult = m.hunter.sensorMult;
+    hunter.sigMult = m.hunter.sigMult;
+    hunter.hunterAI = true;
+    m.hunterId = hunter.id;
+    // the notice carries NO bearing (spec §7.1: the spawn conveys none) —
+    // the hearing channel does its own honest work from here
+    events.push({
+      kind: "notice",
+      ship: m.playerId,
+      text: "Clock's run out, Captain — a drive just lit off in-system.",
+      alert: true,
+    });
+  }
+
+  // The Hunter's tick: its ONLY input is its own wire snapshot (+ public
+  // terrain). The cast is the type seam, not a fog seam — snapshotFor is
+  // the same fog-scoped object a human client receives.
+  private hunterAct(ship: Ship, events: SimEvent[]): void {
+    if (!ship.hunterAI || this.winner) return;
+    const snap = this.snapshotFor(ship.id) as unknown as HunterSnap;
+    const result = hunterDecide(snap, ship.hunterMem, this.terrain);
+    ship.hunterMem = result.mem;
+    for (const cmd of result.commands) {
+      this.applyCommand(ship, cmd, events);
+    }
+  }
+
+  // §5.4 approach solution, computed from the viewer's OWN true state and
+  // a fixed public landmark — zero fog surface. Returns null when there is
+  // no solution to speak of (not closing, past the plane, out of range).
+  gateSolution(ship: Ship): { ttg: number; missM: number; side: "left" | "right"; good: boolean } | null {
+    const m = this.mission;
+    if (!m) return null;
+    const g = m.gate;
+    if (dist(ship.x, ship.y, g.x, g.y) > C.GATE_SOLUTION_RANGE_M) return null;
+    const gl = Math.max(1, Math.hypot(g.x, g.y));
+    const nx = g.x / gl; // outward normal of the gate plane
+    const ny = g.y / gl;
+    const vn = ship.vx * nx + ship.vy * ny; // outward closing rate on the plane
+    if (vn <= 1) return null; // not closing: ttg is Infinity (spec §5.4)
+    const t = ((g.x - ship.x) * nx + (g.y - ship.y) * ny) / vn;
+    if (t < 0) return null; // already past the plane
+    // ballistic crossing point, measured from aperture center — the same
+    // projection family as the v4.7 drift marker
+    const cx = ship.x + ship.vx * t - g.x;
+    const cy = ship.y + ship.vy * t - g.y;
+    const missM = Math.hypot(cx, cy);
+    // side in the pilot's frame: left = 90° CCW of the travel direction
+    const travel = Math.atan2(ship.vx, ship.vy);
+    const lx = Math.sin(travel - Math.PI / 2);
+    const ly = Math.cos(travel - Math.PI / 2);
+    const side = cx * lx + cy * ly > 0 ? "left" : "right";
+    return { ttg: t, missM, side, good: missM < g.apertureW / 2 };
+  }
+
+  // XO solution calls: NEWS tier, edge-triggered on good/wide transitions,
+  // rate-limited hard (spec §5.4: not a place to be chatty). Numbers stay
+  // in the transcript; the voice gets fixed strings (v4.7.1 TTS doctrine).
+  private updateGateXO(events: SimEvent[]): void {
+    const m = this.mission!;
+    m.solCooldownS = Math.max(0, m.solCooldownS - 1);
+    const player = this.ships.get(m.playerId);
+    if (!player) return;
+    const sol = this.gateSolution(player);
+    if (sol === null) {
+      m.solGood = false; // reset silently — turning away is not news
+      return;
+    }
+    if (sol.good !== m.solGood && m.solCooldownS <= 0) {
+      if (sol.good) {
+        events.push({
+          kind: "notice",
+          ship: player.id,
+          text: `Solution good, Captain. ${Math.max(1, Math.round(sol.ttg))} seconds.`,
+          speak: "Solution good, Captain.",
+        });
+      } else {
+        const km = (sol.missM / 1000).toFixed(1);
+        events.push({
+          kind: "notice",
+          ship: player.id,
+          text: `We're wide — ${km} km ${sol.side}.`,
+          speak: `We're wide ${sol.side}, Captain.`,
+        });
+      }
+      m.solGood = sol.good;
+      m.solCooldownS = C.GATE_XO_COOLDOWN_S;
+    }
+  }
+
+  // STAGE-0-ONLY COUPLING: crossing the aperture ends the match (one
+  // system, one outcome). Stage 1 makes the gate a TRANSITION into the
+  // next system — decouple gate-clear from the win path there; do NOT
+  // build the run map on top of gameover.
+  private checkGateCrossing(ship: Ship, preX: number, preY: number, events: SimEvent[]): void {
+    if (this.winner) return;
+    const m = this.mission!;
+    // outward-moving only: you fly OUT through the gate, not back in
+    if (ship.vx * m.gate.x + ship.vy * m.gate.y <= 0) return;
+    const [x1, y1, x2, y2] = this.apertureSegment();
+    if (!segsIntersect(preX, preY, ship.x, ship.y, x1, y1, x2, y2)) return;
+    this.winner = ship.id;
+    events.push({ kind: "notice", ship: ship.id, text: "We're through, Captain." });
+    const others = [...this.ships.keys()].filter((id) => id !== ship.id);
+    const placements = [ship.id, ...others, ...[...this.placements].reverse()];
+    events.push({
+      kind: "gameover",
+      winner: ship.id,
+      winnerName: ship.callsign,
+      placements,
+      placementNames: placements.map((id) => this.callsigns.get(id) ?? id),
+      gateCleared: true,
+    });
+  }
+
   // Fog-scoped intel on ONE hostile as this ship's sensors know it (for
   // prompts, queries, and standing-order metrics — never from ground
   // truth). Data texture follows the contact tier: faint = approximate
@@ -4287,6 +4568,33 @@ export class Sim {
           repeat: o.repeat,
           armed: o.cooldown <= 0,
         })),
+        // campaign (Stage 0): the clock and the approach solution — both
+        // derived from the player's own state + fixed public geometry.
+        // hunterActive is deliberately honest about the Hunter's death
+        // even if unobserved: the XO's quiet line already told them
+        // (spec §2.3 — the relief IS the reward).
+        ...(this.mission && id === this.mission.playerId
+          ? {
+              mission: {
+                spawnInS: this.mission.hunterSpawned
+                  ? 0
+                  : Math.max(0, this.mission.hunterSpawnS - this.tickCount),
+                hunterActive:
+                  this.mission.hunterId !== null && this.ships.has(this.mission.hunterId),
+              },
+              gate: (() => {
+                const sol = this.gateSolution(ship);
+                return sol
+                  ? {
+                      ttg: Math.round(sol.ttg),
+                      missM: Math.round(sol.missM),
+                      side: sol.side,
+                      good: sol.good,
+                    }
+                  : null;
+              })(),
+            }
+          : {}),
       },
       contacts,
       // v5 §8 transponders: full state, always (own equipment class)

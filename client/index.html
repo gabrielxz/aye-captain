@@ -83,6 +83,7 @@
     /* v5 room lobby */
     #room-panel { display: flex; flex-direction: column; align-items: center; gap: 10px; }
     #practice-panel { flex-direction: column; align-items: center; gap: 6px; }
+    #campaign-panel { flex-direction: column; align-items: center; gap: 6px; max-width: 560px; }
     #room-panel .room-code { font-size: 22px; letter-spacing: 6px; color: var(--accent); }
     #room-roster { display: flex; flex-direction: column; gap: 3px; min-width: 240px; }
     #room-roster .seat { display: flex; justify-content: space-between; gap: 16px; padding: 3px 8px; border: 1px solid #223; }
@@ -265,6 +266,7 @@
       <button id="btn-watch">WATCH</button>
     </div>
     <button id="btn-practice">PRACTICE</button>
+    <button id="btn-campaign">CAMPAIGN — DEEP BLACK</button>
     <button id="btn-howto">HOW TO PLAY</button>
     <div id="lobby-status"></div>
 
@@ -297,6 +299,21 @@
       <div class="join-row" style="margin-top:14px; justify-content:center">
         <button id="btn-practice-start">START PRACTICE</button>
         <button id="btn-practice-back">BACK</button>
+      </div>
+    </div>
+
+    <!-- campaign "Deep Black" (Stage 0): one system — race the clock,
+         evade the Hunter, fly out through the gate -->
+    <div id="campaign-panel" style="display:none">
+      <div class="sub">YOUR SHIP</div>
+      <div id="campaign-arch-row"></div>
+      <div class="sub" style="margin-top:12px">
+        Get out through the gate. The clock is a budget — when it runs out,
+        something with better ears than yours wakes up.
+      </div>
+      <div class="join-row" style="margin-top:14px; justify-content:center">
+        <button id="btn-campaign-start">START RUN</button>
+        <button id="btn-campaign-back">BACK</button>
       </div>
     </div>
   </div>

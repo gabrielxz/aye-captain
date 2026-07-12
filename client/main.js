@@ -10,6 +10,8 @@ export const state = {
   team: null, // "red" | "blue" | null (v5 teams mode)
   callsign: null, // spectator callsign (cosmetic, server-assigned)
   practice: false,
+  campaign: false, // Deep Black solo mission (Stage 0)
+  gate: null, // campaign gate geometry {x, y, apertureW} — fixed public landmark
   prevSnap: null, // previous snapshot (for interpolation)
   lastSnap: null, // latest snapshot
   lastSnapAt: 0, // performance.now() when lastSnap arrived
@@ -51,19 +53,26 @@ function handleMessage(msg) {
       state.callsign = msg.callsign ?? null;
       hideRoomLobby();
       state.practice = !!msg.practice;
+      state.campaign = !!msg.campaign;
+      state.gate = msg.gate ?? null; // campaign: fixed public landmark
+      document.body.classList.toggle("campaign", state.campaign);
       state.terrain = msg.terrain ?? null;
       state.prevSnap = null;
       state.lastSnap = null;
       state.fxBuffer = [];
       state.gameOver = false;
       resetOverlays();
+      // campaign: the drift marker defaults ON — the gate is the climax
+      // and this is the instrument for flying it ("set_overlay off" still
+      // works; a Stage 0 playtester may never discover the phrase)
+      if (state.campaign) setOverlay("drift", true);
       prevTiers = null;
       pingListen = null;
       updateWatching([]); // fresh roster arrives right behind the start
       setSpectator(msg.role === "spectator" ? msg.callsign : null);
       showRematchTally(0, 0); // a fresh start clears any ready-up tally
-      // §7.2: practice and spectating get a live MENU control
-      setMenuVisible(!!msg.practice || msg.role === "spectator");
+      // §7.2: practice, campaign, and spectating get a live MENU control
+      setMenuVisible(!!msg.practice || state.campaign || msg.role === "spectator");
       if (msg.role === "spectator") {
         // death→spectator arrives as a fresh start: kill the RWR pulse,
         // klaxon, thrust hum — a ghost has no alarms (playtest 2026-07-12:
@@ -81,9 +90,11 @@ function handleMessage(msg) {
         "sys",
         msg.role === "spectator"
           ? `spectating as ${msg.callsign} — the room sees your callsign`
-          : msg.practice
-            ? "practice mode — drone contact inbound"
-            : `you are ship ${msg.role}`
+          : msg.campaign
+            ? "deep black — reach the gate; the clock is a budget"
+            : msg.practice
+              ? "practice mode — drone contact inbound"
+              : `you are ship ${msg.role}`
       );
       break;
     case "spectators":
@@ -136,20 +147,32 @@ function handleMessage(msg) {
         addTranscript("sys", `${isTeamWin ? `team ${winnerName}` : winnerName} wins — match over`);
         break;
       }
-      audio.sfxBoom(true, !msg.youWin);
-      if (!msg.youWin) kickShake(true);
-      // terminal explosion on the losing ship
-      if (snap) {
-        const contact = (snap.contacts ?? [])[0];
-        if (!msg.youWin && snap.you) bigBoomAt(snap.you.x, snap.you.y);
-        else if (msg.youWin && contact) bigBoomAt(contact.x, contact.y);
+      // campaign gate-clear: no terminal explosion, no boom — you left
+      // (the exit spectacle is Stage 4; the XO's "We're through" carries it)
+      if (!msg.gateCleared) {
+        audio.sfxBoom(true, !msg.youWin);
+        if (!msg.youWin) kickShake(true);
+        // terminal explosion on the losing ship
+        if (snap) {
+          const contact = (snap.contacts ?? [])[0];
+          if (!msg.youWin && snap.you) bigBoomAt(snap.you.x, snap.you.y);
+          else if (msg.youWin && contact) bigBoomAt(contact.x, contact.y);
+        }
       }
       showBanner(
-        msg.youWin ? "VICTORY" : "SHIP LOST",
+        msg.gateCleared ? "SYSTEM CLEARED" : msg.youWin ? "VICTORY" : "SHIP LOST",
         (msg.forfeit ? "win by forfeit — " : "") + timeLine + standings
       );
       showReveal(msg.reveal); // §5.4: who everyone actually was
-      addTranscript("sys", msg.youWin ? "Enemy ship destroyed. Well fought, Captain." : "Hull breach — we're done. Abandon ship.", !msg.youWin);
+      addTranscript(
+        "sys",
+        msg.gateCleared
+          ? "Through the gate. System clear."
+          : msg.youWin
+            ? "Enemy ship destroyed. Well fought, Captain."
+            : "Hull breach — we're done. Abandon ship.",
+        !msg.youWin
+      );
       break;
     }
     case "created":
@@ -346,6 +369,31 @@ function updateHUDFromSnapshot(snap) {
     { label: "HULL", value: `${you.hull}`, cls: you.hull <= 35 ? "alert" : you.hull <= 65 ? "warn" : "" },
     { label: "EN HULL", value: enemyHull, cls: idContact && idContact.hull <= (idContact.hullMax ?? 100) / 2 ? "good" : "" },
     { label: "CONTACTS", value: contactsLine, cls: contacts.some((c) => c.tier >= 2) ? "good" : contacts.length ? "warn" : "", full: true },
+    // campaign (Stage 0): the mission clock + the gate approach solution.
+    // Server-owned numbers, PING-LIT-style rendering — no client timers.
+    ...(you.mission
+      ? [
+          {
+            label: "HUNTER",
+            value: you.mission.hunterActive
+              ? "◤ IN SYSTEM ◥"
+              : you.mission.spawnInS > 0
+                ? `${Math.floor(you.mission.spawnInS / 60)}:${String(you.mission.spawnInS % 60).padStart(2, "0")}`
+                : "gone quiet",
+            cls: you.mission.hunterActive ? "alert" : you.mission.spawnInS > 0 ? "warn" : "good",
+          },
+          {
+            label: "GATE",
+            value: you.gate
+              ? you.gate.good
+                ? `SOLUTION GOOD · ${Math.floor(you.gate.ttg / 60)}:${String(you.gate.ttg % 60).padStart(2, "0")}`
+                : `ttg ${Math.floor(you.gate.ttg / 60)}:${String(you.gate.ttg % 60).padStart(2, "0")} · miss ${(you.gate.missM / 1000).toFixed(1)} km ${you.gate.side.toUpperCase()}`
+              : "no solution",
+            cls: you.gate ? (you.gate.good ? "good" : "alert") : "",
+            full: true,
+          },
+        ]
+      : []),
     { label: "SIG", value: `${Math.round(you.signature ?? 0)}`, cls: (you.signature ?? 0) > 100 ? "alert" : (you.signature ?? 0) > 50 ? "warn" : "good" },
     { label: "THRUST", value: `${Math.round(you.thrust)}%${tanksDry && you.thrust > 0 ? " (DRY)" : ""}`, cls: tanksDry && you.thrust > 0 ? "alert" : "" },
     { label: "SPD", value: `${you.speed} m/s` },

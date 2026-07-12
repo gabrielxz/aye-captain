@@ -12,6 +12,7 @@ import {
 import { llmAvailable, translateUtterance, phraseQueryAnswer } from "./translator.js";
 import { logUtterance } from "./datalog.js";
 import { ensureSpeech } from "./tts.js";
+import { hashSeed, mulberry32 } from "./terrain.js";
 
 export type RoomMode = "ffa" | "teams";
 export type Team = "red" | "blue";
@@ -63,6 +64,9 @@ export class Match {
   sim: Sim;
   readonly code: string | null;
   readonly practice: boolean;
+  // Campaign "Deep Black" (Stage 0): a solo mission sim — practice-shaped
+  // lifecycle (one seat, no code, rematch = retry), mission rules in the Sim.
+  readonly campaign: boolean;
   private seats: Seat[] = [];
   private mode: RoomMode = "ffa";
   private launched = false;
@@ -104,16 +108,22 @@ export class Match {
     code: string | null = null,
     seed: string = Match.randomSeed(),
     practiceArch: C.ArchetypeName = "frigate",
-    practiceDroneArch: C.ArchetypeName = "frigate"
+    practiceDroneArch: C.ArchetypeName = "frigate",
+    campaign = false
   ) {
     this.practice = practice;
+    this.campaign = campaign;
     this.code = code;
     this.practiceArch = practiceArch;
     this.practiceDroneArch = practiceDroneArch;
     // pre-launch rooms hold an empty sim on the room's terrain seed; launch
     // replaces it with the spawned field (rematch keeps the seed unless
     // newField)
-    this.sim = practice ? Match.buildPracticeSim(seed, practiceArch, practiceDroneArch) : new Sim(seed);
+    this.sim = campaign
+      ? Match.buildCampaignSim(seed, practiceArch)
+      : practice
+        ? Match.buildPracticeSim(seed, practiceArch, practiceDroneArch)
+        : new Sim(seed);
   }
 
   static randomSeed(): string {
@@ -133,6 +143,73 @@ export class Match {
     sim.addShip("A", 0, -C.SPAWN_RING_RADIUS_M, 0, false, null, C.CALLSIGN_POOL[0], archetype);
     sim.addShip("B", 0, C.SPAWN_RING_RADIUS_M, 180, true, null, "Drone", droneArchetype);
     return sim;
+  }
+
+  // Campaign system (Stage 0: one, hard-coded): the captain alone on the
+  // classic spawn, the gate on the rim, the mission clock armed. Single-
+  // player deliberately runs on the same authoritative server sim — there
+  // is nobody to cheat against but yourself, and the fog/AI machinery is
+  // the whole point.
+  private static buildCampaignSim(seed: string, archetype: C.ArchetypeName): Sim {
+    const sim = new Sim(seed);
+    sim.addShip("A", 0, -C.SPAWN_RING_RADIUS_M, 0, false, null, C.CALLSIGN_POOL[0], archetype);
+    // gate on the rim, seeded within ±GATE_BEARING_SPREAD_DEG of north —
+    // the player spawns south, so the run is always a real crossing
+    const rand = mulberry32(hashSeed(`${seed}:gate`));
+    const bearing = norm360((rand() * 2 - 1) * C.GATE_BEARING_SPREAD_DEG);
+    const [dx, dy] = headingVec(bearing);
+    const gx = dx * C.REGION_RADIUS_M;
+    const gy = dy * C.REGION_RADIUS_M;
+    // pylons are ordinary rocks: they collide, block LOS, and render on
+    // every client for free. Appended BEFORE any sendStart — terrain
+    // travels with the start message.
+    const gl = Math.hypot(gx, gy);
+    const tx = -gy / gl; // rim tangent
+    const ty = gx / gl;
+    const off = C.APERTURE_W_M / 2 + C.GATE_PYLON_RADIUS_M;
+    sim.terrain.rocks.push(
+      { x: gx - tx * off, y: gy - ty * off, r: C.GATE_PYLON_RADIUS_M },
+      { x: gx + tx * off, y: gy + ty * off, r: C.GATE_PYLON_RADIUS_M }
+    );
+    sim.mission = {
+      playerId: "A",
+      gate: { x: gx, y: gy, apertureW: C.APERTURE_W_M },
+      hunterSpawnS: C.CAMPAIGN_HUNTER_SPAWN_S,
+      hunterSpawned: false,
+      hunterId: null,
+      hunter: {
+        archetype: "corvette",
+        sensorMult: C.HUNTER_SENSOR_MULT,
+        sigMult: C.HUNTER_SIG_MULT,
+      },
+      solGood: false,
+      solCooldownS: 0,
+    };
+    return sim;
+  }
+
+  static createCampaign(ws: WebSocket, archetype = "frigate"): Match {
+    const arch = (archetype in C.ARCHETYPES ? archetype : "frigate") as C.ArchetypeName;
+    const match = new Match(false, null, Match.randomSeed(), arch, "frigate", true);
+    match.seats.push({ id: "A", ws, team: null, archetype: arch, dead: false, name: null });
+    match.launched = true;
+    match.sendStart(match.seats[0]);
+    match.start();
+    match.sendTranscript(
+      "A",
+      "xo",
+      "Deep black, Captain. The gate's on the board and the clock is running.",
+      { priority: "chatter" }
+    );
+    if (!llmAvailable()) {
+      match.sendTranscript(
+        "A",
+        "sys",
+        "translator offline: ANTHROPIC_API_KEY not set — only raw JSON commands will work",
+        { priority: "critical" }
+      );
+    }
+    return match;
   }
 
   static createPractice(ws: WebSocket, archetype = "frigate", droneArchetype = "frigate"): Match {
@@ -260,7 +337,11 @@ export class Match {
   // rematch.
   private beginMatch(seed: string): void {
     this.stop();
-    if (this.practice) {
+    if (this.campaign) {
+      // campaign retry: same rule as practice — rebuild the mission sim
+      // (same seed = same field + same gate; newField rerolls both)
+      this.sim = Match.buildCampaignSim(seed, this.practiceArch);
+    } else if (this.practice) {
       // v5 bug (found in v5.1 §7.3): practice rematch used spawnShips(),
       // which spawns SEATS — captain alone, no drone, an empty range
       this.sim = Match.buildPracticeSim(seed, this.practiceArch, this.practiceDroneArch);
@@ -298,8 +379,9 @@ export class Match {
     }
     if (this.spectators.size > 0) this.broadcastSpectators();
     this.start();
-    const welcome =
-      this.seats.length > 2
+    const welcome = this.campaign
+      ? "Deep black, Captain. The gate's on the board and the clock is running."
+      : this.seats.length > 2
         ? "Enemy ships are out there somewhere. Good hunting, Captain."
         : "Enemy ship is out there somewhere. Good hunting, Captain.";
     for (const seat of this.seats) {
@@ -431,13 +513,16 @@ export class Match {
 
   private sendStart(seat: Seat): void {
     if (seat.ws && seat.ws.readyState === seat.ws.OPEN) {
-      // terrain travels with start (per-match, static, known to all)
+      // terrain travels with start (per-match, static, known to all);
+      // campaign adds the gate geometry — a fixed public landmark
       seat.ws.send(
         JSON.stringify({
           type: "start",
           role: seat.id,
           team: seat.team,
           practice: this.practice,
+          campaign: this.campaign,
+          ...(this.campaign && this.sim.mission ? { gate: this.sim.mission.gate } : {}),
           terrain: this.sim.terrain,
         })
       );
@@ -464,10 +549,10 @@ export class Match {
       this.broadcastLobby();
       return;
     }
-    if (this.practice || this.sim.winner) {
+    if (this.practice || this.campaign || this.sim.winner) {
       if (this.isEmpty()) this.stop();
       // §7.3: a departure can complete the ready-up (everyone left is ready)
-      else if (this.sim.winner && !this.practice) this.evaluateRematch();
+      else if (this.sim.winner && !this.practice && !this.campaign) this.evaluateRematch();
       return;
     }
 
@@ -563,7 +648,7 @@ export class Match {
 
   canRematch(): boolean {
     if (!this.sim.winner) return false;
-    if (this.practice) return true;
+    if (this.practice || this.campaign) return true;
     // v5.1 §7.3: leavers no longer block — two connected captains can
     // always rerun it (absent seats come back as ghosts)
     return this.seats.filter((s) => s.ws !== null).length >= 2;
@@ -592,7 +677,7 @@ export class Match {
     }
     const ready = this.rematchVotes.size;
     const total = connected.length;
-    if (ready >= total && (this.practice ? ready >= 1 : total >= 2)) {
+    if (ready >= total && (this.practice || this.campaign ? ready >= 1 : total >= 2)) {
       const wantNew = [...this.rematchVotes.values()].filter(Boolean).length;
       this.reset(wantNew > ready / 2);
       return;
@@ -683,6 +768,7 @@ export class Match {
               placements: ev.placementNames,
               durationS,
               reveal,
+              ...(ev.gateCleared ? { gateCleared: true } : {}),
             })
           );
         }
@@ -767,6 +853,19 @@ export class Match {
     if (text.startsWith("{") || text.startsWith("[")) {
       try {
         const parsed = JSON.parse(text);
+        // campaign runtime knobs: {"mission":{"sigMult":0.7,"sensorMult":1.5}}
+        // — Stage 0's playtest deliverable is WHICH asymmetry pair is the
+        // game; sweeping it must not need a rebuild per value
+        if (
+          this.campaign &&
+          parsed &&
+          typeof parsed === "object" &&
+          !Array.isArray(parsed) &&
+          "mission" in parsed
+        ) {
+          this.tuneMission(seat.id, (parsed as { mission: unknown }).mission);
+          return;
+        }
         const commands: Command[] = Array.isArray(parsed) ? parsed : [parsed];
         this.sim.enqueue(seat.id, commands);
         this.sendTranscript(seat.id, "sys", `direct: ${commands.map((c) => c.verb).join(", ")}`, {
@@ -779,6 +878,37 @@ export class Match {
     }
 
     void this.translate(seat.id, text);
+  }
+
+  // Apply dev-harness mission multipliers to the spec AND the live Hunter
+  // (if it has already spawned). Echoes the active pair as an XO note —
+  // silent (unbounded numeric content is a TTS quota hazard, v4.6 lesson).
+  private tuneMission(id: ShipId, raw: unknown): void {
+    const m = this.sim.mission;
+    if (!m || typeof raw !== "object" || raw === null) return;
+    const r = raw as Record<string, unknown>;
+    if (typeof r.sigMult === "number" && Number.isFinite(r.sigMult) && r.sigMult > 0) {
+      m.hunter.sigMult = r.sigMult;
+    }
+    if (typeof r.sensorMult === "number" && Number.isFinite(r.sensorMult) && r.sensorMult > 0) {
+      m.hunter.sensorMult = r.sensorMult;
+    }
+    // the clock too: "spawn it in 30" beats waiting out 240 s per sweep
+    // (dev harness only — the shipped clock stays CAMPAIGN_HUNTER_SPAWN_S)
+    if (typeof r.hunterSpawnS === "number" && Number.isFinite(r.hunterSpawnS) && r.hunterSpawnS >= 1) {
+      m.hunterSpawnS = Math.round(r.hunterSpawnS);
+    }
+    const hunter = m.hunterId ? this.sim.ships.get(m.hunterId) : undefined;
+    if (hunter) {
+      hunter.sigMult = m.hunter.sigMult;
+      hunter.sensorMult = m.hunter.sensorMult;
+    }
+    this.sendTranscript(
+      id,
+      "xo-note",
+      `mission tune: sensorMult ${m.hunter.sensorMult}, sigMult ${m.hunter.sigMult}${hunter ? " (live)" : ""}`,
+      { priority: "chatter", noSpeech: true }
+    );
   }
 
   private async translate(id: ShipId, text: string): Promise<void> {

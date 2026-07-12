@@ -1,5 +1,35 @@
 # TODO — next steps
 
+## Campaign "Deep Black" STAGE 0 (HANDOFF-CAMPAIGN-v1.md) — BUILT 2026-07-12, NOT DEPLOYED
+
+One system, the clock, one "Sharp Ears" corvette Hunter (fog-based AI —
+`hunterDecide` in server/hunter.ts reads ONLY its own `snapshotFor`
+snapshot), gate on the rim (pylons are rocks, swept aperture crossing,
+§5.4 approach-solution HUD row + XO calls), honest fuel, retry via the
+rematch buttons. 843 assertions (77 new in hunter/campaign.test.ts).
+Runtime-verified in Chrome end to end: clock → spawn (no pop-in; first
+sign was a drifting rumble) → Hunter chased a full-burn player across
+the map → loss path (dry tanks + rock = HUNTER WINS, death→spectator) →
+retry → coast-and-regen approach → SOLUTION GOOD → SYSTEM CLEARED.
+
+- [ ] **Gabriel plays Stage 0 — THE gate for everything below** (spec §0:
+  "if Stage 0 isn't tense, stop"). The deliverable is not "was it fun"
+  but **which asymmetry pair (sensorMult, sigMult) is the game** — sweep
+  live from the dev harness: `{"mission":{"sigMult":0.7,"sensorMult":1.5}}`
+  (also `"hunterSpawnS":40` to compress the clock). Starting pair
+  1.4 / 0.75; the tuned pair drops into the Stage 2 ladder table as row 2.
+- [ ] **Dry-Hunter watch item**: bait its 4 birds with decoys, then see if
+  a missile-less Hunter still scares (it keeps closing, PDCs only — by
+  design; if it reads as harmless, that's a finding, not a bug).
+- [ ] Minor observed: crossing the gate also fires "We've left the shroud"
+  (the gate sits ON the rim, so the zone-exit edge triggers alongside
+  "We're through"). Harmless but doubles the exit lines — candidate
+  one-line suppression when `gateCleared`.
+- [ ] NOT built (later stages, spec §14): salvage, progression, run map,
+  ladder, score/music, exit spectacle, how-to-play tab. Gate-clear →
+  gameover is STAGE-0-ONLY (comment at the crossing site); Stage 1 must
+  decouple it. No deploy, no docs updates until Stage 4.
+
 ## v5.1 "Discipline" (HANDOFF-v5.1.md) — BUILT 2026-07-12
 
 All build-order steps: §1 speech discipline (3.5 s gap, three tiers,

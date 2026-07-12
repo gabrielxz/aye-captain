@@ -771,6 +771,7 @@ function draw() {
   if (state.config) {
     drawRing(0, 0, state.config.zoneRadius, COLORS.zone, 1.25);
   }
+  drawGate(now); // campaign: the one thing you always know (world-space, always visible)
   drawTerrain();
   if (you) drawRangeRings(you);
 
@@ -799,6 +800,45 @@ function draw() {
   if (shaking) ctx.restore();
   drawCursorReadout(you);
   drawInset(you);
+}
+
+// Campaign gate (Stage 0): the pylons are terrain rocks and render with the
+// field; this draws only the aperture — a dashed line between the pylons
+// with a slow beacon pulse — plus the GATE label. Fixed public geometry
+// from the start message (spec §5.1: always visible, from t=0).
+function drawGate(now) {
+  const g = state.gate;
+  if (!g) return;
+  const gl = Math.max(1, Math.hypot(g.x, g.y));
+  const tx = -g.y / gl; // rim tangent (matches the server's aperture segment)
+  const ty = g.x / gl;
+  const h = g.apertureW / 2;
+  const [ax, ay] = worldToScreen(g.x - tx * h, g.y - ty * h);
+  const [bx, by] = worldToScreen(g.x + tx * h, g.y + ty * h);
+  const pulse = 0.55 + 0.35 * Math.sin(now / 600);
+  ctx.save();
+  ctx.strokeStyle = "#6fd3a8";
+  ctx.globalAlpha = pulse;
+  ctx.setLineDash([6, 5]);
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(ax, ay);
+  ctx.lineTo(bx, by);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  // aperture end ticks (the pylon rocks themselves may be sub-pixel when
+  // zoomed out — the ticks keep the doorway legible at map scale)
+  for (const [px, py] of [[ax, ay], [bx, by]]) {
+    ctx.beginPath();
+    ctx.arc(px, py, 3, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 0.85;
+  ctx.fillStyle = "#6fd3a8";
+  ctx.font = "10px 'Share Tech Mono', monospace";
+  const [gx, gy] = worldToScreen(g.x, g.y);
+  ctx.fillText("GATE", gx + 8, gy - 8);
+  ctx.restore();
 }
 
 // v4.7 §4.3: being inside a dust cloud is a STATE, not a voice line —
@@ -1124,6 +1164,15 @@ function drawInset(you) {
   ctx.globalAlpha = 0.9;
   ctx.stroke();
   ctx.globalAlpha = 1;
+
+  // campaign gate: a rim marker on the overview
+  if (state.gate) {
+    const [gx, gy] = toInset(state.gate.x, state.gate.y);
+    ctx.fillStyle = "#6fd3a8";
+    ctx.beginPath();
+    ctx.arc(gx, gy, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
 
   // terrain: rocks as dots, dust as faint blobs
   if (state.terrain) {

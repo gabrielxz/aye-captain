@@ -365,3 +365,77 @@ export const TTS_MAX_CONCURRENT = 2;
 export const TTS_MODEL = "eleven_flash_v2_5"; // low latency
 export const VOICE_ID = "JBFqnCBsd6RMkjVDRZzb"; // "George" — calm, dry. Browse elevenlabs.io/voice-library and swap.
 export const TTS_TIMEOUT_MS = 10000;
+
+// ---------------------------------------------------------------------------
+// Campaign "Deep Black" — Stage 0 (HANDOFF-CAMPAIGN-v1.md). Single-player.
+// None of these touch multiplayer balance; the mission block on a Sim is the
+// only gate to any of this code running.
+
+// The clock is a BUDGET, not a threat (spec §1). FIXED per system — the
+// difficulty ladder (Stage 2) escalates the Hunter, never the clock.
+export const CAMPAIGN_HUNTER_SPAWN_S = 240;
+
+// Gate aperture — SOLVED from the §5.3 constraint, not guessed. Constraint:
+// committed at 40 km at full speed (3000 m/s), a 3° aim error must be
+// correctable with a lateral burn, a 6° error must not. Frigate baseline:
+// ttg = 40 km / 3000 = 13.3 s; a 90° flip at 20°/s eats 4.5 s; lateral
+// authority in the 8.8 s left = ½·60·8.8² ≈ 2.3 km. 3° = 40 km·tan3° ≈
+// 2.1 km (correctable); 6° ≈ 4.2 km → ≥1.9 km of residual miss. Half-width
+// must sit inside (0, 1.9 km): 1.5 km.
+//
+// THE ARCHETYPE SPREAD AT THIS WIDTH IS INTENTIONAL AND LOAD-BEARING — DO
+// NOT WIDEN TO "BALANCE" IT. At max speed the gate is forgiving in a
+// corvette (~6.2° correctable), exactly-as-specced in a frigate (~3.3°),
+// and unthreadable in a cruiser (~1.4°). The cruiser still makes it — at
+// ~2400 m/s instead of 3000 — so the heavy ship must come in slow, and slow
+// is when the Hunter catches you. The archetype's defining weakness surfaces
+// at the climax of every system with zero special-casing. Pinned per
+// archetype in tests/campaign.test.ts.
+export const APERTURE_W_M = 3000;
+export const GATE_SOLUTION_RANGE_M = 80000; // HUD panel + XO solution lines appear inside this
+// Pylons are rocks (collide, block LOS, render for free). Small ON PURPOSE:
+// the common failure must be the §5.2 shroud overshoot (lit up, current
+// against you, long burn back), not an instant crunch — a near miss clips a
+// pylon, a blown line sails through the gap's shoulder into the dark.
+export const GATE_PYLON_RADIUS_M = 800;
+export const GATE_BEARING_SPREAD_DEG = 80; // gate rim bearing seeded within ±this of north (player spawns south — the run is always real)
+
+// Hunter spawn. INSIDE the region (outside = signature-max = free tier-ID
+// leak, sim invariant), on this fraction of the region radius. Placement
+// law (Stage 0 review): OUT OF THE PLAYER'S DETECTION RANGE IS A HARD
+// FLOOR, away-from-the-gate is a soft preference — the first the player
+// knows is the clock, the second is a rumble they worked for. Never a
+// contact pop-in.
+export const HUNTER_SPAWN_RADIUS_FRAC = 0.85;
+export const HUNTER_SPAWN_DETECT_MARGIN = 1.3; // spawn at ≥ this × the player's live detection range for the Hunter's hunt-throttle signature
+
+// Stage 0 is "Sharp Ears" (ladder row 2), NOT row 1's near-parity Drifter —
+// the experiment is "hunted by something with better ears", and a parity
+// Hunter doesn't test that. Both are mission-spec fields (the Stage 2
+// ladder table drops in without refactor) and BOTH are runtime-sweepable
+// from the dev harness ({"mission":{"sigMult":0.7,"sensorMult":1.5}}) —
+// Stage 0's playtest deliverable is WHICH PAIR IS THE GAME, not "was it
+// fun".
+export const HUNTER_SENSOR_MULT = 1.4;
+// sigMult scales TOTAL emitted signature (sigBase + thrust + spikes), NOT
+// sigBase alone — "engine baffling", numbers-only. A base-only multiplier
+// would save ~8 pts against +55 from hunt throttle, and ladder row 4 "The
+// Quiet One" (whose identity is a floored sigMult) would be a dud.
+// DELIBERATE COUPLING — DO NOT "FIX": because every detection consumer
+// flows through signatureOf(), sigMult also shrinks missile-seeker
+// acquisition (seekers key on signatureOf) and delays lock eligibility
+// (the tier-2 gate). One physical model per invariant 9; still an
+// information advantage, not a hull buff. Ladder note: every sigMult rung
+// is therefore ALSO an anti-lock/anti-seeker rung — double-axis.
+export const HUNTER_SIG_MULT = 0.75;
+
+// Hunter AI (server/hunter.ts — a pure function of snapshotFor(hunter)).
+export const HUNTER_ENGAGE_RANGE_M = 60000; // inside this with a track: lock and shoot
+export const HUNTER_FIRE_COOLDOWN_S = 25; // missile cadence (corvette carries 4 — spent birds stay spent)
+export const HUNTER_PURSUE_THROTTLE = 100;
+export const HUNTER_HUNT_THROTTLE = 55; // regen band cruise; its own rumble discipline is the player's tell
+export const HUNTER_FUEL_FLOOR = 20; // % propellant: below this, coast and regen...
+export const HUNTER_FUEL_RESUME = 50; // ...until back above this (hysteresis)
+export const HUNTER_AVOID_LOOKAHEAD_S = 15; // rock-dodge projection window
+export const HUNTER_PATROL_ARRIVE_M = 15000; // waypoint arrival radius while HUNTing
+export const GATE_XO_COOLDOWN_S = 10; // min gap between gate-solution XO calls (§5.4: rate-limited HARD)

@@ -120,6 +120,12 @@ wss.on("connection", (ws: WebSocket) => {
         );
         break;
       }
+      case "campaign": {
+        // Deep Black (Stage 0): solo mission, practice-shaped lifecycle
+        if (matchByWs.has(ws)) return;
+        matchByWs.set(ws, Match.createCampaign(ws, String(msg.archetype ?? "")));
+        break;
+      }
       case "create": {
         if (matchByWs.has(ws)) return;
         const code = genRoomCode();

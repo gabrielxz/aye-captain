@@ -34,3 +34,5 @@ import "./speech.test.js";
 import "./announce.test.js";
 import "./names.test.js";
 import "./rematch.test.js";
+import "./hunter.test.js";
+import "./campaign.test.js";

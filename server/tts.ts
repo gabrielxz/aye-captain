@@ -109,6 +109,14 @@ export async function getSpeech(id: string): Promise<Buffer | null> {
 // forever. Dynamic lines (bearings, hull numbers, novel acks) synthesize at
 // runtime; the translator keeps them short (<= 12 words).
 const STOCK_LINES = [
+  // campaign "Deep Black" (Stage 0)
+  "Deep black, Captain. The gate's on the board and the clock is running.",
+  "Clock's run out, Captain — a drive just lit off in-system.",
+  "Solution good, Captain.",
+  "We're wide left, Captain.",
+  "We're wide right, Captain.",
+  "It's gone quiet, Captain. The system is ours.",
+  "We're through, Captain.",
   "Aye, Captain.",
   "Say again, Captain?",
   "Acquiring missile lock...",
