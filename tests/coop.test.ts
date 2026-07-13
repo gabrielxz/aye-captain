@@ -491,6 +491,21 @@ const fakeWs = () => {
   assert(!!over && over.winner === "H", "both dead: the system wins the run");
 }
 
+// 16b. The translator's state line carries the TEAMMATE (transponder data
+// + the no-datalink reminder) — the callsign is the noun come_alongside
+// targets. Solo summaries carry no such line.
+{
+  const sim = coopSim([0, 0], [9000, 0]);
+  sim.tick();
+  const summary = sim.stateSummaryFor("A");
+  const mate = sim.ships.get("B")!;
+  assert(new RegExp(`TEAMMATE: ${mate.callsign}`).test(summary), "the state summary names the teammate by callsign");
+  assert(/intel moves by voice/.test(summary), "…and reminds the XO there is no datalink");
+  const solo = new Sim();
+  solo.addShip("A", 0, 0, 0);
+  assert(!/TEAMMATE/.test(solo.stateSummaryFor("A")), "solo summaries carry no teammate line");
+}
+
 // ---------- §6: come_alongside — the transfer that makes them a crew ----------
 
 // 17. Docked at matched velocity: the give manifest crosses, one

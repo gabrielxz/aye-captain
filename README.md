@@ -23,7 +23,8 @@ be going somewhere — not both.
   Echo, ...); players see who's watching.
 - **Practice**: solo mode against a drone that patrols the rocks — and
   shoots back.
-- **Campaign — Deep Black**: a solo, run-based roguelike. Eight systems;
+- **Campaign — Deep Black**: a run-based roguelike, solo or two-captain
+  co-op. Eight systems;
   get out of each one through a gate on the rim; your score is how far
   you got. Each system gives you a fixed clock's worth of greed — burn
   loud, chase salvage, strip wrecks (a full stop is the price; the haul
@@ -54,6 +55,23 @@ be going somewhere — not both.
   coming in pairs"), and an adaptive procedural score follows what YOU
   know — never what the sim knows. Runs save to your browser; death ends
   them.
+- **Campaign co-op — Two Ships**: CREATE CO-OP RUN on the campaign screen;
+  a friend joins with the room code. One asymmetry carries the whole
+  design: you always know where your friend is (position, hull,
+  propellant, and signature ride the transponder into a HUD strip), but
+  you NEVER see their sensor picture — no datalink, ever; intel moves by
+  talking. The Hunter pursues the loudest signature it can detect (with
+  hysteresis — it won't flip-flop), so one captain burns as bait while
+  the other loots dark; the XO calls the flip ("we're the loudest thing
+  on the board now"). "Give Kestrel two missiles" flies the salvage
+  rendezvous against your partner's hull and hands consumables across at
+  matched velocity. Death is a role change: the fallen captain rides the
+  survivor's sensors (exactly what they see, nothing more), keeps
+  talking, and returns next system in a fresh base ship — while their
+  wreck drifts with their whole hold aboard, lootable by friend and
+  patrolled by foe. The system doesn't advance until both captains are
+  through the gate or dead; the first one through coaches from the far
+  side. Co-op runs live in server memory for one sitting — no save.
 - **Input**: voice push-to-talk (hold Space — or the on-screen HOLD
   button on phones/tablets) or typed text.
 - **Output**: the ship AI talks back (ElevenLabs voice) and the ship itself

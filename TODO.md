@@ -1,5 +1,51 @@
 # TODO — next steps
 
+## CAMPAIGN PATCH 2 "Two Ships" (HANDOFF-CAMPAIGN-COOP.md) — BUILT 2026-07-13
+
+Branch `campaign-coop`, all sections, 1,180+ assertions green. Step 0
+(Anvil §9 verify) found mission.playerId still SINGULAR — converted to
+playerIds[] with per-captain salvage clocks + gate-solution bookkeeping;
+hunterDecide was already a pure snapshot query. Built: §7 the co-op room
+(CREATE CO-OP RUN, ordinary room-code lobby capped at 2, hull picks
+visible, run lives in the Match — coopCarry map, no save), crew on a
+shared transponder team (v5 §8 gives allies/IFF/PDC safety free); §1
+loudest-signature targeting (contacts carry `loud` = the hearing scalar
+sig/LOUD_SIG_REF — "the sound doesn't stop when you can see it";
+cadence 5 s + hysteresis 1.4x louder / 0.6x closer, and the CLOSER gate
+breaks near-ties only — the §8 checkpoint caught the bait dying the
+moment it opened the range); §3 teammate strip (allies + propellant/sig;
+▲ marks the louder; inset dots) + the XO loudness read (margin 1.15,
+cooldown 20 s, hunter-gated, fixed spoken lines) + TEAMMATE state-summary
+line; §4 death = role change (survivor's-eyes snapshots labeled coopEyes
+— NEVER omniscient, pinned; hulk carries the whole hold at 0.4 death-v;
+fresh base ship + empty hold next system); §5 the gate needs the whole
+crew (through-ships FROZEN + departed — off every board, carry still
+readable; first-through coaches; stranded_death with a partner through
+keeps the run alive); §6 come_alongside (campaign-co-op-only verb, exact
+salvage rendezvous — existing salvage tests passed UNCHANGED; give
+manifest crosses per SALVAGE_ITEM_S cheap-to-dear, clamps honest, abort
+keeps what crossed; verified against the live API incl. the
+"give Kestrel two missiles = one command" phantom-ack trap).
+
+- [ ] **Playtest with two humans (build order step 7 — Gabriel + friend).**
+  Watch: does the bait play LAND as a story? Is the loudness read audible
+  enough to drive it (LOUD_CALL_MARGIN 1.15 / COOLDOWN 20 s first-guess)?
+  Does coach-mode spectating feel like coaching or like a bench? Transfer
+  pacing (SALVAGE_ITEM_S per consignment) — ceremony or chore?
+- [ ] §2 by design: Hunter ladder UNMODIFIED for two players — if too
+  easy the lever is HUNTER COUNT (forces a split), never stats.
+- [ ] Retarget knobs are first-guess: HUNTER_RETARGET_EVERY_S 5,
+  LOUDER 1.4, CLOSER 0.6 (near-ties only).
+- [ ] Judgment calls to sanity-check in play: rumors/wreck board SHARED
+  between partners (run-level state; only the resolver's XO speaks);
+  loudness read gated on a live Hunter; dead captain's hulk is MARKED
+  (the Hunter patrols the corpse — a trap, intentionally); scuttled
+  (disconnect-timeout) co-op ships leave NO hulk (quiet forfeit).
+- [ ] Client is browser-verified only lightly — first co-op lobby flight
+  should watch: lobby copy, teammate strip layout (temporary placement,
+  §3b — Patch 3 absorbs it), coopEyes badge, run-map flow for the
+  spectating partner.
+
 ## CAMPAIGN PATCH 1.1 "The Anvil, Sharpened" (HANDOFF-CAMPAIGN-ANVIL-1.1.md) — BUILT 2026-07-13
 
 Branch `campaign-anvil-1.1`, all sections, 1,043+ assertions green.

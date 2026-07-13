@@ -5336,6 +5336,16 @@ export class Sim {
           `SALVAGE TRANSFER RUNNING: next item in ${Math.max(0, C.SALVAGE_ITEM_S - sv.t)}s, ${left} left aboard the wreck. Any thrust or heading order breaks off (we keep what's landed).`
         );
       }
+      // Patch 2 §3/§6: the teammate line — TRANSPONDER data only (callsign,
+      // hull, live signature, range/bearing, propellant), never their
+      // contacts (no datalink). Player NAMES stay out (invariant 18); the
+      // callsign is the noun come_alongside targets.
+      for (const mate of this.alliesOf(ship)) {
+        if (!this.isMissionPlayer(mate.id)) continue;
+        lines.push(
+          `TEAMMATE: ${mate.callsign} (${mate.archetype.toUpperCase()}) — hull ${Math.round((100 * mate.hull) / hullMaxOf(mate))}%, signature ${Math.round(this.signatureOf(mate))} (${Math.round(this.signatureOf(mate)) > Math.round(this.signatureOf(ship)) ? "LOUDER than us" : "quieter than us"}), bearing ${fmtBearing(bearingTo(ship.x, ship.y, mate.x, mate.y))}, ${(dist(ship.x, ship.y, mate.x, mate.y) / 1000).toFixed(0)} km, propellant ${Math.round(mate.propellant)}. come_alongside reaches them inside 15 km (approach included); we CANNOT see their sensor contacts — intel moves by voice.`
+        );
+      }
     }
     if (ship.goal?.mode === "track") {
       const label =
