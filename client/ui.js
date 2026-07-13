@@ -142,8 +142,20 @@ export function initUI() {
     campaignPanel.style.display = "none";
     send({ type: "campaign", archetype: campaignPick.ship, runState: run });
   });
-  // run map: NEXT SYSTEM hands the save back to the same match
+  // Patch 2 "Two Ships": a co-op run is an ordinary room with a campaign
+  // heart — the friend joins with the code; ships are picked in the lobby
+  document.getElementById("btn-campaign-coop").addEventListener("click", () => {
+    campaignPanel.style.display = "none";
+    send({ type: "create", coop: true, name: playerName() });
+  });
+  // run map: NEXT SYSTEM hands the save back to the same match (solo);
+  // a co-op run is server-owned — the click alone advances the crew
   document.getElementById("btn-next-system").addEventListener("click", () => {
+    if (state.coop) {
+      hideBanner();
+      send({ type: "campaign_next" });
+      return;
+    }
     const run = savedRun();
     if (!run) return;
     hideBanner();
@@ -338,7 +350,7 @@ export function showLobbyStatus(text) {
 export function showRoomLobby(msg) {
   const panel = document.getElementById("room-panel");
   panel.style.display = "flex";
-  document.getElementById("room-code").textContent = `ROOM ${msg.code}`;
+  document.getElementById("room-code").textContent = `${msg.campaign ? "CO-OP RUN " : "ROOM "}${msg.code}`;
 
   const roster = document.getElementById("room-roster");
   roster.innerHTML = "";
@@ -361,7 +373,8 @@ export function showRoomLobby(msg) {
   }
 
   const modeRow = document.getElementById("mode-row");
-  modeRow.style.display = msg.creator ? "flex" : "none";
+  // a co-op run has one mode — the crew (no FFA/Teams toggle)
+  modeRow.style.display = msg.creator && !msg.campaign ? "flex" : "none";
   document.getElementById("btn-mode-ffa").classList.toggle("active", msg.mode === "ffa");
   document.getElementById("btn-mode-teams").classList.toggle("active", msg.mode === "teams");
 
@@ -384,11 +397,17 @@ export function showRoomLobby(msg) {
   launch.style.display = msg.creator ? "block" : "none";
   launch.disabled = (msg.players ?? []).length < 2;
 
-  document.getElementById("room-hint").textContent = msg.creator
-    ? (msg.players ?? []).length < 2
-      ? `share the code — captains join with it (up to ${msg.maxPlayers})`
-      : `${msg.mode === "teams" ? "teams set? " : ""}launch when ready`
-    : "waiting for the room creator to launch...";
+  document.getElementById("room-hint").textContent = msg.campaign
+    ? msg.creator
+      ? (msg.players ?? []).length < 2
+        ? "share the code — your partner joins with it. No save: the run lives while the room does."
+        : "both hulls picked? launch the run"
+      : "waiting for your partner to launch... pick your hull — complementary builds are a real decision"
+    : msg.creator
+      ? (msg.players ?? []).length < 2
+        ? `share the code — captains join with it (up to ${msg.maxPlayers})`
+        : `${msg.mode === "teams" ? "teams set? " : ""}launch when ready`
+      : "waiting for the room creator to launch...";
   showLobbyStatus("");
 }
 

@@ -952,7 +952,7 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
     pools: { propellant: 4, missiles: 3, decoys: 2, pdcAmmoS: 33, hull: 61 },
     totals: { huntersKilled: 0, salvaged: 0, pingsFired: 0, upgrades: 0, timeS: 0 },
   };
-  const sim = (Match as any).buildCampaignSim("refill-test", "frigate", run) as Sim;
+  const sim = (Match as any).buildCampaignSim("refill-test", [{ id: "A", archetype: "frigate" }], run, null) as Sim;
   const a = sim.ships.get("A")!;
   assert(a.propellant === C.PROPELLANT_MAX, "propellant arrives FULL — the tanks refill between systems");
   assert(a.hull === 61, "hull carries the scars");

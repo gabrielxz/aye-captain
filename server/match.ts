@@ -32,6 +32,22 @@ export interface CampaignRun {
 export type RoomMode = "ffa" | "teams";
 export type Team = "red" | "blue";
 
+// Patch 2 "Two Ships" §7: a co-op run lives in the Match object, in memory,
+// for one sitting — no save, no resume. This is one ship's between-systems
+// state: module multipliers travel directly (they're fitted to the hull),
+// consumables attrit, propellant refills per jump (1.1 §6). A dead
+// captain gets NO entry: fresh base ship, empty hold (§4).
+interface CoopCarry {
+  sigMult: number;
+  sensorMult: number;
+  accelMult: number;
+  hullMult: number;
+  missiles: number;
+  decoys: number;
+  pdcAmmoS: number;
+  hull: number;
+}
+
 // v5.1 §1.2: three speech tiers replace the old alert boolean. CRITICAL
 // interrupts and ignores the inter-line gap; NEWS queues and respects it;
 // CHATTER plays only into silence. The client scheduler enforces this —
@@ -144,12 +160,20 @@ export class Match {
     this.practiceDroneArch = practiceDroneArch;
     // pre-launch rooms hold an empty sim on the room's terrain seed; launch
     // replaces it with the spawned field (rematch keeps the seed unless
-    // newField)
-    this.sim = campaign
-      ? Match.buildCampaignSim(seed, practiceArch, this.run)
-      : practice
-        ? Match.buildPracticeSim(seed, practiceArch, practiceDroneArch)
-        : new Sim(seed);
+    // newField). A co-op campaign ROOM (campaign + code) is a lobby first —
+    // the mission sim is built at launch, when the seats are known.
+    this.sim =
+      campaign && !code
+        ? Match.buildCampaignSim(seed, [{ id: "A", archetype: practiceArch }], this.run, null)
+        : practice
+          ? Match.buildPracticeSim(seed, practiceArch, practiceDroneArch)
+          : new Sim(seed);
+  }
+
+  // Patch 2 "Two Ships": is this the co-op campaign shape (room-code lobby,
+  // server-owned run, two captains)?
+  get coop(): boolean {
+    return this.campaign && this.code !== null;
   }
 
   static randomSeed(): string {
@@ -174,6 +198,9 @@ export class Match {
   // Campaign run state for THIS match (see CampaignRun — client-owned
   // between systems, applied at each system start).
   private run: CampaignRun = Match.freshRun();
+  // Co-op between-systems ship state (server-owned — §7: the run lives in
+  // the Match). Captured at system_clear, consumed by the next beginMatch.
+  private coopCarry: Map<ShipId, CoopCarry> | null = null;
 
   static freshRun(): CampaignRun {
     return {
@@ -282,36 +309,82 @@ export class Match {
     return wrecks;
   }
 
-  // One campaign system: the captain alone on the classic spawn, the gate
+  // One campaign system: the crew on the classic south spawn, the gate
   // on the rim, the ladder row armed, the field salted with wrecks.
-  // Single-player deliberately runs on the same authoritative server sim —
-  // the fog/AI machinery is the whole point.
-  private static buildCampaignSim(seed: string, archetype: C.ArchetypeName, run: CampaignRun): Sim {
+  // Deliberately runs on the same authoritative server sim — the fog/AI
+  // machinery is the whole point. Solo is the one-seat case and spawns
+  // bit-identically to Stage 0; a two-captain crew spawns team-spaced
+  // along the ring on a shared transponder team (v5 §8 does the rest:
+  // allies block, IFF, PDC safety — all already fog-tested).
+  private static buildCampaignSim(
+    seed: string,
+    seats: { id: ShipId; archetype: C.ArchetypeName }[],
+    run: CampaignRun,
+    carry: Map<ShipId, CoopCarry> | null
+  ): Sim {
     const sim = new Sim(seed);
-    const ship = sim.addShip("A", 0, -C.SPAWN_RING_RADIUS_M, 0, false, null, C.CALLSIGN_POOL[0], archetype);
-    // §6 progression: a multiplier table over constants that already exist
-    ship.sigMult = Math.pow(C.UPGRADE_SIG_MULT, run.upgrades.sig);
-    ship.sensorMult = Math.pow(C.UPGRADE_SENSOR_MULT, run.upgrades.sensor);
-    ship.accelMult = Math.pow(C.UPGRADE_ACCEL_MULT, run.upgrades.accel);
-    ship.hullMult = Math.pow(C.UPGRADE_HULL_MULT, run.upgrades.hull);
-    // pools persist across jumps (§6) — arrive as you left. EXCEPT
-    // propellant (1.1 §6): it refills to 100% on transition — it's the one
-    // resource that already regenerates in flight, and starting a system
-    // at 0% was a bug, not a difficulty. Hull/missiles/PDC ammo never
-    // regenerate and stay the attrition axes.
-    if (run.pools) {
-      ship.propellant = C.PROPELLANT_MAX;
-      ship.decoys = run.pools.decoys;
-      ship.pdcAmmoS = run.pools.pdcAmmoS;
-      const stats = C.ARCHETYPES[archetype];
-      const loaded = Math.min(run.pools.missiles, stats.tubes);
-      ship.tubes.forEach((t, i) => {
-        t.loaded = i < loaded;
-        t.reload = 0;
-      });
-      ship.reserve = Math.max(0, run.pools.missiles - loaded);
-      ship.hull = Math.min(Math.round(stats.hull * ship.hullMult), run.pools.hull);
-    }
+    const crewTeam = seats.length > 1 ? "blue" : null;
+    const spacingDeg = (C.TEAM_SPAWN_SPACING_M / C.SPAWN_RING_RADIUS_M) * (180 / Math.PI);
+    seats.forEach((seat, i) => {
+      const ang = 180 + (i - (seats.length - 1) / 2) * spacingDeg; // solo: exactly south
+      const [dx, dy] = headingVec(ang);
+      const ship = sim.addShip(
+        seat.id,
+        dx * C.SPAWN_RING_RADIUS_M,
+        dy * C.SPAWN_RING_RADIUS_M,
+        norm360(ang + 180), // face the center
+        false,
+        crewTeam,
+        C.CALLSIGN_POOL[i],
+        seat.archetype
+      );
+      const stats = C.ARCHETYPES[seat.archetype];
+      const carried = carry?.get(seat.id);
+      if (carried) {
+        // co-op §6: the run lives in the Match — each surviving ship
+        // arrives as it left (propellant refills per 1.1 §6; modules are
+        // fitted to THIS hull, so the mults travel directly). A captain
+        // with no carry entry died last system: fresh base ship, empty
+        // hold — losing the cargo is the cost (§4).
+        ship.sigMult = carried.sigMult;
+        ship.sensorMult = carried.sensorMult;
+        ship.accelMult = carried.accelMult;
+        ship.hullMult = carried.hullMult;
+        ship.decoys = carried.decoys;
+        ship.pdcAmmoS = carried.pdcAmmoS;
+        const loaded = Math.min(carried.missiles, stats.tubes);
+        ship.tubes.forEach((t, j) => {
+          t.loaded = j < loaded;
+          t.reload = 0;
+        });
+        ship.reserve = Math.max(0, carried.missiles - loaded);
+        ship.hull = Math.min(Math.round(stats.hull * carried.hullMult), carried.hull);
+      } else if (seats.length === 1) {
+        // solo §6 progression: a multiplier table over constants that
+        // already exist, restored from the client-owned run state
+        ship.sigMult = Math.pow(C.UPGRADE_SIG_MULT, run.upgrades.sig);
+        ship.sensorMult = Math.pow(C.UPGRADE_SENSOR_MULT, run.upgrades.sensor);
+        ship.accelMult = Math.pow(C.UPGRADE_ACCEL_MULT, run.upgrades.accel);
+        ship.hullMult = Math.pow(C.UPGRADE_HULL_MULT, run.upgrades.hull);
+        // pools persist across jumps (§6) — arrive as you left. EXCEPT
+        // propellant (1.1 §6): it refills to 100% on transition — it's the
+        // one resource that already regenerates in flight, and starting a
+        // system at 0% was a bug, not a difficulty. Hull/missiles/PDC ammo
+        // never regenerate and stay the attrition axes.
+        if (run.pools) {
+          ship.propellant = C.PROPELLANT_MAX;
+          ship.decoys = run.pools.decoys;
+          ship.pdcAmmoS = run.pools.pdcAmmoS;
+          const loaded = Math.min(run.pools.missiles, stats.tubes);
+          ship.tubes.forEach((t, j) => {
+            t.loaded = j < loaded;
+            t.reload = 0;
+          });
+          ship.reserve = Math.max(0, run.pools.missiles - loaded);
+          ship.hull = Math.min(Math.round(stats.hull * ship.hullMult), run.pools.hull);
+        }
+      }
+    });
     // gate on the rim, seeded within ±GATE_BEARING_SPREAD_DEG of north —
     // the player spawns south, so the run is always a real crossing
     const rand = mulberry32(hashSeed(`${seed}:gate`));
@@ -336,7 +409,7 @@ export class Match {
     const pylonIdx: [number, number] = [sim.terrain.rocks.length - 2, sim.terrain.rocks.length - 1];
     const row = C.CAMPAIGN_LADDER[run.system - 1];
     sim.mission = {
-      playerIds: ["A"],
+      playerIds: seats.map((s) => s.id),
       system: run.system,
       systemName: row.name,
       gate: { x: gx, y: gy, apertureW: C.APERTURE_W_M },
@@ -368,7 +441,12 @@ export class Match {
     if (resumed) {
       // resuming a saved run: rebuild the sim on the resumed state
       match.run = resumed;
-      match.sim = Match.buildCampaignSim(Match.randomSeed(), arch, resumed);
+      match.sim = Match.buildCampaignSim(
+        Match.randomSeed(),
+        [{ id: "A", archetype: arch }],
+        resumed,
+        null
+      );
     }
     match.seats.push({ id: "A", ws, team: null, archetype: arch, dead: false, name: null });
     match.launched = true;
@@ -485,6 +563,13 @@ export class Match {
     if (!this.campaign) return;
     const seat = this.seats.find((s) => s.ws === ws);
     if (!seat) return;
+    if (this.coop) {
+      // co-op: the run is SERVER-owned (§7 — one sitting, in memory); the
+      // client hands nothing back. Either captain's click advances — the
+      // crew is at the same run map, talking.
+      this.beginMatch(Match.randomSeed());
+      return;
+    }
     const run = Match.sanitizeRun(runRaw);
     if (!run) return;
     this.run = run;
@@ -516,11 +601,13 @@ export class Match {
   }
 
   // Room lobby (v5 §2): the creator takes the first seat and configures the
-  // room; captains join until the creator hits LAUNCH.
-  static createRoom(code: string, ws: WebSocket, name: string | null = null): Match {
-    const match = new Match(false, code);
+  // room; captains join until the creator hits LAUNCH. Patch 2: coop=true
+  // makes it a two-captain campaign room — same lobby path, mission sim at
+  // launch, run state server-owned for one sitting.
+  static createRoom(code: string, ws: WebSocket, name: string | null = null, coop = false): Match {
+    const match = new Match(false, code, Match.randomSeed(), "frigate", "frigate", coop);
     match.seats.push({ id: "A", ws, team: null, archetype: "frigate", dead: false, name });
-    ws.send(JSON.stringify({ type: "created", code }));
+    ws.send(JSON.stringify({ type: "created", code, ...(coop ? { coop: true } : {}) }));
     match.broadcastLobby();
     return match;
   }
@@ -545,7 +632,9 @@ export class Match {
       if (this.spectators.size > 0) this.broadcastSpectators();
       return null;
     }
-    if (this.seats.length >= C.MAX_PLAYERS) return "room is full — WATCH to spectate";
+    // §10: a co-op run is TWO captains — get two right first
+    const cap = this.campaign ? 2 : C.MAX_PLAYERS;
+    if (this.seats.length >= cap) return "room is full — WATCH to spectate";
     const seat: Seat = { id: this.nextSeatId(), ws, team: null, archetype: "frigate", dead: false, name };
     if (this.mode === "teams") seat.team = this.smallerTeam();
     this.seats.push(seat);
@@ -561,6 +650,7 @@ export class Match {
 
   // Room creator toggles FFA | Teams before launch.
   setMode(ws: WebSocket, mode: RoomMode): void {
+    if (this.campaign) return; // a co-op run has one mode: the crew
     if (this.launched || this.seats[0]?.ws !== ws) return;
     if (mode !== "ffa" && mode !== "teams") return;
     this.mode = mode;
@@ -618,8 +708,18 @@ export class Match {
     this.stop();
     if (this.campaign) {
       // campaign: rebuild on the CURRENT run state (nextSystem sets it for
-      // a transition; reset() re-freshes it for a new run)
-      this.sim = Match.buildCampaignSim(seed, this.practiceArch, this.run);
+      // a transition; reset() re-freshes it for a new run). Co-op: the
+      // crew's seats spawn together on a shared transponder team; the
+      // carry map restores each surviving hull (dead captains return
+      // fresh — §4).
+      const seats = this.coop
+        ? this.seats.map((s) => ({ id: s.id, archetype: s.archetype }))
+        : [{ id: "A" as ShipId, archetype: this.practiceArch }];
+      if (this.coop) {
+        for (const seat of this.seats) seat.team = "blue"; // namesFor + youWin read the seat
+      }
+      this.sim = Match.buildCampaignSim(seed, seats, this.run, this.coopCarry);
+      this.coopCarry = null; // consumed — the next system captures a fresh one
     } else if (this.practice) {
       // v5 bug (found in v5.1 §7.3): practice rematch used spawnShips(),
       // which spawns SEATS — captain alone, no drone, an empty range
@@ -782,7 +882,8 @@ export class Match {
             mode: this.mode,
             you: seat.id,
             creator: i === 0,
-            maxPlayers: C.MAX_PLAYERS,
+            maxPlayers: this.campaign ? 2 : C.MAX_PLAYERS,
+            campaign: this.campaign, // co-op run lobby: no mode toggle, 2 seats
             players,
           })
         );
@@ -801,6 +902,7 @@ export class Match {
           team: seat.team,
           practice: this.practice,
           campaign: this.campaign,
+          coop: this.coop, // client: server-owned run — no localStorage save
           ...(this.campaign && this.sim.mission ? { gate: this.sim.mission.gate } : {}),
           terrain: this.sim.terrain,
         })
@@ -828,7 +930,11 @@ export class Match {
       this.broadcastLobby();
       return;
     }
-    if (this.practice || this.campaign || this.sim.winner) {
+    // co-op campaign rooms fall through to the ghost path below — a
+    // dropped captain's ship coasts and their partner plays on; the seat
+    // reconnects by room code like any room (the run dies only when the
+    // room empties — no save, §7)
+    if (this.practice || (this.campaign && !this.code) || this.sim.winner) {
       if (this.isEmpty()) this.stop();
       // §7.3: a departure can complete the ready-up (everyone left is ready)
       else if (this.sim.winner && !this.practice && !this.campaign) this.evaluateRematch();
@@ -972,7 +1078,10 @@ export class Match {
   // Campaign: the run DIED with the ship — rematch means a NEW RUN from
   // system one (a roguelike keeps its stakes), same hull pick.
   reset(newField = false): void {
-    if (this.campaign) this.run = Match.freshRun();
+    if (this.campaign) {
+      this.run = Match.freshRun();
+      this.coopCarry = null; // the run died with the ship — everything resets
+    }
     this.beginMatch(newField ? Match.randomSeed() : this.sim.terrain.seed);
   }
 
@@ -1040,26 +1149,48 @@ export class Match {
       if (seat) seat.dead = true;
     } else if (ev.kind === "system_clear") {
       // campaign transition (§1): freeze the system, export the run, and
-      // hand the wheel to the client's run map. The next system starts
-      // when the client sends campaign_next with this state back.
+      // hand the wheel to the run map. Solo: the client keeps the state
+      // (localStorage save file) and hands it back with campaign_next.
+      // Co-op: the state stays HERE — each surviving hull is captured into
+      // the carry map; the message carries no runState.
       this.stop();
       this.broadcast(); // final frame — the client freezes on the crossing
-      const seat = this.seats.find((s) => s.id === ev.ship);
       const runState = this.exportRun(ev.system + 1);
       this.run = runState; // keep server-side copy in sync for the summary
-      if (seat?.ws && seat.ws.readyState === seat.ws.OPEN) {
-        seat.ws.send(
-          JSON.stringify({
-            type: "system_clear",
-            system: ev.system,
-            systemName: this.sim.mission?.systemName,
-            nextSystem: ev.system + 1,
-            totalSystems: C.CAMPAIGN_SYSTEMS,
-            haul: this.haulManifest(), // what THIS system paid — the headline
-            huntersKilledHere: this.sim.mission?.stats.huntersKilled ?? 0,
-            runState,
-          })
-        );
+      if (this.coop) {
+        this.coopCarry = new Map();
+        for (const seat of this.seats) {
+          const s = this.sim.ships.get(seat.id);
+          if (!s) continue; // dead this system: returns fresh, empty hold (§4)
+          this.coopCarry.set(seat.id, {
+            sigMult: s.sigMult,
+            sensorMult: s.sensorMult,
+            accelMult: s.accelMult,
+            hullMult: s.hullMult,
+            missiles: missilesAboard(s),
+            decoys: s.decoys,
+            pdcAmmoS: Math.round(s.pdcAmmoS),
+            hull: Math.round(s.hull),
+          });
+        }
+      }
+      const payload = {
+        type: "system_clear",
+        system: ev.system,
+        systemName: this.sim.mission?.systemName,
+        nextSystem: ev.system + 1,
+        totalSystems: C.CAMPAIGN_SYSTEMS,
+        haul: this.haulManifest(), // what THIS system paid — the headline
+        huntersKilledHere: this.sim.mission?.stats.huntersKilled ?? 0,
+        ...(this.coop ? {} : { runState }),
+      };
+      // co-op: the whole crew sees the run map (dead captains included —
+      // they return next system)
+      const targets = this.coop ? this.seats : this.seats.filter((s) => s.id === ev.ship);
+      for (const seat of targets) {
+        if (seat.ws && seat.ws.readyState === seat.ws.OPEN) {
+          seat.ws.send(JSON.stringify(payload));
+        }
       }
     } else if (ev.kind === "gameover") {
       const durationS = this.sim.tickCount / C.TICK_RATE_HZ;

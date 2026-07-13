@@ -56,6 +56,7 @@ function handleMessage(msg) {
       hideRoomLobby();
       state.practice = !!msg.practice;
       state.campaign = !!msg.campaign;
+      state.coop = !!msg.coop; // Patch 2: server-owned run — no localStorage save
       state.gate = msg.gate ?? null; // campaign: fixed public landmark
       document.body.classList.toggle("campaign", state.campaign);
       state.terrain = msg.terrain ?? null;
@@ -211,11 +212,19 @@ function handleMessage(msg) {
       }
       if (state.campaign && msg.runSummary) {
         // §9: SYSTEMS CLEARED is the headline and the score. The run is
-        // over either way — clear the save, keep the best.
+        // over either way — clear the save, keep the best. (Co-op runs are
+        // server-owned and never touch the solo save file or best.)
         const s = msg.runSummary;
-        localStorage.removeItem("campaignRun");
-        const best = Math.max(Number(localStorage.getItem("campaignBest") ?? 0), s.systemsCleared);
-        localStorage.setItem("campaignBest", String(best));
+        if (!state.coop) {
+          localStorage.removeItem("campaignRun");
+          localStorage.setItem(
+            "campaignBest",
+            String(Math.max(Number(localStorage.getItem("campaignBest") ?? 0), s.systemsCleared))
+          );
+        }
+        const best = state.coop
+          ? s.systemsCleared
+          : Number(localStorage.getItem("campaignBest") ?? 0);
         const tm = `${Math.floor(s.timeS / 60)}:${String(s.timeS % 60).padStart(2, "0")}`;
         const cause = msg.runComplete
           ? "eight of eight — the deep black, crossed"
@@ -269,7 +278,11 @@ function handleMessage(msg) {
       audio.stopContinuous();
       audio.musicExit(); // §8: the beat of silence, the rising tone, the resolve
       gateExitFx(); // …and the flash + streak
-      localStorage.setItem("campaignRun", JSON.stringify(msg.runState));
+      // solo: the run state is OURS to keep; co-op runs carry none (the
+      // server owns the run — §7: one sitting, in memory)
+      if (msg.runState && !state.coop) {
+        localStorage.setItem("campaignRun", JSON.stringify(msg.runState));
+      }
       const dots = Array.from({ length: msg.totalSystems }, (_, i) =>
         i < msg.system ? "◆" : "◇"
       ).join(" ");
@@ -294,7 +307,7 @@ function handleMessage(msg) {
       break;
     }
     case "created":
-      showLobbyStatus(`ROOM CODE: ${msg.code}`);
+      showLobbyStatus(`${msg.coop ? "CO-OP RUN" : "ROOM"} CODE: ${msg.code}`);
       break;
     case "lobby":
       // v5 §2: roster/config while the room fills; creator launches

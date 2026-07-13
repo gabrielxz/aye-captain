@@ -145,7 +145,9 @@ wss.on("connection", (ws: WebSocket) => {
       case "create": {
         if (matchByWs.has(ws)) return;
         const code = genRoomCode();
-        const match = Match.createRoom(code, ws, sanitizeName(msg.name));
+        // Patch 2: coop=true makes it a two-captain campaign room (same
+        // lobby path; the run lives in the Match, in memory, one sitting)
+        const match = Match.createRoom(code, ws, sanitizeName(msg.name), msg.coop === true);
         rooms.set(code, match);
         matchByWs.set(ws, match);
         break;
