@@ -110,9 +110,9 @@ must not freeze); Hunter throttles already encode §2e discipline
 burn-leash guarantee is conditional on closed-loop flight (the trigger
 fires at the recoverability boundary; an arbitrarily deep injected state
 is physically unrecoverable). **CAMPAIGN PATCH 2 "Two Ships"
-(HANDOFF-CAMPAIGN-COOP.md) BUILT 2026-07-13 on branch `campaign-coop`**
-(1,180+ assertions; awaiting the two-human playtest): two-captain co-op
-campaign. Step 0 landed the Anvil §9 debt (mission.playerIds[] — every
+(HANDOFF-CAMPAIGN-COOP.md) DEPLOYED 2026-07-13** (merged from
+`campaign-coop`, 1,186 assertions; the two-human playtest is the open
+milestone item): two-captain co-op campaign. Step 0 landed the Anvil §9 debt (mission.playerIds[] — every
 consumer iterates; per-captain salvage clocks + solGood/solCooldownS
 records). The §0 asymmetry is the law: teammates ride the transponder
 (allies block + propellant/sig, the HUD strip, the TEAMMATE state-summary

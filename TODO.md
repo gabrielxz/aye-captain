@@ -1,8 +1,10 @@
 # TODO — next steps
 
-## CAMPAIGN PATCH 2 "Two Ships" (HANDOFF-CAMPAIGN-COOP.md) — BUILT 2026-07-13
+## CAMPAIGN PATCH 2 "Two Ships" (HANDOFF-CAMPAIGN-COOP.md) — DEPLOYED 2026-07-13
 
-Branch `campaign-coop`, all sections, 1,180+ assertions green. Step 0
+Merged from `campaign-coop`, all sections, 1,186 assertions green (incl.
+the same-day playtest fixes: discipline-honest stop bracket, the
+salvage-orbit hop alignment gate). Step 0
 (Anvil §9 verify) found mission.playerId still SINGULAR — converted to
 playerIds[] with per-captain salvage clocks + gate-solution bookkeeping;
 hunterDecide was already a pure snapshot query. Built: §7 the co-op room
