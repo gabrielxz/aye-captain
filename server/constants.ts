@@ -535,6 +535,11 @@ export const LOUD_SIG_REF = 150; // loud = min(1, signature / this) — rumbles 
 export const HUNTER_RETARGET_EVERY_S = 5; // target re-evaluation cadence
 export const HUNTER_RETARGET_LOUDER = 1.4; // challenger needs >= this x current loudness...
 export const HUNTER_RETARGET_CLOSER = 0.6; // ...or <= this x current range
+// §3a: the XO's loudness read ("we're the loudest thing on the board") —
+// the flip that turns the bait play on. Edge-triggered with a margin
+// (throttle jitter must not flap it), rate-limited HARD.
+export const LOUD_CALL_COOLDOWN_S = 20;
+export const LOUD_CALL_MARGIN = 1.15; // a new loudest must clear the old by this factor
 
 // Gate-run assist (playtest ask): within this range and below this speed,
 // "take us through the gate" hands the aperture to the XO — he stops,

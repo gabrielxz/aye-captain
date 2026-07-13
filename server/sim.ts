@@ -508,6 +508,10 @@ export interface Mission {
   gateCloseS: number | null;
   gateCloseCalled: number;
   pylonIdx: [number, number] | null;
+  // Patch 2 §3a: the XO's loudness read (co-op only; lazily initialized so
+  // hand-built solo test missions don't carry it) — which crew hull is the
+  // loudest thing on the board, edge-triggered + hard rate-limited
+  loudCall?: { loudest: ShipId | null; cooldownS: number };
 }
 
 // ---------- angle helpers ----------
@@ -2783,6 +2787,7 @@ export class Sim {
         this.updateGateXO(events);
         this.stepRumors(events);
         this.stepSalvage(events);
+        this.stepLoudness(events); // Patch 2 §3a — the bait-play read, spoken
       }
     }
 
@@ -4589,6 +4594,54 @@ export class Sim {
     }
   }
 
+  // Patch 2 §3a: the XO calls the loudness read — it drives the core
+  // co-op decision (who is the Hunter coming for), so the flip is SPOKEN.
+  // Edge-triggered on which crew hull is loudest, with a margin so
+  // throttle jitter can't flap it, rate-limited hard (NEWS tier — this is
+  // not a place to be chatty), and only while something is out there
+  // listening. Everything read here is fog-legal: own signature + the
+  // teammate's transponder.
+  private stepLoudness(events: SimEvent[]): void {
+    const m = this.mission!;
+    const players = this.missionPlayers();
+    if (players.length < 2) return;
+    const lc = (m.loudCall ??= { loudest: null, cooldownS: 0 });
+    lc.cooldownS = Math.max(0, lc.cooldownS - 1);
+    if (!m.hunterSpawned || !m.hunterIds.some((id) => this.ships.has(id))) return;
+    const ranked = players
+      .map((p) => ({ p, sig: this.signatureOf(p) }))
+      .sort((a, b) => b.sig - a.sig);
+    const top = ranked[0];
+    if (top.p.id === lc.loudest || lc.cooldownS > 0) return;
+    // hysteresis: a NEW loudest must clear the current one by a real
+    // margin — and the FIRST call must clear the runner-up (two idle
+    // ships at equal signature are "too close to call", not a headline)
+    const prev = lc.loudest ? players.find((p) => p.id === lc.loudest) : undefined;
+    const bar = prev ? this.signatureOf(prev) : ranked[1]?.sig ?? 0;
+    if (top.sig < bar * C.LOUD_CALL_MARGIN) return;
+    lc.loudest = top.p.id;
+    lc.cooldownS = C.LOUD_CALL_COOLDOWN_S;
+    for (const { p } of ranked) {
+      if (p.id === top.p.id) {
+        events.push({
+          kind: "notice",
+          ship: p.id,
+          text: `We're the loudest thing on the board now, Captain — if he's hunting, he comes for us.`,
+          speak: "We're the loudest thing on the board now, Captain — if he's hunting, he comes for us.",
+        });
+      } else {
+        // the callsign stays in the TRANSCRIPT; the voice speaks a fixed
+        // line (TTS economy — per-callsign variants would burn the cache)
+        events.push({
+          kind: "notice",
+          ship: p.id,
+          text: `${top.p.callsign}'s the loudest thing on the board now, Captain — he'll go for them.`,
+          speak: "Our friend's the loudest thing on the board now, Captain — he'll go for them.",
+        });
+      }
+    }
+  }
+
   // Campaign salvage transfer (§4.2), one command tick. The maneuver holds
   // the transfer clock; drifting out of dock range or losing the stop
   // pauses it (the clock, not the loot, is what's at risk — landed items
@@ -5580,7 +5633,11 @@ export class Sim {
           }
         : {}),
       contacts,
-      // v5 §8 transponders: full state, always (own equipment class)
+      // v5 §8 transponders: full state, always (own equipment class).
+      // Patch 2 §3: + propellant and SIGNATURE — sig is the critical field
+      // (it tells you who the Hunter is coming for; the bait play is only
+      // playable if you can see who is louder). Still nothing of what they
+      // SEE — the no-datalink invariant is pinned in tests/coop.test.ts.
       allies: this.alliesOf(ship).map((t) => ({
         id: t.id,
         callsign: t.callsign,
@@ -5593,6 +5650,8 @@ export class Sim {
         thrustOut: effectiveThrust(t),
         hull: t.hull,
         hullMax: hullMaxOf(t),
+        propellant: Math.round(t.propellant),
+        sig: Math.round(this.signatureOf(t)),
       })),
       rumbles,
       comms,

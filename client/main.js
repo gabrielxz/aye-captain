@@ -500,6 +500,23 @@ function updateHUDFromSnapshot(snap) {
     { label: "HULL", value: `${you.hull}`, cls: you.hull <= 35 ? "alert" : you.hull <= 65 ? "warn" : "" },
     { label: "EN HULL", value: enemyHull, cls: idContact && idContact.hull <= (idContact.hullMax ?? 100) / 2 ? "good" : "" },
     { label: "CONTACTS", value: contactsLine, cls: contacts.some((c) => c.tier >= 2) ? "good" : contacts.length ? "warn" : "", full: true },
+    // Patch 2 §3: the teammate strip — SIG is the critical field (it says
+    // who the Hunter is coming for; ▲ marks whoever is louder right now).
+    // Campaign co-op only; placement is temporary (§3b — Patch 3 is the
+    // panel redesign). Never their contacts: the strip is transponder data.
+    ...(you.mission
+      ? (snap.allies ?? []).map((t) => {
+          const km = Math.hypot(t.x - you.x, t.y - you.y) / 1000;
+          const brg = Math.round((Math.atan2(t.x - you.x, t.y - you.y) * 180) / Math.PI + 360) % 360;
+          const louder = (t.sig ?? 0) > (you.signature ?? 0);
+          return {
+            label: (t.callsign ?? t.id).toUpperCase(),
+            value: `hull ${Math.round((t.hull / (t.hullMax || 100)) * 100)}% · SIG ${t.sig ?? "—"}${louder ? "▲" : ""} · prop ${t.propellant ?? "—"} · ${km.toFixed(0)} km brg ${String(brg).padStart(3, "0")}`,
+            cls: t.hull <= (t.hullMax || 100) * 0.35 ? "alert" : louder ? "warn" : "good",
+            full: true,
+          };
+        })
+      : []),
     // campaign: the mission clock + the gate approach solution + the
     // transfer. Server-owned numbers, PING-LIT-style rendering — no
     // client timers.

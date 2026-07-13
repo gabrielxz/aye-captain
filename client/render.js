@@ -1412,6 +1412,16 @@ function drawInset(you) {
     ctx.fill();
   }
 
+  // teammates on the overview too (Patch 2 §3: "on the map and in the
+  // inset at all times") — transponder position only, nothing of theirs
+  for (const t of state.lastSnap.allies ?? []) {
+    const [ax, ay] = toInset(t.x, t.y);
+    ctx.fillStyle = COLORS.ally;
+    ctx.beginPath();
+    ctx.arc(ax, ay, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
   // spectator: both ships, same colors as the main view
   for (const s of state.lastSnap.ships ?? []) {
     const [px, py] = toInset(s.x, s.y);

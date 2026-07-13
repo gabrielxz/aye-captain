@@ -228,4 +228,63 @@ const fakeWs = () => {
   match.destroy();
 }
 
+// ---------- §3: the teammate strip + the XO loudness read ----------
+
+// 9. Transponders carry propellant + SIGNATURE (the strip's critical
+// field) — and sig is the LIVE emitted signature, not a stat.
+{
+  const sim = coopSim([-160000, 0], [0, 0]);
+  const b = sim.ships.get("B")!;
+  b.thrust = 100;
+  sim.tick();
+  const ally = ((sim.snapshotFor("A") as any).allies as any[]).find((t) => t.id === "B");
+  assert(typeof ally.propellant === "number", "transponder carries propellant");
+  assert(Math.abs(ally.sig - Math.round(sim.signatureOf(b))) < 1, "transponder sig is the LIVE signature (burning reads loud)");
+}
+
+// 10. The XO calls the loudness flip — each captain gets their side, NEWS
+// tier, edge-triggered, margin-guarded, rate-limited, hunter-gated.
+{
+  const sim = coopSim([-100000, 0], [0, 0], { hunterSpawned: true, hunterIds: ["H"] });
+  sim.addShip("H", 150000, 150000, 180);
+  const a = sim.ships.get("A")!;
+  const b = sim.ships.get("B")!;
+
+  // both idle: too close to call — silence
+  let ev = sim.tick();
+  assert(!ev.some((e) => e.kind === "notice" && /loudest/.test((e as any).text)), "equal signatures: too close to call, no headline");
+
+  // A burns: the read fires once, both sides
+  a.thrust = 100;
+  ev = sim.tick();
+  const mineA = ev.filter((e) => e.kind === "notice" && (e as any).ship === "A" && /We're the loudest/.test((e as any).text));
+  const otherB = ev.filter((e) => e.kind === "notice" && (e as any).ship === "B" && /loudest thing on the board/.test((e as any).text));
+  assert(mineA.length === 1, "the loud captain hears 'we're the loudest'");
+  assert(otherB.length === 1 && new RegExp(a.callsign).test((otherB[0] as any).text), "the quiet captain hears WHO is loudest, by callsign");
+  assert(!/km|\d\d\d/.test((otherB[0] as any).speak ?? ""), "the spoken variant is a fixed line (TTS economy)");
+
+  // still burning: no repeat
+  ev = sim.tick();
+  assert(!ev.some((e) => e.kind === "notice" && /loudest/.test((e as any).text)), "no repeat while nothing changes");
+
+  // the flip: A cuts, B burns — but the cooldown holds the call, then it fires
+  a.thrust = 0;
+  b.thrust = 100;
+  let flipTick = -1;
+  for (let t = 0; t < C.LOUD_CALL_COOLDOWN_S + 5 && flipTick < 0; t++) {
+    ev = sim.tick();
+    if (ev.some((e) => e.kind === "notice" && (e as any).ship === "B" && /We're the loudest/.test((e as any).text))) flipTick = t;
+  }
+  assert(flipTick >= 0, "the flip is the moment the bait play turns — and the player hears it");
+  assert(flipTick >= C.LOUD_CALL_COOLDOWN_S - 3, "…rate-limited hard, not chatty");
+}
+
+// 11. No Hunter on the board: the read stays quiet (nothing is listening).
+{
+  const sim = coopSim([-100000, 0], [0, 0]); // hunterSpawned false
+  sim.ships.get("A")!.thrust = 100;
+  const ev = sim.tick();
+  assert(!ev.some((e) => e.kind === "notice" && /loudest/.test((e as any).text)), "no hunter listening: no loudness headline");
+}
+
 console.log("done: coop");
