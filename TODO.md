@@ -30,6 +30,12 @@ shroud line) and the how-to-play CAMPAIGN tab.
   Hunter's first desperation PING land as a moment (HUNTER_DRY_SPELL_S
   75 is a first guess)? Dev knobs: `{"mission":{"sigMult":..,
   "sensorMult":..,"hunterSpawnS":..}}`.
+- [ ] **Turn-rate tuning pass wanted** (Gabriel, 2026-07-12, end of the
+  release session): turning feels off — no specifics captured yet, just
+  the instinct. Turn rates are archetype identity (28/20/14 °/s) and
+  LOAD-BEARING in the aperture derivation (campaign.test.ts pins the
+  per-archetype gate envelope to live accel/turn constants — retune the
+  two together, and expect that test to force the conversation).
 - [ ] Ladder numbers are FIRST-DRAFT (rows 3-8 multipliers/contents were
   never flown) — expect a tuning pass from the playtest.
 - [ ] Wreck contents/counts (2 marked + 3 rumored, 35% dry rumors outside
