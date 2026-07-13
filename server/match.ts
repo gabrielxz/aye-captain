@@ -336,7 +336,7 @@ export class Match {
     const pylonIdx: [number, number] = [sim.terrain.rocks.length - 2, sim.terrain.rocks.length - 1];
     const row = C.CAMPAIGN_LADDER[run.system - 1];
     sim.mission = {
-      playerId: "A",
+      playerIds: ["A"],
       system: run.system,
       systemName: row.name,
       gate: { x: gx, y: gy, apertureW: C.APERTURE_W_M },
@@ -346,14 +346,14 @@ export class Match {
       hunters: row.hunters.map((h) => ({ ...h })), // dev-harness tunes copies, never the table
       spawnLine: row.spawnLine,
       wrecks: Match.generateWrecks(seed, sim),
-      salvaging: null,
+      salvaging: {},
       cleared: false,
       stats: { huntersKilled: 0, salvaged: 0, pingsFired: 0, upgrades: 0 },
       haul: [],
       decoyTaught: false,
       upgradeCounts: { sig: 0, sensor: 0, accel: 0, hull: 0 },
-      solGood: false,
-      solCooldownS: 0,
+      solGood: {},
+      solCooldownS: {},
       gateCloseS: null,
       gateCloseCalled: 0,
       pylonIdx,
@@ -398,7 +398,7 @@ export class Match {
   // to localStorage, and comes back at the next system start.
   private exportRun(nextSystem: number): CampaignRun {
     const m = this.sim.mission!;
-    const ship = this.sim.ships.get(m.playerId);
+    const ship = this.sim.ships.get(m.playerIds[0]);
     const durationS = this.sim.tickCount / C.TICK_RATE_HZ;
     return {
       system: nextSystem,
@@ -431,7 +431,7 @@ export class Match {
   // six" beats "score: 14,850").
   private runSummary(systemsCleared: number): Record<string, unknown> {
     const m = this.sim.mission;
-    const ship = m ? this.sim.ships.get(m.playerId) : undefined;
+    const ship = m ? this.sim.ships.get(m.playerIds[0]) : undefined;
     const durationS = this.sim.tickCount / C.TICK_RATE_HZ;
     return {
       systemsCleared,

@@ -17,7 +17,7 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
   const sim = new Sim(); // empty terrain: exact fields by hand
   sim.addShip("A", 0, -C.SPAWN_RING_RADIUS_M, 0);
   sim.mission = {
-    playerId: "A",
+    playerIds: ["A"],
     system: 2, // "Sharp Ears" — the Stage 0 baseline row
     systemName: "Sharp Ears",
     gate: { x: 0, y: C.REGION_RADIUS_M, apertureW: C.APERTURE_W_M },
@@ -27,14 +27,14 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
     hunters: [{ archetype: "corvette", sensorMult: C.HUNTER_SENSOR_MULT, sigMult: C.HUNTER_SIG_MULT, gateCamp: false }],
     spawnLine: "Clock's run out, Captain — a drive just lit off in-system.",
     wrecks: [],
-    salvaging: null,
+    salvaging: {},
     cleared: false,
     stats: { huntersKilled: 0, salvaged: 0, pingsFired: 0, upgrades: 0 },
     haul: [],
     decoyTaught: false,
     upgradeCounts: { sig: 0, sensor: 0, accel: 0, hull: 0 },
-    solGood: false,
-    solCooldownS: 0,
+    solGood: {},
+    solCooldownS: {},
     gateCloseS: null,
     gateCloseCalled: 0,
     pylonIdx: null, // hand-built sims have no pylon rocks to move
@@ -911,7 +911,7 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
   const a = sim.addShip("A", 0, -C.REGION_RADIUS_M, 0, false, null, undefined, "cruiser");
   sim.mission = {
     ...(missionSim().mission as Mission),
-    playerId: "A",
+    playerIds: ["A"],
     hunterSpawned: true,
     gateCloseS: C.GATE_CLOSE_GRACE_S, // the narrowing begins NOW
   };

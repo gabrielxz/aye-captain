@@ -465,7 +465,9 @@ export interface Wreck {
 // campaign sim, absent on every multiplayer sim — the presence of this
 // object is the ONLY gate to any campaign behavior in here.
 export interface Mission {
-  playerId: ShipId;
+  // Patch 2 "Two Ships" step 0 (Anvil §9): the mission knows its CAPTAINS
+  // as a list — every consumer iterates. Solo is the one-element case.
+  playerIds: ShipId[];
   system: number; // 1-based ladder row (CAMPAIGN_LADDER[system - 1])
   systemName: string; // "The Drifter" ... "The Wolfpack" — the XO names it
   // gate center sits ON the region rim; the aperture segment is the rim
@@ -480,7 +482,9 @@ export interface Mission {
   hunters: C.HunterSpec[];
   spawnLine: string; // clock-zero XO line; NEVER carries a bearing (§7.1)
   wrecks: Wreck[];
-  salvaging: { wreckId: number; t: number } | null; // active transfer clock
+  // active transfer clocks, one per captain (two ships can strip two
+  // wrecks at once — or race each other down one)
+  salvaging: Record<ShipId, { wreckId: number; t: number }>;
   cleared: boolean; // aperture crossed — the system is over (transition or final win)
   // run bookkeeping for the §9 summary + §6 progression export
   stats: { huntersKilled: number; salvaged: number; pingsFired: number; upgrades: number };
@@ -493,9 +497,10 @@ export interface Mission {
   // run state at system clear (counts, not multipliers: the client's
   // localStorage carries counts and the server re-derives the multipliers)
   upgradeCounts: { sig: number; sensor: number; accel: number; hull: number };
-  // gate-solution XO bookkeeping (edge-triggered, rate-limited)
-  solGood: boolean;
-  solCooldownS: number;
+  // gate-solution XO bookkeeping (edge-triggered, rate-limited, per captain
+  // — each ship flies its own approach)
+  solGood: Record<ShipId, boolean>;
+  solCooldownS: Record<ShipId, number>;
   // Anvil §4: seconds since the LAST Hunter died (null = gate stable);
   // gateCloseCalled counts the 50%/25% NEWS lines already spoken; pylonIdx
   // holds the two pylon rocks' indices in terrain.rocks so the physical
@@ -875,6 +880,22 @@ export class Sim {
     return aOwner === bOwner || (aTeam != null && aTeam === bTeam);
   }
 
+  // Campaign step-0 helpers (Patch 2): the mission's captains, as living
+  // ships. Every mission consumer iterates these — no singular-player
+  // assumption survives anywhere below.
+  isMissionPlayer(id: ShipId): boolean {
+    return this.mission !== null && this.mission.playerIds.includes(id);
+  }
+
+  missionPlayers(): Ship[] {
+    const out: Ship[] = [];
+    for (const id of this.mission?.playerIds ?? []) {
+      const s = this.ships.get(id);
+      if (s) out.push(s);
+    }
+    return out;
+  }
+
   // v5 §2 hostility: everyone in FFA (team null); teammates never.
   isHostile(a: Ship, b: Ship): boolean {
     return a.id !== b.id && (a.team === null || b.team === null || a.team !== b.team);
@@ -1133,7 +1154,7 @@ export class Sim {
         if (mtype === "gate_run") {
           // campaign only: the XO threads the aperture — from close and slow
           const m = this.mission;
-          if (!m || ship.id !== m.playerId) return "No gate out here, Captain.";
+          if (!m || !this.isMissionPlayer(ship.id)) return "No gate out here, Captain.";
           const d = dist(ship.x, ship.y, m.gate.x, m.gate.y);
           if (d > C.GATE_ASSIST_RANGE_M) {
             return "The gate's too far for me to take her through, Captain — get us inside fifteen klicks.";
@@ -1161,7 +1182,7 @@ export class Sim {
         // transfer; dry -> he calls it and the maneuver ends). Any
         // thrust/heading order aborts; landed items stay aboard.
         const m = this.mission;
-        if (!m || ship.id !== m.playerId) return "Nothing to salvage out here, Captain.";
+        if (!m || !this.isMissionPlayer(ship.id)) return "Nothing to salvage out here, Captain.";
         const isCandidate = (w: Wreck) => w.items.length > 0 || (!w.marked && !w.checked);
         const noun = (w: Wreck) => (w.marked || w.checked ? "Wreck" : "Rumor");
         let target: Wreck | undefined;
@@ -1255,7 +1276,7 @@ export class Sim {
         ship.pingRevealS = C.PING_REVEAL_S;
         ship.pingGrantS = C.PING_TRACK_S;
         // campaign §9: "pings fired" is a run-summary stat (a confession)
-        if (this.mission && ship.id === this.mission.playerId) this.mission.stats.pingsFired += 1;
+        if (this.isMissionPlayer(ship.id)) this.mission!.stats.pingsFired += 1;
         ship.pingGrantShips = new Set();
         ship.pingGrantDecoys = new Set();
         ship.pingGrantMissiles = new Set();
@@ -1622,12 +1643,11 @@ export class Sim {
         // a decoy dropped mid-burn holds your OLD course — the lie only
         // works if you then change yours. Teach, don't nag.
         if (
-          this.mission &&
-          ship.id === this.mission.playerId &&
-          !this.mission.decoyTaught &&
+          this.isMissionPlayer(ship.id) &&
+          !this.mission!.decoyTaught &&
           effectiveThrust(ship) >= 60
         ) {
-          this.mission.decoyTaught = true;
+          this.mission!.decoyTaught = true;
           events.push({
             kind: "notice",
             ship: ship.id,
@@ -2218,22 +2238,32 @@ export class Sim {
     // buys the system, not the match (spec §2.3) — the quiet line is the
     // reward, and the player still has to fly out. Player death loses.
     if (this.mission) {
-      const player = this.ships.get(this.mission.playerId);
-      if (player) {
-        if (this.mission.hunterSpawned && this.hostilesOf(player).length === 0) {
-          events.push({
-            kind: "notice",
-            ship: player.id,
-            text: "It's gone quiet, Captain. The system is ours.",
-          });
+      const players = this.missionPlayers();
+      if (players.length > 0) {
+        // Every surviving captain must be clear of hostiles (co-op captains
+        // share a team, so the Hunter pack is the only hostile set). Both
+        // lines fire exactly once, on the arming transition — in co-op a
+        // later PLAYER death re-enters this branch and must not re-announce.
+        if (
+          this.mission.hunterSpawned &&
+          this.mission.gateCloseS === null &&
+          players.every((p) => this.hostilesOf(p).length === 0)
+        ) {
+          for (const p of players) {
+            events.push({
+              kind: "notice",
+              ship: p.id,
+              text: "It's gone quiet, Captain. The system is ours.",
+            });
+          }
           // Anvil §4: the LAST Hunter's death destabilizes the gate — the
           // bounty and the clock arrive in the same breath. CRITICAL: this
           // is the sentence that turns the loot run into a decision.
-          if (this.mission.gateCloseS === null) {
-            this.mission.gateCloseS = 0;
+          this.mission.gateCloseS = 0;
+          for (const p of players) {
             events.push({
               kind: "notice",
-              ship: player.id,
+              ship: p.id,
               text: "The gate's destabilizing, Captain. She's closing.",
               alert: true,
             });
@@ -2241,7 +2271,7 @@ export class Sim {
         }
         return;
       }
-      // the player is dead: the system wins
+      // every captain is dead: the system wins
       const hunter = this.mission.hunterIds.map((id) => this.ships.get(id)).find(Boolean);
       this.winner = hunter?.id ?? "nobody";
       const placements = [...(hunter ? [hunter.id] : []), ...[...this.placements].reverse()];
@@ -2765,7 +2795,7 @@ export class Sim {
       // BEFORE applyBounds on purpose: the gate sits ON the rim, so the
       // crossing and the zone exit land in the same substep — `cleared`
       // must be set first or the shroud line doubles the exit call.
-      if (this.mission && ship.id === this.mission.playerId) {
+      if (this.isMissionPlayer(ship.id)) {
         this.checkGateCrossing(ship, preX, preY, events);
       }
       this.applyBounds(ship, events, dt);
@@ -4039,7 +4069,7 @@ export class Sim {
     if (!ship.maneuver) return;
     const mtype = ship.maneuver.type;
     ship.maneuver = null;
-    if (mtype === "salvage" && this.mission) this.mission.salvaging = null;
+    if (mtype === "salvage" && this.mission) delete this.mission.salvaging[ship.id];
     if (!ship.isDrone) {
       events.push({
         kind: "notice",
@@ -4178,7 +4208,7 @@ export class Sim {
           if (ship.propellant <= 0) {
             ship.maneuver = null;
             ship.thrust = 0;
-            if (this.mission) this.mission.salvaging = null;
+            if (this.mission) delete this.mission.salvaging[ship.id];
             events.push({ kind: "notice", ship: ship.id, text: "Tanks dry — I can't finish the stop, Captain.", alert: true });
             return;
           }
@@ -4213,7 +4243,7 @@ export class Sim {
     if (ship.propellant <= 0) {
       ship.maneuver = null;
       ship.thrust = 0;
-      if (this.mission) this.mission.salvaging = null;
+      if (this.mission) delete this.mission.salvaging[ship.id];
       events.push({
         kind: "notice",
         ship: ship.id,
@@ -4319,7 +4349,7 @@ export class Sim {
         // campaign: crossing the gate IS leaving the shroud — "We're
         // through, Captain" already said it (playtest finding: the two
         // lines doubled every exit)
-        if (!(this.mission?.cleared && ship.id === this.mission.playerId)) {
+        if (!(this.mission?.cleared && this.isMissionPlayer(ship.id))) {
           events.push({
             kind: "notice",
             ship: ship.id,
@@ -4369,7 +4399,9 @@ export class Sim {
     // 1.1 §3b: the grace ends AUDIBLY — "closing in 3:12" and "closing NOW"
     // must never blur (the playtest couldn't tell which the timer meant)
     if (m.gateCloseS === C.GATE_CLOSE_GRACE_S) {
-      events.push({ kind: "notice", ship: m.playerId, text: "The gate's started to close, Captain." });
+      for (const p of this.missionPlayers()) {
+        events.push({ kind: "notice", ship: p.id, text: "The gate's started to close, Captain." });
+      }
     }
     const ap = this.gateApertureNow();
     if (m.pylonIdx) {
@@ -4388,14 +4420,16 @@ export class Sim {
       [0.25, "Quarter aperture — she's nearly shut, Captain."],
     ];
     while (m.gateCloseCalled < calls.length && ap / m.gate.apertureW <= calls[m.gateCloseCalled][0]) {
-      events.push({ kind: "notice", ship: m.playerId, text: calls[m.gateCloseCalled][1] });
+      for (const p of this.missionPlayers()) {
+        events.push({ kind: "notice", ship: p.id, text: calls[m.gateCloseCalled][1] });
+      }
       m.gateCloseCalled += 1;
     }
     if (m.gateCloseS >= C.GATE_CLOSE_GRACE_S + C.GATE_CLOSE_DURATION_S) {
-      const player = this.ships.get(m.playerId);
-      if (!player) return; // a death already ended the run
+      const players = this.missionPlayers();
+      if (players.length === 0) return; // a death already ended the run
       this.winner = "nobody";
-      const placements = [player.id, ...[...this.placements].reverse()];
+      const placements = [...players.map((p) => p.id), ...[...this.placements].reverse()];
       events.push({
         kind: "gameover",
         winner: this.winner,
@@ -4427,14 +4461,18 @@ export class Sim {
   private spawnHunter(events: SimEvent[]): void {
     const m = this.mission!;
     m.hunterSpawned = true;
-    const player = this.ships.get(m.playerId);
-    if (!player) return; // nobody left to hunt
+    const players = this.missionPlayers();
+    if (players.length === 0) return; // nobody left to hunt
     const ring = C.REGION_RADIUS_M * C.HUNTER_SPAWN_RADIUS_FRAC;
     const placed: { x: number; y: number }[] = [];
     m.hunters.forEach((spec, i) => {
       const stats = C.ARCHETYPES[spec.archetype];
       const hunterSig = (stats.sigBase + C.HUNTER_HUNT_THROTTLE) * spec.sigMult;
-      const floor = this.detectionRange(hunterSig, player) * C.HUNTER_SPAWN_DETECT_MARGIN;
+      // the hard floor holds against EVERY captain's live sensors — no
+      // pop-in on anyone's board (each ship's own sensorMult applies)
+      const floors = players.map(
+        (p) => this.detectionRange(hunterSig, p) * C.HUNTER_SPAWN_DETECT_MARGIN
+      );
       let pos: { x: number; y: number } | null = null;
       let bestScore = -Infinity;
       let fallback = { x: 0, y: ring };
@@ -4443,12 +4481,12 @@ export class Sim {
         const [dx, dy] = headingVec(k * 5);
         const x = dx * ring;
         const y = dy * ring;
-        const dPlayer = dist(x, y, player.x, player.y);
+        const dPlayer = Math.min(...players.map((p) => dist(x, y, p.x, p.y)));
         if (dPlayer > fallbackDist) {
           fallbackDist = dPlayer;
           fallback = { x, y };
         }
-        if (dPlayer < floor) continue; // the hard floor
+        if (players.some((p, j) => dist(x, y, p.x, p.y) < floors[j])) continue; // the hard floor
         // pack spacing: two bearings at once should be two BEARINGS
         const dPack = placed.length
           ? Math.min(...placed.map((p) => dist(x, y, p.x, p.y)))
@@ -4484,7 +4522,9 @@ export class Sim {
     // the notice carries NO bearing (spec §7.1: the spawn conveys none) —
     // the hearing channel does its own honest work from here. The line is
     // the ladder row's: the player learns to fear a word (§3).
-    events.push({ kind: "notice", ship: m.playerId, text: m.spawnLine, alert: true });
+    for (const p of players) {
+      events.push({ kind: "notice", ship: p.id, text: m.spawnLine, alert: true });
+    }
   }
 
   // The Hunter's tick: its ONLY input is its own wire snapshot (+ public
@@ -4522,27 +4562,30 @@ export class Sim {
   // A dry hole is announced once and struck off the map.
   private stepRumors(events: SimEvent[]): void {
     const m = this.mission!;
-    const player = this.ships.get(m.playerId);
-    if (!player) return;
-    for (const w of m.wrecks) {
-      if (w.marked || w.checked) continue;
-      if (dist(player.x, player.y, w.x, w.y) > C.RUMOR_RESOLVE_RANGE_M) continue;
-      w.checked = true;
-      events.push(
-        w.items.length > 0
-          ? {
-              kind: "notice",
-              ship: player.id,
-              text: `Rumor ${w.letter} is a wreck alright, Captain — ${w.items.length} piece${w.items.length === 1 ? "" : "s"} worth taking.`,
-              speak: `Rumor ${w.letter} is a wreck alright, Captain. Worth taking.`,
-            }
-          : {
-              kind: "notice",
-              ship: player.id,
-              text: `Nothing at rumor ${w.letter}, Captain — a dry hole.`,
-              speak: `Nothing at rumor ${w.letter}, Captain. A dry hole.`,
-            }
-      );
+    for (const player of this.missionPlayers()) {
+      for (const w of m.wrecks) {
+        if (w.marked || w.checked) continue;
+        if (dist(player.x, player.y, w.x, w.y) > C.RUMOR_RESOLVE_RANGE_M) continue;
+        // co-op: whoever gets there eyeballs it; the shared wreck board
+        // updates on everyone's map (the XO line goes to the resolver —
+        // telling your partner what you found is the game, §0)
+        w.checked = true;
+        events.push(
+          w.items.length > 0
+            ? {
+                kind: "notice",
+                ship: player.id,
+                text: `Rumor ${w.letter} is a wreck alright, Captain — ${w.items.length} piece${w.items.length === 1 ? "" : "s"} worth taking.`,
+                speak: `Rumor ${w.letter} is a wreck alright, Captain. Worth taking.`,
+              }
+            : {
+                kind: "notice",
+                ship: player.id,
+                text: `Nothing at rumor ${w.letter}, Captain — a dry hole.`,
+                speak: `Nothing at rumor ${w.letter}, Captain. A dry hole.`,
+              }
+        );
+      }
     }
   }
 
@@ -4552,63 +4595,66 @@ export class Sim {
   // are already aboard).
   private stepSalvage(events: SimEvent[]): void {
     const m = this.mission!;
-    const player = this.ships.get(m.playerId);
-    const man = player?.maneuver;
-    if (!player || !man || man.type !== "salvage") {
-      m.salvaging = null;
-      return;
-    }
-    const wreck = m.wrecks.find((w) => w.id === man.wreckId);
-    if (!wreck || wreck.items.length === 0) {
-      player.maneuver = null;
-      m.salvaging = null;
-      return;
-    }
-    if (dist(player.x, player.y, wreck.x, wreck.y) > C.SALVAGE_DOCK_RANGE_M) {
-      // out of dock range: an ACTIVE transfer breaks (we drifted off);
-      // a not-yet-started one is just the XO still flying the approach
-      if (m.salvaging) {
-        player.maneuver = null;
-        m.salvaging = null;
-        events.push({ kind: "notice", ship: player.id, text: "We've drifted off the wreck, Captain." });
+    for (const player of this.missionPlayers()) {
+      const man = player.maneuver;
+      if (!man || man.type !== "salvage") {
+        delete m.salvaging[player.id];
+        continue;
       }
-      return;
-    }
-    // Anvil §3a: the transfer gate is RELATIVE — |v_ship − v_wreck| under
-    // the stop speed. Static wrecks have v = 0: nothing about them changes.
-    // To loot a hulk you adopt the dead Hunter's escape vector; the
-    // momentum is the price (§3d — no timer, no penalty on top).
-    if (
-      Math.hypot(player.vx - (wreck.vx ?? 0), player.vy - (wreck.vy ?? 0)) >=
-      C.SALVAGE_STOP_SPEED_MPS
-    )
-      return; // still matching velocity
-    if (!wreck.checked) wreck.checked = true; // docking is the closest look there is
-    if (!m.salvaging || m.salvaging.wreckId !== wreck.id) {
-      m.salvaging = { wreckId: wreck.id, t: 0 };
-      // the count sets the captain's expectations up front (playtest:
-      // "I wasn't sure how long the process was going to take")
-      events.push({
-        kind: "notice",
-        ship: player.id,
-        text: `Alongside. Transfer's running — ${wreck.items.length} piece${wreck.items.length === 1 ? "" : "s"} to move, Captain.`,
-        speak: "Alongside. Transfer's running, Captain.",
-      });
-    }
-    m.salvaging.t += 1;
-    if (m.salvaging.t < C.SALVAGE_ITEM_S) return;
-    m.salvaging.t = 0;
-    const item = wreck.items.shift()!; // worst first — the last item is the reason to stay
-    this.applySalvageItem(player, item, events);
-    m.stats.salvaged += 1;
-    if (wreck.items.length === 0) {
-      player.maneuver = null;
-      m.salvaging = null;
-      events.push({ kind: "notice", ship: player.id, text: "That's the last of it — wreck's stripped, Captain." });
-    } else if (wreck.items[wreck.items.length - 1].kind === "upgrade" && wreck.items.length === 1) {
-      // the §4.2 teaser: you are stationary, listening to a rumble grow,
-      // deciding whether the last item is worth it
-      events.push({ kind: "notice", ship: player.id, text: "There's something else in here, Captain — big. Stay put." });
+      const wreck = m.wrecks.find((w) => w.id === man.wreckId);
+      if (!wreck || wreck.items.length === 0) {
+        player.maneuver = null;
+        delete m.salvaging[player.id];
+        continue;
+      }
+      if (dist(player.x, player.y, wreck.x, wreck.y) > C.SALVAGE_DOCK_RANGE_M) {
+        // out of dock range: an ACTIVE transfer breaks (we drifted off);
+        // a not-yet-started one is just the XO still flying the approach
+        if (m.salvaging[player.id]) {
+          player.maneuver = null;
+          delete m.salvaging[player.id];
+          events.push({ kind: "notice", ship: player.id, text: "We've drifted off the wreck, Captain." });
+        }
+        continue;
+      }
+      // Anvil §3a: the transfer gate is RELATIVE — |v_ship − v_wreck| under
+      // the stop speed. Static wrecks have v = 0: nothing about them changes.
+      // To loot a hulk you adopt the dead Hunter's escape vector; the
+      // momentum is the price (§3d — no timer, no penalty on top).
+      if (
+        Math.hypot(player.vx - (wreck.vx ?? 0), player.vy - (wreck.vy ?? 0)) >=
+        C.SALVAGE_STOP_SPEED_MPS
+      )
+        continue; // still matching velocity
+      if (!wreck.checked) wreck.checked = true; // docking is the closest look there is
+      let sv = m.salvaging[player.id];
+      if (!sv || sv.wreckId !== wreck.id) {
+        sv = { wreckId: wreck.id, t: 0 };
+        m.salvaging[player.id] = sv;
+        // the count sets the captain's expectations up front (playtest:
+        // "I wasn't sure how long the process was going to take")
+        events.push({
+          kind: "notice",
+          ship: player.id,
+          text: `Alongside. Transfer's running — ${wreck.items.length} piece${wreck.items.length === 1 ? "" : "s"} to move, Captain.`,
+          speak: "Alongside. Transfer's running, Captain.",
+        });
+      }
+      sv.t += 1;
+      if (sv.t < C.SALVAGE_ITEM_S) continue;
+      sv.t = 0;
+      const item = wreck.items.shift()!; // worst first — the last item is the reason to stay
+      this.applySalvageItem(player, item, events);
+      m.stats.salvaged += 1;
+      if (wreck.items.length === 0) {
+        player.maneuver = null;
+        delete m.salvaging[player.id];
+        events.push({ kind: "notice", ship: player.id, text: "That's the last of it — wreck's stripped, Captain." });
+      } else if (wreck.items[wreck.items.length - 1].kind === "upgrade" && wreck.items.length === 1) {
+        // the §4.2 teaser: you are stationary, listening to a rumble grow,
+        // deciding whether the last item is worth it
+        events.push({ kind: "notice", ship: player.id, text: "There's something else in here, Captain — big. Stay put." });
+      }
     }
   }
 
@@ -4716,33 +4762,34 @@ export class Sim {
   // in the transcript; the voice gets fixed strings (v4.7.1 TTS doctrine).
   private updateGateXO(events: SimEvent[]): void {
     const m = this.mission!;
-    m.solCooldownS = Math.max(0, m.solCooldownS - 1);
-    const player = this.ships.get(m.playerId);
-    if (!player) return;
-    const sol = this.gateSolution(player);
-    if (sol === null) {
-      m.solGood = false; // reset silently — turning away is not news
-      return;
-    }
-    if (sol.good !== m.solGood && m.solCooldownS <= 0) {
-      if (sol.good) {
-        events.push({
-          kind: "notice",
-          ship: player.id,
-          text: `Solution good, Captain. ${Math.max(1, Math.round(sol.ttg))} seconds.`,
-          speak: "Solution good, Captain.",
-        });
-      } else {
-        const km = (sol.missM / 1000).toFixed(1);
-        events.push({
-          kind: "notice",
-          ship: player.id,
-          text: `We're wide — ${km} km ${sol.side}.`,
-          speak: `We're wide ${sol.side}, Captain.`,
-        });
+    for (const player of this.missionPlayers()) {
+      const cd = Math.max(0, (m.solCooldownS[player.id] ?? 0) - 1);
+      m.solCooldownS[player.id] = cd;
+      const sol = this.gateSolution(player);
+      if (sol === null) {
+        m.solGood[player.id] = false; // reset silently — turning away is not news
+        continue;
       }
-      m.solGood = sol.good;
-      m.solCooldownS = C.GATE_XO_COOLDOWN_S;
+      if (sol.good !== (m.solGood[player.id] ?? false) && cd <= 0) {
+        if (sol.good) {
+          events.push({
+            kind: "notice",
+            ship: player.id,
+            text: `Solution good, Captain. ${Math.max(1, Math.round(sol.ttg))} seconds.`,
+            speak: "Solution good, Captain.",
+          });
+        } else {
+          const km = (sol.missM / 1000).toFixed(1);
+          events.push({
+            kind: "notice",
+            ship: player.id,
+            text: `We're wide — ${km} km ${sol.side}.`,
+            speak: `We're wide ${sol.side}, Captain.`,
+          });
+        }
+        m.solGood[player.id] = sol.good;
+        m.solCooldownS[player.id] = C.GATE_XO_COOLDOWN_S;
+      }
     }
   }
 
@@ -4879,8 +4926,8 @@ export class Sim {
     // campaign: the mission picture — the gate is a landmark the XO must
     // be able to talk about (playtest 2026-07-12: "I referenced the gate
     // and the XO thought I meant an enemy contact")
-    if (this.mission && id === this.mission.playerId) {
-      const m = this.mission;
+    if (this.isMissionPlayer(id)) {
+      const m = this.mission!;
       const gBearing = fmtBearing(bearingTo(ship.x, ship.y, m.gate.x, m.gate.y));
       const gRange = (dist(ship.x, ship.y, m.gate.x, m.gate.y) / 1000).toFixed(0);
       const alive = m.hunterIds.filter((h) => this.ships.has(h)).length;
@@ -4907,10 +4954,11 @@ export class Sim {
             .join("; ")}. Within ${C.SALVAGE_APPROACH_RANGE_M / 1000} km the salvage verb (target = the letter) flies the whole approach and transfer ("come alongside rumor A"). Beyond that, steer for its bearing first and SAY the fifteen-klick rule.`
         );
       }
-      if (m.salvaging) {
-        const left = m.wrecks.find((w) => w.id === m.salvaging!.wreckId)?.items.length ?? 0;
+      const sv = m.salvaging[id];
+      if (sv) {
+        const left = m.wrecks.find((w) => w.id === sv.wreckId)?.items.length ?? 0;
         lines.push(
-          `SALVAGE TRANSFER RUNNING: next item in ${Math.max(0, C.SALVAGE_ITEM_S - m.salvaging.t)}s, ${left} left aboard the wreck. Any thrust or heading order breaks off (we keep what's landed).`
+          `SALVAGE TRANSFER RUNNING: next item in ${Math.max(0, C.SALVAGE_ITEM_S - sv.t)}s, ${left} left aboard the wreck. Any thrust or heading order breaks off (we keep what's landed).`
         );
       }
     }
@@ -5217,7 +5265,7 @@ export class Sim {
         // campaign: everything the XO may say about the run — all of it
         // fixed public geometry + own bookkeeping, zero fog surface
         const m = this.mission;
-        if (!m || id !== m.playerId) return { note: "no mission — this is not a campaign match" };
+        if (!m || !this.isMissionPlayer(id)) return { note: "no mission — this is not a campaign match" };
         return {
           system: `${m.system} of ${C.CAMPAIGN_SYSTEMS}`,
           system_name: m.systemName,
@@ -5439,44 +5487,47 @@ export class Sim {
         // hunterActive is deliberately honest about the pack's death even
         // if unobserved: the XO's quiet line already told them (spec §2.3
         // — the relief IS the reward).
-        ...(this.mission && id === this.mission.playerId
+        ...(this.isMissionPlayer(id)
           ? {
               mission: {
-                system: this.mission.system,
-                systemName: this.mission.systemName,
-                spawnInS: this.mission.hunterSpawned
+                system: this.mission!.system,
+                systemName: this.mission!.systemName,
+                spawnInS: this.mission!.hunterSpawned
                   ? 0
-                  : Math.max(0, this.mission.hunterSpawnS - this.tickCount),
-                hunterActive: this.mission.hunterIds.some((h) => this.ships.has(h)),
-                salvaging: this.mission.salvaging
-                  ? {
-                      wreckId: this.mission.salvaging.wreckId,
-                      nextInS: Math.max(0, C.SALVAGE_ITEM_S - this.mission.salvaging.t),
-                      itemS: C.SALVAGE_ITEM_S,
-                      itemsLeft:
-                        this.mission.wrecks.find((w) => w.id === this.mission!.salvaging!.wreckId)
-                          ?.items.length ?? 0,
-                    }
-                  : null,
+                  : Math.max(0, this.mission!.hunterSpawnS - this.tickCount),
+                hunterActive: this.mission!.hunterIds.some((h) => this.ships.has(h)),
+                // this viewer's OWN transfer clock (per-captain in co-op)
+                salvaging: (() => {
+                  const sv = this.mission!.salvaging[id];
+                  return sv
+                    ? {
+                        wreckId: sv.wreckId,
+                        nextInS: Math.max(0, C.SALVAGE_ITEM_S - sv.t),
+                        itemS: C.SALVAGE_ITEM_S,
+                        itemsLeft:
+                          this.mission!.wrecks.find((w) => w.id === sv.wreckId)?.items.length ?? 0,
+                      }
+                    : null;
+                })(),
                 // Anvil §4c / 1.1 §3b: the closing gate on the HUD, in two
                 // visually distinct phases — STABLE counts down to when the
                 // narrowing STARTS; CLOSING counts down to zero (drawGate
                 // narrows from apertureW; the client walks its pylons in)
                 gateClosing:
-                  this.mission.gateCloseS !== null
+                  this.mission!.gateCloseS !== null
                     ? {
                         phase:
-                          this.mission.gateCloseS < C.GATE_CLOSE_GRACE_S ? "stable" : "closing",
+                          this.mission!.gateCloseS < C.GATE_CLOSE_GRACE_S ? "stable" : "closing",
                         leftS: Math.max(
                           0,
-                          (this.mission.gateCloseS < C.GATE_CLOSE_GRACE_S
+                          (this.mission!.gateCloseS < C.GATE_CLOSE_GRACE_S
                             ? C.GATE_CLOSE_GRACE_S
                             : C.GATE_CLOSE_GRACE_S + C.GATE_CLOSE_DURATION_S) -
-                            this.mission.gateCloseS
+                            this.mission!.gateCloseS
                         ),
                         apertureW: Math.round(this.gateApertureNow()),
                         aperturePct: Math.round(
-                          (100 * this.gateApertureNow()) / this.mission.gate.apertureW
+                          (100 * this.gateApertureNow()) / this.mission!.gate.apertureW
                         ),
                       }
                     : null,
@@ -5501,9 +5552,9 @@ export class Sim {
       // is a count once known, null for unresolved rumors). A dry hole
       // stays on the map until visited: the rumor of a place is real even
       // when the loot isn't.
-      ...(this.mission && id === this.mission.playerId
+      ...(this.isMissionPlayer(id)
         ? {
-            wrecks: this.mission.wrecks
+            wrecks: this.mission!.wrecks
               .filter((w) => w.items.length > 0 || (!w.marked && !w.checked))
               .map((w) => ({
                 id: w.id,
