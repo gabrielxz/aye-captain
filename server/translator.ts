@@ -274,6 +274,29 @@ export function validateCommand(raw: unknown, nested = false): Command | null {
       }
       return out(clean);
     }
+    case "come_alongside": {
+      // Patch 2 §6: crew rendezvous + stores manifest
+      const clean: Record<string, unknown> = {};
+      if (p.target !== undefined) {
+        if (typeof p.target !== "string") return null;
+        clean.target = p.target;
+      }
+      if (p.discipline !== undefined) {
+        if (p.discipline !== "silent" && p.discipline !== "standard" && p.discipline !== "flank") return null;
+        clean.discipline = p.discipline;
+      }
+      if (p.give !== undefined) {
+        if (typeof p.give !== "object" || p.give === null || Array.isArray(p.give)) return null;
+        const give: Record<string, number> = {};
+        for (const [k, v] of Object.entries(p.give as Record<string, unknown>)) {
+          if (!["propellant", "pdc_ammo", "decoys", "probes", "missiles"].includes(k)) return null;
+          if (typeof v !== "number" || !Number.isFinite(v) || v < 1) return null;
+          give[k] = Math.round(v);
+        }
+        clean.give = give;
+      }
+      return out(clean);
+    }
     case "set_maneuver_discipline": {
       // 1.1 §2a: the standing autopilot-throttle posture
       if (p.level !== "silent" && p.level !== "standard" && p.level !== "flank") return null;

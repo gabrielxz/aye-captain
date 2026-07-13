@@ -48,6 +48,7 @@ export interface Command {
     | "deploy_decoy"
     | "maneuver"
     | "salvage"
+    | "come_alongside"
     | "set_maneuver_discipline"
     | "show_vector"
     | "set_overlay"
@@ -68,9 +69,22 @@ export type PdcPosture = "free" | "hold";
 // Anvil 1.1 §2b: `discipline` is a PER-COMMAND override of the ship's
 // standing posture — it caps this maneuver's autopilot throttle and leaves
 // the posture untouched. Absent = fly the posture.
+// Consumables that can cross between crew hulls (Patch 2 §6). Modules
+// arrive with modules, in Patch 5 — consumables only for now.
+export interface TransferItem {
+  kind: "propellant" | "pdc_ammo" | "decoys" | "probes" | "missiles";
+  amount: number;
+}
+
 export type Maneuver =
   | { type: "full_stop"; discipline?: C.Discipline }
   | { type: "salvage"; wreckId: number; discipline?: C.Discipline }
+  // Patch 2 §6: come alongside a CREW ship — the exact salvage rendezvous
+  // pointed at a wreck that shoots back (the relative-velocity frame
+  // already handles a moving target). Once docked (< SALVAGE_DOCK_RANGE_M,
+  // |v_rel| < SALVAGE_STOP_SPEED_MPS) the give manifest crosses one
+  // consignment per SALVAGE_ITEM_S; an empty manifest holds formation.
+  | { type: "alongside"; mateId: ShipId; give: TransferItem[]; t: number; acked?: boolean; discipline?: C.Discipline }
   // timed burn ("give me a 5 second burn at 50%"): thrust at `percent`
   // until secondsLeft runs out, then engines to zero, announced. Exempt
   // from discipline caps — the captain named the number.
@@ -1261,6 +1275,60 @@ export class Sim {
         );
         // the stock notice is the whole confirmation (set_overlay precedent)
         delete cmd.acknowledgement;
+        return null;
+      }
+      case "come_alongside": {
+        // Patch 2 §6: rendezvous with a crew ship + optional stores
+        // transfer. Without this, co-op is two people playing solo in the
+        // same room — the transfer is what makes them a crew.
+        if (!this.mission || !this.isMissionPlayer(ship.id)) {
+          return "We're not rigged for ship-to-ship transfer out here, Captain.";
+        }
+        const mates = this.alliesOf(ship).filter((s) => this.isMissionPlayer(s.id));
+        if (mates.length === 0) return "Nobody to come alongside, Captain.";
+        const ref = String(cmd.params.target ?? "").trim().toLowerCase();
+        const mate = ref
+          ? mates.find((s) => s.callsign.toLowerCase() === ref || s.id.toLowerCase() === ref)
+          : mates[0];
+        if (!mate) return "No friend by that callsign on the board, Captain.";
+        if (dist(ship.x, ship.y, mate.x, mate.y) > C.SALVAGE_APPROACH_RANGE_M) {
+          return "They're too far out for a rendezvous, Captain — get us inside fifteen klicks first.";
+        }
+        // the give manifest, in a fixed cheap-to-dear order (the salvage
+        // greed-curve convention); amounts clamp at transfer time
+        const give: TransferItem[] = [];
+        const rawGive = cmd.params.give as Record<string, unknown> | undefined;
+        if (rawGive && typeof rawGive === "object") {
+          for (const kind of ["propellant", "pdc_ammo", "decoys", "probes", "missiles"] as const) {
+            const v = rawGive[kind];
+            if (typeof v === "number" && Number.isFinite(v) && v >= 1) {
+              give.push({ kind, amount: Math.round(v) });
+            }
+          }
+        }
+        const alDisc = this.parseDiscipline(cmd.params.discipline);
+        ship.maneuver = {
+          type: "alongside",
+          mateId: mate.id,
+          give,
+          t: 0,
+          ...(alDisc ? { discipline: alDisc } : {}),
+        };
+        events.push({
+          kind: "notice",
+          ship: ship.id,
+          text: `Coming alongside ${mate.callsign}, Captain.`,
+          speak: "Coming alongside our friend, Captain.",
+        });
+        this.quoteManeuverPrice(
+          ship,
+          alDisc,
+          Math.hypot(ship.vx - mate.vx, ship.vy - mate.vy),
+          dist(ship.x, ship.y, mate.x, mate.y),
+          events,
+          null
+        );
+        delete cmd.acknowledgement; // the stock notice is the confirmation
         return null;
       }
       case "show_vector": {
@@ -2847,6 +2915,7 @@ export class Sim {
         this.updateGateXO(events);
         this.stepRumors(events);
         this.stepSalvage(events);
+        this.stepAlongside(events); // Patch 2 §6 — crew stores transfer
         this.stepLoudness(events); // Patch 2 §3a — the bait-play read, spoken
       }
     }
@@ -4149,11 +4218,13 @@ export class Sim {
         text:
           mtype === "salvage"
             ? "Breaking off the salvage — what's aboard stays aboard, Captain."
-            : mtype === "burn"
-              ? "Burn belayed — you have the conn."
-              : mtype === "gate_run"
-                ? "Gate run belayed — you have the conn."
-                : "Full stop belayed — you have the conn.",
+            : mtype === "alongside"
+              ? "Breaking off the rendezvous — what's crossed stays crossed, Captain."
+              : mtype === "burn"
+                ? "Burn belayed — you have the conn."
+                : mtype === "gate_run"
+                  ? "Gate run belayed — you have the conn."
+                  : "Full stop belayed — you have the conn.",
       });
     }
   }
@@ -4264,34 +4335,53 @@ export class Sim {
     // are the proof).
     let wvx = 0;
     let wvy = 0;
+    // the dock target: a wreck (salvage) or a crew ship (§6 alongside) —
+    // the SAME terminal approach flies both; a teammate is just a wreck
+    // that shoots back (the wreck-frame math already handles motion)
+    let dockAt: { x: number; y: number } | null = null;
     if (type === "salvage") {
       const wreck = this.mission?.wrecks.find((w) => w.id === (ship.maneuver as { wreckId: number }).wreckId);
       if (wreck) {
         wvx = wreck.vx ?? 0;
         wvy = wreck.vy ?? 0;
-        const rspeed = Math.hypot(ship.vx - wvx, ship.vy - wvy);
-        const d = dist(ship.x, ship.y, wreck.x, wreck.y);
-        const stopping = (rspeed * rspeed) / (2 * accel);
-        if (
-          d > C.SALVAGE_DOCK_RANGE_M * 0.6 &&
-          d - stopping > 400 &&
-          rspeed < Math.min(250, d / 12)
-        ) {
-          if (ship.propellant <= 0) {
-            ship.maneuver = null;
-            ship.thrust = 0;
-            if (this.mission) delete this.mission.salvaging[ship.id];
-            events.push({ kind: "notice", ship: ship.id, text: "Tanks dry — I can't finish the stop, Captain.", alert: true });
-            return;
-          }
-          // lead intercept: aim where the wreck WILL be at hop speed —
-          // for a static wreck the lead term is zero (current position)
-          const tLead = d / Math.max(50, rspeed);
-          const to = bearingTo(ship.x, ship.y, wreck.x + wvx * tLead, wreck.y + wvy * tLead);
-          ship.goal = { mode: "absolute", degrees: to };
-          ship.thrust = Math.abs(angDiff(ship.facing, to)) <= 15 ? Math.min(35, cap) : 0;
+        dockAt = wreck;
+      }
+    } else if (type === "alongside") {
+      const mate = this.ships.get((ship.maneuver as { mateId: ShipId }).mateId);
+      if (!mate || this.departed(mate.id)) {
+        // the friend is gone (dead or through the gate): nothing to dock with
+        ship.maneuver = null;
+        ship.thrust = 0;
+        events.push({ kind: "notice", ship: ship.id, text: "Our partner's off the board — breaking off the rendezvous, Captain." });
+        return;
+      }
+      wvx = mate.vx;
+      wvy = mate.vy;
+      dockAt = mate;
+    }
+    if (dockAt) {
+      const rspeed = Math.hypot(ship.vx - wvx, ship.vy - wvy);
+      const d = dist(ship.x, ship.y, dockAt.x, dockAt.y);
+      const stopping = (rspeed * rspeed) / (2 * accel);
+      if (
+        d > C.SALVAGE_DOCK_RANGE_M * 0.6 &&
+        d - stopping > 400 &&
+        rspeed < Math.min(250, d / 12)
+      ) {
+        if (ship.propellant <= 0) {
+          ship.maneuver = null;
+          ship.thrust = 0;
+          if (this.mission) delete this.mission.salvaging[ship.id];
+          events.push({ kind: "notice", ship: ship.id, text: "Tanks dry — I can't finish the stop, Captain.", alert: true });
           return;
         }
+        // lead intercept: aim where the target WILL be at hop speed —
+        // for a static wreck the lead term is zero (current position)
+        const tLead = d / Math.max(50, rspeed);
+        const to = bearingTo(ship.x, ship.y, dockAt.x + wvx * tLead, dockAt.y + wvy * tLead);
+        ship.goal = { mode: "absolute", degrees: to };
+        ship.thrust = Math.abs(angDiff(ship.facing, to)) <= 15 ? Math.min(35, cap) : 0;
+        return;
       }
     }
 
@@ -4671,6 +4761,138 @@ export class Sim {
         );
       }
     }
+  }
+
+  // Patch 2 §6: the crew stores transfer, one command tick. Docked =
+  // inside SALVAGE_DOCK_RANGE_M with |v_rel| under the stop speed — the
+  // exact salvage gate, against a hull instead of a wreck. The give
+  // manifest crosses one consignment per SALVAGE_ITEM_S; drifting apart
+  // pauses the clock, any helm order aborts (what's crossed stays
+  // crossed). A silent rendezvous with a friend while something hunts you
+  // both is exactly the kind of thing this game should be able to do.
+  private stepAlongside(events: SimEvent[]): void {
+    const KIND_WORD: Record<TransferItem["kind"], string> = {
+      propellant: "Propellant",
+      pdc_ammo: "PDC ammunition",
+      decoys: "Decoys",
+      probes: "Sensor probes",
+      missiles: "Missiles",
+    };
+    for (const player of this.activePlayers()) {
+      const man = player.maneuver;
+      if (!man || man.type !== "alongside") continue;
+      const mate = this.ships.get(man.mateId);
+      if (!mate || this.departed(mate.id)) continue; // stepManeuver breaks it off
+      if (dist(player.x, player.y, mate.x, mate.y) > C.SALVAGE_DOCK_RANGE_M) continue;
+      if (
+        Math.hypot(player.vx - mate.vx, player.vy - mate.vy) >= C.SALVAGE_STOP_SPEED_MPS
+      )
+        continue; // still matching velocity
+      if (!man.acked) {
+        man.acked = true;
+        events.push({
+          kind: "notice",
+          ship: player.id,
+          text:
+            man.give.length > 0
+              ? `Alongside ${mate.callsign}. Transfer's running — ${man.give.length} consignment${man.give.length === 1 ? "" : "s"} to move, Captain.`
+              : `Alongside ${mate.callsign}, Captain — holding formation.`,
+          speak: man.give.length > 0 ? "Alongside. Transfer's running, Captain." : "Alongside, Captain — holding formation.",
+        });
+        if (man.give.length > 0) {
+          events.push({
+            kind: "notice",
+            ship: mate.id,
+            text: `${player.callsign} is alongside, Captain — stores coming across.`,
+            speak: "Our friend's alongside, Captain — stores coming across.",
+          });
+        }
+      }
+      if (man.give.length === 0) continue; // formation: nothing to move
+      man.t += 1;
+      if (man.t < C.SALVAGE_ITEM_S) continue;
+      man.t = 0;
+      const item = man.give.shift()!;
+      const moved = this.applyTransfer(player, mate, item);
+      const word = KIND_WORD[item.kind];
+      if (moved > 0) {
+        events.push({
+          kind: "notice",
+          ship: player.id,
+          text: `${word} across to ${mate.callsign} — ${moved}.`,
+          speak: "Consignment's across, Captain.",
+        });
+        events.push({
+          kind: "notice",
+          ship: mate.id,
+          text: `${word} aboard from ${player.callsign} — ${moved}.`,
+          speak: "Stores aboard, Captain.",
+        });
+      } else {
+        events.push({
+          kind: "notice",
+          ship: player.id,
+          text: `Couldn't move the ${word.toLowerCase()}, Captain — nothing to give or no room over there.`,
+          speak: "One consignment wouldn't move, Captain.",
+        });
+      }
+      if (man.give.length === 0) {
+        player.maneuver = null;
+        events.push({ kind: "notice", ship: player.id, text: "Transfer complete — breaking away, Captain." });
+      }
+    }
+  }
+
+  // What actually crosses: clamped by what the giver still has and what
+  // the taker can hold. Returns the amount moved.
+  private applyTransfer(giver: Ship, taker: Ship, item: TransferItem): number {
+    let moved = 0;
+    switch (item.kind) {
+      case "propellant": {
+        moved = Math.max(
+          0,
+          Math.min(item.amount, Math.floor(giver.propellant), Math.floor(C.PROPELLANT_MAX - taker.propellant))
+        );
+        giver.propellant -= moved;
+        taker.propellant += moved;
+        break;
+      }
+      case "pdc_ammo": {
+        moved = Math.max(0, Math.min(item.amount, Math.floor(giver.pdcAmmoS)));
+        giver.pdcAmmoS -= moved;
+        taker.pdcAmmoS += moved;
+        break;
+      }
+      case "decoys": {
+        moved = Math.max(0, Math.min(item.amount, giver.decoys));
+        giver.decoys -= moved;
+        taker.decoys += moved;
+        break;
+      }
+      case "probes": {
+        moved = Math.max(0, Math.min(item.amount, giver.probesLeft));
+        giver.probesLeft -= moved;
+        taker.probesLeft += moved;
+        break;
+      }
+      case "missiles": {
+        moved = Math.max(0, Math.min(item.amount, missilesAboard(giver)));
+        let need = moved;
+        const fromReserve = Math.min(need, giver.reserve);
+        giver.reserve -= fromReserve;
+        need -= fromReserve;
+        for (const t of giver.tubes) {
+          if (need <= 0) break;
+          if (t.loaded) {
+            t.loaded = false;
+            need -= 1;
+          }
+        }
+        taker.reserve += moved; // their auto-reload pulls it into a tube
+        break;
+      }
+    }
+    return moved;
   }
 
   // Patch 2 §3a: the XO calls the loudness read — it drives the core

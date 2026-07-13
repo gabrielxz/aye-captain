@@ -3,7 +3,7 @@
 // invariant — 🔴 NO DATALINK: a teammate's snapshot carries their position,
 // velocity, hull, propellant, and signature, and NEVER their contacts,
 // rumbles, or ghost. Every piece of sensor intelligence moves by talking.
-import { Sim, dist, type Mission, type SimEvent } from "../server/sim.js";
+import { Sim, dist, missilesAboard, type Mission, type SimEvent } from "../server/sim.js";
 import { Match } from "../server/match.js";
 import * as C from "../server/constants.js";
 
@@ -489,6 +489,116 @@ const fakeWs = () => {
   (sim as any).damageShip(sim.ships.get("B")!, 9999, "missile", events, "H");
   const over = events.find((e) => e.kind === "gameover") as any;
   assert(!!over && over.winner === "H", "both dead: the system wins the run");
+}
+
+// ---------- §6: come_alongside — the transfer that makes them a crew ----------
+
+// 17. Docked at matched velocity: the give manifest crosses, one
+// consignment per SALVAGE_ITEM_S, both XOs narrating.
+{
+  const sim = coopSim([0, 0], [800, 0]);
+  const a = sim.ships.get("A")!;
+  const b = sim.ships.get("B")!;
+  a.reserve = 4;
+  const b0 = missilesAboard(b);
+  const bDecoys0 = b.decoys;
+  sim.enqueue("A", [{ verb: "come_alongside", params: { target: b.callsign, give: { missiles: 2, decoys: 1 } } } as any]);
+  const all: SimEvent[] = [];
+  for (let t = 0; t < C.SALVAGE_ITEM_S * 2 + 6; t++) all.push(...sim.tick());
+  assert(missilesAboard(b) === b0 + 2, "the teammate receives the missiles");
+  assert(b.decoys === bDecoys0 + 1, "…and the decoy");
+  assert(a.reserve === 2, "the giver's reserve is down by two");
+  assert(all.some((e) => e.kind === "notice" && (e as any).ship === "B" && /aboard from/.test((e as any).text)),
+    "the receiving XO calls the stores aboard");
+  assert(all.some((e) => e.kind === "notice" && (e as any).ship === "A" && /Transfer complete/.test((e as any).text)),
+    "the giving XO calls it complete");
+  assert(a.maneuver === null, "the maneuver ends with the manifest");
+}
+
+// 18. At 800 m/s relative: NOTHING crosses (the §8 pin) — the dock gate is
+// the salvage gate, |v_rel| < SALVAGE_STOP_SPEED_MPS.
+{
+  const sim = coopSim([0, 0], [800, 0]);
+  const a = sim.ships.get("A")!;
+  const b = sim.ships.get("B")!;
+  a.reserve = 4;
+  b.vx = 800; // screaming past
+  const b0 = missilesAboard(b);
+  sim.enqueue("A", [{ verb: "come_alongside", params: { give: { missiles: 2 } } } as any]);
+  for (let t = 0; t < 5; t++) sim.tick();
+  assert(missilesAboard(b) === b0, "at 800 m/s relative, nothing crosses");
+  assert((a.maneuver as any)?.give?.length === 1, "the manifest waits for the velocity match");
+}
+
+// 19. The verb is campaign co-op only, and clamps are honest.
+{
+  const mp = new Sim();
+  mp.addShip("A", 0, 0, 0, false, "red");
+  mp.addShip("B", 500, 0, 0, false, "red");
+  const ev = mp.tick(); // flush spawn
+  void ev;
+  mp.enqueue("A", [{ verb: "come_alongside", params: {} } as any]);
+  const rejected = mp.tick().find((e) => e.kind === "reject") as any;
+  assert(!!rejected && /not rigged/.test(rejected.reason), "multiplayer teams: the verb is refused (no balance change)");
+
+  const sim = coopSim([0, 0], [600, 0]);
+  const a = sim.ships.get("A")!;
+  const b = sim.ships.get("B")!;
+  a.decoys = 1;
+  b.propellant = 90;
+  a.propellant = 50;
+  sim.enqueue("A", [{ verb: "come_alongside", params: { give: { decoys: 5, propellant: 40 } } } as any]);
+  for (let t = 0; t < C.SALVAGE_ITEM_S * 2 + 6; t++) sim.tick();
+  // b sat near-full: only the shortfall moved (an unclamped 40 would have
+  // gutted a's tank to ~19 even with regen; the clamp leaves it > 40)
+  assert(b.propellant <= C.PROPELLANT_MAX && a.propellant > 40, "propellant clamps at the receiver's tank — only the shortfall moves");
+  assert(b.decoys === C.ARCHETYPES[b.archetype].decoys + 1 && a.decoys === 0, "decoys clamp at what's aboard (1 moved of 5 asked)");
+}
+
+// 20. Abort keeps what's crossed; formation (no give) just holds station.
+{
+  const sim = coopSim([0, 0], [700, 0]);
+  const a = sim.ships.get("A")!;
+  const b = sim.ships.get("B")!;
+  a.reserve = 4;
+  const b0 = missilesAboard(b);
+  const bDec0 = b.decoys;
+  // manifest crosses in fixed cheap-to-dear order: decoys land first,
+  // missiles would be second — the abort must strand them aboard A
+  sim.enqueue("A", [{ verb: "come_alongside", params: { give: { missiles: 1, decoys: 1 } } } as any]);
+  for (let t = 0; t < C.SALVAGE_ITEM_S + 3; t++) sim.tick(); // first consignment lands
+  assert(b.decoys === bDec0 + 1, "first consignment landed (decoys — cheap to dear)");
+  sim.enqueue("A", [{ verb: "set_thrust", params: { percent: 50 } } as any]);
+  const ev = sim.tick();
+  assert(ev.some((e) => e.kind === "notice" && /what's crossed stays crossed/.test((e as any).text)),
+    "a helm order breaks off the rendezvous");
+  assert(a.maneuver === null && b.decoys === bDec0 + 1 && missilesAboard(b) === b0,
+    "…and what's crossed stays crossed — the missiles never left");
+
+  const sim2 = coopSim([0, 0], [700, 0]);
+  sim2.enqueue("A", [{ verb: "come_alongside", params: {} } as any]);
+  const ev2: SimEvent[] = [];
+  for (let t = 0; t < 3; t++) ev2.push(...sim2.tick());
+  assert(ev2.some((e) => e.kind === "notice" && /holding formation/.test((e as any).text)),
+    "no manifest: alongside means formation");
+  assert(sim2.ships.get("A")!.maneuver !== null, "…and the station-keeping holds");
+}
+
+// 21. The XO flies the whole rendezvous from km out — the exact salvage
+// terminal approach, pointed at a friend.
+{
+  const sim = coopSim([0, 0], [3000, 0]);
+  const a = sim.ships.get("A")!;
+  const b = sim.ships.get("B")!;
+  a.reserve = 2;
+  const b0 = missilesAboard(b);
+  sim.enqueue("A", [{ verb: "come_alongside", params: { give: { missiles: 1 } } } as any]);
+  let done = false;
+  for (let t = 0; t < 240 && !done; t++) {
+    sim.tick();
+    done = missilesAboard(b) === b0 + 1;
+  }
+  assert(done, "from 3 km out the XO flies the approach, docks, and moves the stores");
 }
 
 console.log("done: coop");
