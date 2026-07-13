@@ -287,4 +287,53 @@ const fakeWs = () => {
   assert(!ev.some((e) => e.kind === "notice" && /loudest/.test((e as any).text)), "no hunter listening: no loudness headline");
 }
 
+// ---------- §8: THE BAIT PLAY, end to end — it is the patch ----------
+// Ship A burns at 100% as bait; ship B coasts dark alongside a wreck.
+// Both are inside the Hunter's real detection. The Hunter must pursue A
+// (the loudest), and B must complete a full salvage transfer untouched.
+{
+  const sim = coopSim([0, 150000], [60000, 0], { hunterSpawned: true, hunterIds: ["H"] });
+  const a = sim.ships.get("A")!;
+  const b = sim.ships.get("B")!;
+  const hunter = sim.addShip("H", 0, 0, 0, false, null, "Hunter", "corvette");
+  hunter.hunterAI = true;
+  hunter.sensorMult = C.HUNTER_SENSOR_MULT;
+  hunter.sigMult = C.HUNTER_SIG_MULT;
+
+  // the bait burns AWAY; the looter sits dark on the wreck
+  a.thrust = 100;
+  a.facing = 0; // north, away from the Hunter
+  b.thrust = 0;
+  sim.mission!.wrecks.push({
+    id: 1, letter: "A", x: 60000, y: 500, marked: true, checked: false,
+    items: [{ kind: "pdc_ammo", amount: 20 }, { kind: "missiles", amount: 2 }],
+  });
+  sim.enqueue("B", [{ verb: "salvage", params: { target: "A" } } as any]);
+
+  sim.tick();
+  const hSnap = sim.snapshotFor("H") as any;
+  assert(hSnap.contacts.length === 2, "the Hunter's own sensors hold BOTH ships (setup is real)");
+  const cidOf = (ship: any) =>
+    hSnap.contacts.find((c: any) => Math.hypot(c.x - ship.x, c.y - ship.y) < 5000)?.cid;
+  const aCid = cidOf(a);
+  const bCid = cidOf(b);
+  assert(!!aCid && !!bCid && aCid !== bCid, "both contacts designated");
+
+  let towardA = 0;
+  let towardB = 0;
+  const bHull0 = b.hull;
+  for (let t = 0; t < 90; t++) {
+    sim.tick();
+    if (!sim.ships.has("H")) break;
+    const tgt = hunter.hunterMem.targetCid;
+    if (tgt === aCid) towardA++;
+    if (tgt === bCid) towardB++;
+  }
+  assert(towardA > 80, `the Hunter pursues the BAIT for the whole window (${towardA}/90 ticks on A)`);
+  assert(towardB === 0, "…and never once switches to the dark looter");
+  assert(sim.mission!.wrecks[0].items.length === 0, "B strips the whole wreck in the silence his friend bought");
+  assert(b.hull === bHull0, "…untouched");
+  assert(sim.mission!.stats.salvaged === 2, "both pieces landed");
+}
+
 console.log("done: coop");

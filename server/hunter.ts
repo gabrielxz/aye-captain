@@ -189,12 +189,17 @@ export function hunterDecide(
       next.retargetS = mem.retargetS - 1;
       if (next.retargetS <= 0) {
         next.retargetS = C.HUNTER_RETARGET_EVERY_S;
+        // the closer-gate breaks NEAR-TIES only — it must not outrank
+        // loudness, or the bait play dies the moment the bait opens the
+        // range (found by the §8 checkpoint: the fleeing burner's range
+        // grows until the dark looter 'steals' by proximity — wrong)
         const challenger = snap.contacts
           .filter(
             (c) =>
               c.cid !== current.cid &&
               ((c.loud ?? 0) >= (current.loud ?? 0) * C.HUNTER_RETARGET_LOUDER ||
-                range(c) <= range(current) * C.HUNTER_RETARGET_CLOSER)
+                (range(c) <= range(current) * C.HUNTER_RETARGET_CLOSER &&
+                  (c.loud ?? 0) * C.HUNTER_RETARGET_LOUDER >= (current.loud ?? 0)))
           )
           .reduce(louder, null);
         if (challenger) best = challenger;

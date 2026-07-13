@@ -462,6 +462,22 @@ const thrustOf = (cmds: ReturnType<typeof hunterDecide>["commands"]) =>
   assert(mem.targetCid === "b", "an equally-loud contact at 0.4x range steals the chase");
 }
 
+// T5b. The closer-gate breaks NEAR-TIES only: a drastically quieter
+// contact never steals by proximity, no matter how the range opens —
+// otherwise the bait play dies the moment the bait runs (found by the §8
+// checkpoint; pinned).
+{
+  let mem = initialHunterMem();
+  const bait0 = { cid: "a", tier: 2, loud: 0.87, x: 0, y: 150000, vx: 0, vy: 0 };
+  mem = hunterDecide(snap({ contacts: [bait0] }), mem, emptyTerrain(), intel()).mem;
+  for (let t = 0; t < C.HUNTER_RETARGET_EVERY_S * 4; t++) {
+    const bait = { ...bait0, y: 150000 + t * 2500 }; // the bait opens the range
+    const looter = { cid: "b", tier: 1, loud: 0.2, x: 60000, y: 0 };
+    mem = hunterDecide(snap({ contacts: [bait, looter] }), mem, emptyTerrain(), intel()).mem;
+  }
+  assert(mem.targetCid === "a", "a quiet looter never steals the chase by proximity while the bait burns");
+}
+
 // T6. Losing the committed track picks fresh IMMEDIATELY (no cadence wait —
 // hysteresis lives on the switch, not the pick).
 {
