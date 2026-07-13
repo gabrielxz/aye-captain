@@ -326,6 +326,10 @@ export class Match {
       { x: gx - tx * off, y: gy - ty * off, r: C.GATE_PYLON_RADIUS_M },
       { x: gx + tx * off, y: gy + ty * off, r: C.GATE_PYLON_RADIUS_M }
     );
+    // Anvil §4: the sim moves THESE two rocks inward as the gate closes —
+    // the wall is physical (the client re-derives them from the gate
+    // geometry + live aperture, so nothing extra crosses the wire)
+    const pylonIdx: [number, number] = [sim.terrain.rocks.length - 2, sim.terrain.rocks.length - 1];
     const row = C.CAMPAIGN_LADDER[run.system - 1];
     sim.mission = {
       playerId: "A",
@@ -346,6 +350,9 @@ export class Match {
       upgradeCounts: { sig: 0, sensor: 0, accel: 0, hull: 0 },
       solGood: false,
       solCooldownS: 0,
+      gateCloseS: null,
+      gateCloseCalled: 0,
+      pylonIdx,
     };
     return sim;
   }
@@ -1067,6 +1074,7 @@ export class Match {
               durationS,
               reveal,
               ...(ev.gateCleared ? { gateCleared: true } : {}),
+              ...(ev.stranded ? { stranded: true } : {}), // Anvil §4b
               // campaign §9: the run summary rides the gameover — systems
               // cleared is THE score; a gateCleared gameover is system 8
               ...(this.campaign

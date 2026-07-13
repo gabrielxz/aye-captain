@@ -86,6 +86,25 @@ oscillators; audio.js driver with rumble sidechain), the §8 exit
 spectacle, and the how-to-play CAMPAIGN tab. The Hunter's AI
 (server/hunter.ts `hunterDecide`) and the music brain are PURE FUNCTIONS
 OF WIRE SNAPSHOTS — the function signature is the fog guarantee.
+**CAMPAIGN PATCH 1 "The Anvil" (HANDOFF-CAMPAIGN-ANVIL.md) BUILT
+2026-07-13 on branch `campaign-anvil`** (1,002 assertions; AWAITING the
+§0 playtest gate — nothing further gets built until the verdict): §1
+Hunter datum search (uncertainty circle r = age × MAX_SPEED, golden-angle
+spokes, escalation by r: probes then pings, ping frequency ∝ r, never at
+low uncertainty — pinned) + hard leash (waypoints/intercepts clamped to
+0.9R, boundary in AVOID by braking distance, never-exits pinned); §5
+corvette turn 39.2 (+40%, aperture pins re-derived); §3 relative salvage
+(wreck-frame substitution — existing salvage tests UNCHANGED is the
+proof) + the Hunter hulk (carries death velocity, debris physics, shroud
+drag, no clamp); §2 bounty (6 pieces / 2 modules, Patch-5 placeholder);
+§4 the closing gate (armed by the LAST Hunter death, linear to EXACTLY
+zero across GATE_CLOSE_START/END_S 180→300, pylons creep to a contiguous
+wall, STRANDED gameover, GATE CLOSING HUD row). Anvil judgment calls:
+gate arms on the LAST Hunter's death in pack rows; the client re-derives
+creeping pylons from gate geometry + live aperture (nothing extra on the
+wire); boundary-AVOID triggers on braking distance vs the weakest
+archetype drive (a fixed lookahead can't promise containment at 3 km/s);
+STRANDED plays no explosion.
 
 ## Commands
 

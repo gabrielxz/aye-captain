@@ -122,6 +122,12 @@ const STOCK_LINES = [
   "We're wide left, Captain.",
   "We're wide right, Captain.",
   "It's gone quiet, Captain. The system is ours.",
+  // Anvil §4: the closing gate (the Hunter-ping "sweeping for us" line
+  // carries a quantized bearing — bounded dynamic, cached on first use
+  // like the existing lit-himself-up shapes)
+  "The gate's destabilizing, Captain. She's closing.",
+  "Gate's at half aperture, Captain.",
+  "Quarter aperture — she's nearly shut, Captain.",
   "We're through, Captain.",
   "I have the aperture, Captain — taking us through.",
   "The gate's too far for me to take her through, Captain — get us inside fifteen klicks.",

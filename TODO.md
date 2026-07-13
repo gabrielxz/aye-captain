@@ -1,5 +1,44 @@
 # TODO — next steps
 
+## CAMPAIGN PATCH 1 "The Anvil" (HANDOFF-CAMPAIGN-ANVIL.md) — BUILT 2026-07-13
+
+Branch `campaign-anvil`, all sections, 1,002 assertions green. §1 the
+Hunter works: hard leash (every waypoint/intercept clamped to 0.9R, the
+boundary in AVOID via braking-distance, never-exits pinned at sim level),
+datum search (uncertainty circle r = age × MAX_SPEED, golden-angle spokes
+— sitting still gets you found, coasting away doesn't), escalation by
+UNCERTAINTY (probes seeded on the circle past 60 km, pings past 120 km
+with frequency ∝ r; never below threshold — pinned; old dry-spell spend
+survives for the datum-less cold hunt). §5 corvette turn 28 → 39.2
+(+40%), aperture pins re-derived, ordering holds. §3 relative salvage —
+the transfer gate and the whole XO approach run in the WRECK'S FRAME
+(|v_rel|; existing salvage tests passed UNCHANGED — the §3b proof) — and
+the Hunter dies into a HULK carrying his exact velocity (integrates, no
+collision, no decay, shroud drag, never clamped inside). §2 bounty
+placeholder: 6 pieces, TWO modules. §4 the closing gate: last Hunter's
+death arms it (CRITICAL line), linear to EXACTLY ZERO across 180→300 s,
+pylons creep to a contiguous wall (client re-derives them from the live
+aperture — nothing extra on the wire), 50%/25% NEWS calls, GATE CLOSING
+HUD row, in-system at closure = RUN ENDED — STRANDED (no boom — the
+silence is the point). THE VISE pinned: a far-side cruiser at
+close-start falls ~250 km short.
+
+- [ ] **THE §0 GATE: playtest verdict before ANYTHING else is built.**
+  Fly it: does the Hunter find you, press you, and stay audible doing it?
+  Does the bounty chase feel like a bet (not a chore)? Is the 120 s
+  closing window right? (§4a: if too tight the knob is GATE_CLOSE_END_S
+  — never a floor, never APERTURE_W_M.)
+- [ ] Watch: datum-search knobs are first-guess (spoke 0.6r, probe band
+  60 km / 30 s cadence, ping band 120 km / 75 s base interval).
+- [ ] Watch: does killing one of the Pair while the second hunts read
+  correctly? (Judgment call: the gate arms on the LAST Hunter's death,
+  not the first.)
+- [ ] Watch: corvette +40% turn in normal flight — this was the wanted
+  turn-rate pass, corvette leg only; frigate/cruiser unchanged by spec.
+- [ ] Forward architecture honored (§9): no new constants.ts stat reads
+  in touched paths (statsOf(ship) accessors), no new singular-player
+  assumptions, no shop/credits.
+
 ## TTS quota economy (2026-07-13)
 
 Audit: 15.5k/30k credits gone in ~2 days; the Fly speech cache showed

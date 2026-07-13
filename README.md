@@ -29,8 +29,17 @@ be going somewhere — not both.
   loud, chase salvage, strip wrecks (a full stop is the price; the haul
   lands one item at a time, worst first) — and when the clock hits zero a
   Hunter wakes up and comes looking by ear. It perceives through the same
-  fog of war you do: decoys fool it, dust blinds it, going dark works.
-  Kill it and it drops the best wreck in the system; the gate is flown
+  fog of war you do: decoys fool it, dust blinds it, going dark works —
+  but once it has seen you it searches outward from your last fix in a
+  circle that grows at your max speed (sitting still gets you found;
+  coasting away silently does not), spending probes and then active pings
+  as its uncertainty grows. Kill it (the Anvil patch) and two things
+  happen at once: its hold — the richest in the system, double modules —
+  becomes a drifting hulk carrying the exact velocity it died with (loot
+  it by MATCHING that velocity; the momentum is the price), and the gate
+  destabilizes — 3 minutes of grace, then the pylons walk inward to a
+  fully closed wall at 5; still in-system then and the run ends STRANDED.
+  The gate is flown
   through, not commanded — thread a 3 km aperture on your drift, or
   overshoot into the naked dark outside the shroud. Salvaged modules and
   your remaining propellant/missiles/hull carry across systems; each

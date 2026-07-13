@@ -38,8 +38,9 @@ const assert = (cond: boolean, msg: string) => {
   sim.enqueue("A", [{ verb: "set_heading", params: { mode: "relative", direction: "starboard", degrees: 90 } }]);
   sim.enqueue("B", [{ verb: "set_heading", params: { mode: "relative", direction: "starboard", degrees: 90 } }]);
   sim.tick(); sim.tick();
-  assert(Math.abs(cv.facing - 56) < 1, `corvette turns 28°/s (${cv.facing.toFixed(0)}° after 2 s)`);
-  assert(Math.abs(cr.facing - 28) < 1, `cruiser turns 14°/s (${cr.facing.toFixed(0)}° after 2 s)`);
+  // Anvil §5: turn rates pin to the LIVE table (corvette 28 → 39.2, +40%)
+  assert(Math.abs(cv.facing - 2 * C.ARCHETYPES.corvette.turn) < 1, `corvette turns ${C.ARCHETYPES.corvette.turn}°/s (${cv.facing.toFixed(0)}° after 2 s)`);
+  assert(Math.abs(cr.facing - 2 * C.ARCHETYPES.cruiser.turn) < 1, `cruiser turns ${C.ARCHETYPES.cruiser.turn}°/s (${cr.facing.toFixed(0)}° after 2 s)`);
 }
 
 // 2. signature & sensors: the cruiser cannot hide, the corvette nearly can;

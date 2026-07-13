@@ -210,4 +210,110 @@ const thrustOf = (cmds: ReturnType<typeof hunterDecide>["commands"]) =>
   assert(r3.mem.dryS === 0 && r3.mem.lastSignalBearing === 90, "any signal resets the dry clock and is remembered");
 }
 
+// 13. ANVIL §1a — the hard leash: an intercept solution beyond the rim is
+// clamped onto the 0.9R circle (the chase bends); outward momentum that
+// would carry past the rim trips boundary-AVOID (home, full burn)
+{
+  const R = C.REGION_RADIUS_M;
+  const s = snap({
+    you: you({ x: 0, y: 200000 }),
+    contacts: [{ cid: "Alpha", tier: 1, x: 150000, y: 260000 }], // fix beyond the rim
+  });
+  const { commands } = hunterDecide(s, initialHunterMem(), emptyTerrain(), intel());
+  const raw = Math.atan2(150000, 60000) * (180 / Math.PI); // ≈68° to the raw fix
+  const cl = { x: 150000 * ((R * 0.9) / 300000), y: 260000 * ((R * 0.9) / 300000) };
+  const want = ((Math.atan2(cl.x - 0, cl.y - 200000) * 180) / Math.PI + 360) % 360;
+  assert(Math.abs(headingOf(commands) - want) < 1 && Math.abs(headingOf(commands) - raw) > 10,
+    "PURSUE aim beyond the rim clamps onto the 0.9R circle — the chase bends");
+
+  const out = snap({ you: you({ x: 0, y: R * 0.9, vx: 1200, vy: 2500 }) }); // outward NE at speed
+  const r2 = hunterDecide(out, initialHunterMem(), emptyTerrain(), intel());
+  assert(Math.abs(headingOf(r2.commands) - 180) < 1 && thrustOf(r2.commands) === 100,
+    "boundary-AVOID: outward momentum past braking margin steers home at full burn");
+}
+
+// 14. ANVIL §1b — the datum search: a lost contact leaves a datum; the
+// sweep's waypoints live INSIDE the uncertainty circle; a player who sits
+// still after being seen is walked over; one who coasts away silently
+// stays outside the sweep
+{
+  const seen = snap({ contacts: [{ cid: "Alpha", tier: 2, x: 50000, y: 50000, vx: 0, vy: 0 }] });
+  let mem = hunterDecide(seen, initialHunterMem(), emptyTerrain(), intel()).mem;
+  assert(mem.datum !== null && mem.datum.x === 50000 && mem.datum.ageS === 0, "a live contact keeps the datum fresh");
+  const dark = snap(); // contact gone
+  mem = hunterDecide(dark, mem, emptyTerrain(), intel()).mem;
+  assert(mem.datum !== null && mem.datum.ageS === 1, "losing the contact starts the datum clock");
+
+  // kinematic sweep: hunter 90 km off the datum, prey PARKED at it — the
+  // spoke-0 waypoint IS the datum, so the sweep walks over a sitter
+  let hx = -40000, hy = -25000; // ~90 km from the datum
+  let found = false;
+  let m2 = { ...initialHunterMem(), datum: { x: 50000, y: 50000, ageS: 1 } };
+  for (let t = 0; t < 120 && !found; t++) {
+    const r = hunterDecide(snap({ you: you({ x: hx, y: hy }) }), m2, emptyTerrain(), intel());
+    m2 = r.mem;
+    const h = headingOf(r.commands) * (Math.PI / 180);
+    hx += Math.sin(h) * 1500; hy += Math.cos(h) * 1500; // 1500 m/s toward the order
+    found = Math.hypot(hx - 50000, hy - 50000) <= C.HUNTER_PATROL_ARRIVE_M;
+  }
+  assert(found, "sitting still after being seen gets you found (the sweep opens ON the datum)");
+
+  // the coaster: same start, prey slides away at 1500 m/s due east from
+  // the datum — the sweep stays inside the circle and never touches it
+  let px = 50000, py = 50000;
+  hx = -40000; hy = -25000;
+  let caught = false;
+  let m3 = { ...initialHunterMem(), datum: { x: 50000, y: 50000, ageS: 1 } };
+  for (let t = 0; t < 120 && !caught; t++) {
+    const r = hunterDecide(snap({ you: you({ x: hx, y: hy }) }), m3, emptyTerrain(), intel());
+    m3 = r.mem;
+    const h = headingOf(r.commands) * (Math.PI / 180);
+    hx += Math.sin(h) * 1500; hy += Math.cos(h) * 1500;
+    px += 1500; // silent coast due east
+    caught = Math.hypot(hx - px, hy - py) <= C.HUNTER_PATROL_ARRIVE_M;
+  }
+  assert(!caught, "coasting away silently rides out of the sweep — momentum you already had is safe");
+  assert(m3.datum === null || m3.datum.ageS * C.MAX_SPEED_MPS <= C.HUNTER_DATUM_GIVEUP_R_M,
+    "the datum goes cold once the circle covers the region");
+}
+
+// 15. ANVIL §1c — escalation by uncertainty: never a ping below the
+// threshold radius; past it the sweeps come, and FASTER as r grows;
+// in the probe band, ears are seeded around the datum circle
+{
+  // below the ping threshold: ping ready, never fired
+  const ready = (over: Partial<HunterSnap["you"]> = {}) => you({ ping: { ready: true }, probes: 4, ...over });
+  let m = { ...initialHunterMem(), datum: { x: 0, y: 100000, ageS: 1 }, sincePingS: 9999 };
+  const below = Math.floor(C.HUNTER_DATUM_PING_R_M / C.MAX_SPEED_MPS) - 2;
+  let pinged = false;
+  for (let t = m.datum!.ageS; t < below && !pinged; t++) {
+    const r = hunterDecide(snap({ you: ready() }), m, emptyTerrain(), intel());
+    m = r.mem as typeof m;
+    pinged ||= r.commands.some((c) => c.verb === "sensor_ping");
+  }
+  assert(!pinged, "NEVER pings below the uncertainty threshold — a sweep is priced for big circles only");
+
+  // at the threshold with the cadence due: fires
+  let m2 = { ...initialHunterMem(), datum: { x: 0, y: 100000, ageS: Math.ceil(C.HUNTER_DATUM_PING_R_M / C.MAX_SPEED_MPS) }, sincePingS: C.HUNTER_DATUM_PING_BASE_S };
+  const r2 = hunterDecide(snap({ you: ready() }), m2, emptyTerrain(), intel());
+  assert(r2.commands.some((c) => c.verb === "sensor_ping"), "past the threshold with the cadence due: the sweep fires");
+
+  // frequency scales with r: at 2× the threshold radius the interval halves
+  const age2x = Math.ceil((2 * C.HUNTER_DATUM_PING_R_M) / C.MAX_SPEED_MPS);
+  let m3 = { ...initialHunterMem(), datum: { x: 0, y: 100000, ageS: age2x }, sincePingS: Math.round(C.HUNTER_DATUM_PING_BASE_S / 2) };
+  const r3 = hunterDecide(snap({ you: ready() }), m3, emptyTerrain(), intel());
+  assert(r3.commands.some((c) => c.verb === "sensor_ping"), "at 2× the radius the ping interval halves — frequency scales with uncertainty");
+
+  // the probe band: an ear goes out toward the datum circle (inside r)
+  const probeAge = Math.ceil(C.HUNTER_DATUM_PROBE_R_M / C.MAX_SPEED_MPS) + 2;
+  let m4 = { ...initialHunterMem(), datum: { x: 0, y: 100000, ageS: probeAge }, sinceProbeS: C.HUNTER_DATUM_PROBE_EVERY_S };
+  const r4 = hunterDecide(snap({ you: ready({ ping: { ready: false } }) }), m4, emptyTerrain(), intel());
+  const probe = r4.commands.find((c) => c.verb === "launch_probe");
+  assert(!!probe, "in the probe band with sweeps down: an ear is seeded");
+  const rr = probeAge * C.MAX_SPEED_MPS;
+  const bDatum = Math.atan2(0 - 0, 100000 - 0) * (180 / Math.PI); // hunter at origin, datum due north
+  const off = Math.abs((((Number(probe!.params.bearing_degrees) - bDatum) % 360) + 540) % 360 - 180);
+  assert(off <= 90, `the ear points at the datum circle, not away from it (offset ${off.toFixed(0)}°, r ${(rr / 1000).toFixed(0)} km)`);
+}
+
 console.log("done");

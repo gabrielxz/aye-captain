@@ -955,7 +955,7 @@ function drawGate(now) {
   const gl = Math.max(1, Math.hypot(g.x, g.y));
   const tx = -g.y / gl; // rim tangent (matches the server's aperture segment)
   const ty = g.x / gl;
-  const h = g.apertureW / 2;
+  const h = (g.apertureLiveW ?? g.apertureW) / 2; // Anvil §4: narrows as the gate closes
   const [ax, ay] = worldToScreen(g.x - tx * h, g.y - ty * h);
   const [bx, by] = worldToScreen(g.x + tx * h, g.y + ty * h);
   const pulse = 0.55 + 0.35 * Math.sin(now / 600);

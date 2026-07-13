@@ -381,7 +381,7 @@
     },
     "archetypes": {
       "note": "v5: three hulls, NUMBERS ONLY (max speed 3000 m/s shared). CURRENT SHIP STATE names this hull's archetype and live loadout.",
-      "corvette": { "hull": 60, "accel_mps2": 85, "turn_dps": 28, "sig_base": 20, "sensor_base_m": 210000, "tubes": 1, "missiles": 4, "tube_reload_s": 20, "decoys": 6, "pdc_ammo_s": 40, "railguns": 0, "probes": 4 },
+      "corvette": { "hull": 60, "accel_mps2": 85, "turn_dps": 39.2, "sig_base": 20, "sensor_base_m": 210000, "tubes": 1, "missiles": 4, "tube_reload_s": 20, "decoys": 6, "pdc_ammo_s": 40, "railguns": 0, "probes": 4 },
       "frigate": { "hull": 100, "accel_mps2": 60, "turn_dps": 20, "sig_base": 30, "sensor_base_m": 180000, "tubes": 2, "missiles": 6, "tube_reload_s": 30, "decoys": 4, "pdc_ammo_s": 60, "railguns": 1, "rail_slugs": 20, "probes": 2 },
       "cruiser": { "hull": 160, "accel_mps2": 40, "turn_dps": 14, "sig_base": 45, "sensor_base_m": 160000, "tubes": 3, "missiles": 9, "tube_reload_s": 30, "decoys": 4, "pdc_ammo_s": 90, "railguns": 1, "rail_slugs": 30, "probes": 1 }
     },

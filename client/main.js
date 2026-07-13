@@ -59,6 +59,23 @@ function handleMessage(msg) {
       state.gate = msg.gate ?? null; // campaign: fixed public landmark
       document.body.classList.toggle("campaign", state.campaign);
       state.terrain = msg.terrain ?? null;
+      // Anvil §4: find the two pylon rocks by their known start geometry —
+      // when the gate closes, the sim walks them inward and we mirror it
+      state.pylonIdx = null;
+      if (state.gate && state.terrain) {
+        const g = state.gate;
+        const gl = Math.max(1, Math.hypot(g.x, g.y));
+        const off = g.apertureW / 2 + (state.config?.gatePylonRadiusM ?? 800);
+        const p1 = { x: g.x - (-g.y / gl) * off, y: g.y - (g.x / gl) * off };
+        const p2 = { x: g.x + (-g.y / gl) * off, y: g.y + (g.x / gl) * off };
+        const idxNear = (p) => {
+          const i = state.terrain.rocks.findIndex((r) => Math.hypot(r.x - p.x, r.y - p.y) < 1);
+          return i >= 0 ? i : null;
+        };
+        const i1 = idxNear(p1);
+        const i2 = idxNear(p2);
+        if (i1 !== null && i2 !== null) state.pylonIdx = [i1, i2];
+      }
       state.prevSnap = null;
       state.lastSnap = null;
       state.fxBuffer = [];
@@ -128,6 +145,23 @@ function handleMessage(msg) {
           if (own) pingListen = { until: now + 5000, rangeM: fx.r, done: false };
         }
       }
+      // Anvil §4: mirror the closing gate — the sim walks the pylon rocks
+      // inward; we re-derive their positions from the live aperture so the
+      // wall the player sees IS the wall the physics enforces
+      const closing = msg.you?.mission?.gateClosing;
+      if (closing && state.gate) {
+        state.gate.apertureLiveW = closing.apertureW;
+        if (state.pylonIdx && state.terrain) {
+          const g = state.gate;
+          const gl = Math.max(1, Math.hypot(g.x, g.y));
+          const off = closing.apertureW / 2 + (state.config?.gatePylonRadiusM ?? 800);
+          const [i1, i2] = state.pylonIdx;
+          const r1 = state.terrain.rocks[i1];
+          const r2 = state.terrain.rocks[i2];
+          if (r1) { r1.x = g.x - (-g.y / gl) * off; r1.y = g.y - (g.x / gl) * off; }
+          if (r2) { r2.x = g.x + (-g.y / gl) * off; r2.y = g.y + (g.x / gl) * off; }
+        }
+      }
       soundFromSnapshot(msg);
       updateHUDFromSnapshot(msg);
       // campaign adaptive score: brain (pure, fog-tested) -> driver.
@@ -163,7 +197,9 @@ function handleMessage(msg) {
       }
       // campaign gate-clear: no terminal explosion, no boom — you left
       // (the exit spectacle is Stage 4; the XO's "We're through" carries it)
-      if (!msg.gateCleared) {
+      // Anvil §4b: STRANDED is not an explosion — the ship is fine, the
+      // door is gone. No boom, no shake; the silence is the point.
+      if (!msg.gateCleared && !msg.stranded) {
         audio.sfxBoom(true, !msg.youWin);
         if (!msg.youWin) kickShake(true);
         // terminal explosion on the losing ship
@@ -183,9 +219,11 @@ function handleMessage(msg) {
         const tm = `${Math.floor(s.timeS / 60)}:${String(s.timeS % 60).padStart(2, "0")}`;
         const cause = msg.runComplete
           ? "eight of eight — the deep black, crossed"
-          : String(msg.winner ?? "").startsWith("H")
-            ? "the Hunter got us"
-            : "lost to misadventure";
+          : msg.stranded
+            ? "RUN ENDED — STRANDED: the gate closed with us inside"
+            : String(msg.winner ?? "").startsWith("H")
+              ? "the Hunter got us"
+              : "lost to misadventure";
         if (msg.runComplete) {
           // the final gate gets the full §8 exit before the scoreboard
           audio.musicExit();
@@ -493,6 +531,19 @@ function updateHUDFromSnapshot(snap) {
             cls: you.gate ? (you.gate.good ? "good" : "alert") : "",
             full: true,
           },
+          // Anvil §4c: the vise, on an instrument — countdown to closure
+          // and the live aperture; the GATE row above shows the solution
+          // going bad as this shrinks
+          ...(you.mission.gateClosing
+            ? [
+                {
+                  label: "GATE CLOSING",
+                  value: `${Math.floor(you.mission.gateClosing.leftS / 60)}:${String(you.mission.gateClosing.leftS % 60).padStart(2, "0")} · aperture ${you.mission.gateClosing.aperturePct}%`,
+                  cls: "alert",
+                  full: true,
+                },
+              ]
+            : []),
         ]
       : []),
     { label: "SIG", value: `${Math.round(you.signature ?? 0)}`, cls: (you.signature ?? 0) > 100 ? "alert" : (you.signature ?? 0) > 50 ? "warn" : "good" },

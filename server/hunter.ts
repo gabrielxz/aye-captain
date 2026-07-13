@@ -52,6 +52,12 @@ export interface HunterMem {
   // to a contact (the dust fortress), and total hunt seconds (gate drift)
   rumbleChaseS: number;
   huntS: number;
+  // Anvil §1b: the datum — where the trail went cold and how stale it is.
+  // The uncertainty radius is DERIVED (ageS × MAX_SPEED_MPS), never stored.
+  datum: { x: number; y: number; ageS: number } | null;
+  spokeIdx: number; // datum-search spoke index (golden-angle sweep)
+  sinceProbeS: number; // §1c spend cadences inside the datum search
+  sincePingS: number;
 }
 
 // Public mission knowledge — nothing here is fog-gated by nature: MARKED
@@ -77,7 +83,35 @@ export function initialHunterMem(): HunterMem {
     gateProbed: false,
     rumbleChaseS: 0,
     huntS: 0,
+    datum: null,
+    spokeIdx: 0,
+    sinceProbeS: 0,
+    sincePingS: 0,
   };
+}
+
+// Anvil §1a: every waypoint and intercept solution the Hunter steers for
+// stays inside the hard leash — a target beyond it is pulled radially onto
+// the clamp circle. The chase bends at the rim; it never leaves.
+function clampWp(x: number, y: number): { x: number; y: number } {
+  const d = Math.hypot(x, y);
+  const max = C.REGION_RADIUS_M * C.HUNTER_WP_CLAMP_FRAC;
+  return d <= max ? { x, y } : { x: (x / d) * max, y: (y / d) * max };
+}
+
+// §1a boundary-AVOID trigger: could the current OUTWARD radial speed carry
+// us past the rim before a retro burn kills it? Braking distance against
+// the weakest archetype drive — a fixed lookahead can't make this promise
+// at 3 km/s, physics can. (The snapshot carries no accel figure; a Hunter
+// knows its own engineering, and the conservative floor is safe for all.)
+const BRAKE_ACCEL_FLOOR = Math.min(...Object.values(C.ARCHETYPES).map((a) => a.accel));
+function boundaryThreat(you: HunterSnap["you"]): boolean {
+  const d = Math.hypot(you.x, you.y);
+  if (d < 1) return false;
+  const vOut = (you.vx * you.x + you.vy * you.y) / d; // outward radial speed
+  if (vOut <= 0) return false;
+  const brakeM = (vOut * vOut) / (2 * BRAKE_ACCEL_FLOOR);
+  return d + brakeM + 5000 > C.REGION_RADIUS_M;
 }
 
 // HUNT patrol route: rock flanks, then the region center. Terrain is public
@@ -133,6 +167,22 @@ export function hunterDecide(
     }
   }
 
+  // Anvil §1b datum bookkeeping: a live contact refreshes the datum every
+  // tick (age 0, sweep reset); silence ages it until the uncertainty circle
+  // covers more than the region — then the trail is cold and it drops.
+  if (best) {
+    next.datum = { x: best.x, y: best.y, ageS: 0 };
+    next.spokeIdx = 0;
+    next.sinceProbeS = 0;
+    next.sincePingS = 0;
+  } else if (mem.datum) {
+    const ageS = mem.datum.ageS + 1;
+    next.datum =
+      ageS * C.MAX_SPEED_MPS > C.HUNTER_DATUM_GIVEUP_R_M
+        ? null
+        : { x: mem.datum.x, y: mem.datum.y, ageS };
+  }
+
   let heading: number;
   let throttle: number;
 
@@ -148,6 +198,7 @@ export function hunterDecide(
       aimX += best.vx * t;
       aimY += best.vy * t;
     }
+    ({ x: aimX, y: aimY } = clampWp(aimX, aimY)); // §1a: the chase bends at the rim
     heading = bearingTo(you.x, you.y, aimX, aimY);
     throttle = C.HUNTER_PURSUE_THROTTLE;
 
@@ -175,10 +226,10 @@ export function hunterDecide(
     // deny. Contacts (the branch above) still pull it into a fight.
     next.lockedCid = null;
     const gl = Math.max(1, Math.hypot(intel.gate.x, intel.gate.y));
-    const station = {
-      x: intel.gate.x * (1 - 20000 / gl), // 20 km inward of the aperture
-      y: intel.gate.y * (1 - 20000 / gl),
-    };
+    const station = clampWp(
+      intel.gate.x * (1 - 20000 / gl), // 20 km inward of the aperture
+      intel.gate.y * (1 - 20000 / gl)
+    );
     const d = dist(you.x, you.y, station.x, station.y);
     if (d > C.HUNTER_PATROL_ARRIVE_M) {
       heading = bearingTo(you.x, you.y, station.x, station.y);
@@ -223,8 +274,62 @@ export function hunterDecide(
         next.fireCooldownS = C.HUNTER_FIRE_COOLDOWN_S;
         next.rumbleChaseS = 0; // earn the next one
       }
+    } else if (next.datum) {
+      // DATUM SEARCH (Anvil §1b): the trail is warm. Sweep golden-angle
+      // spokes of the uncertainty circle — every waypoint sits INSIDE
+      // r = age × prey max speed, so a ship that sat still after being
+      // seen is walked over, while one that coasted away silently rides
+      // the circle's expanding rim out of the sweep. Not a random walk.
+      const r = next.datum.ageS * C.MAX_SPEED_MPS;
+      let wp: { x: number; y: number };
+      if (next.spokeIdx === 0) {
+        wp = clampWp(next.datum.x, next.datum.y); // first: the datum itself
+      } else {
+        const [sx, sy] = headingVec(norm360(next.spokeIdx * 137.5));
+        const rho = C.HUNTER_DATUM_SPOKE_FRAC * r;
+        wp = clampWp(next.datum.x + sx * rho, next.datum.y + sy * rho);
+      }
+      if (dist(you.x, you.y, wp.x, wp.y) <= C.HUNTER_PATROL_ARRIVE_M) next.spokeIdx += 1;
+      heading = bearingTo(you.x, you.y, wp.x, wp.y);
+      throttle = C.HUNTER_HUNT_THROTTLE;
+      next.rumbleChaseS = 0;
+
+      // ESCALATION BY UNCERTAINTY (§1c): PASSIVE below the probe
+      // threshold; remote ears seeded around the circle past it; past the
+      // ping threshold the sweeps come, and they come FASTER as the
+      // circle grows (interval ∝ 1/r, floored by the transducer
+      // recharge). Never below the threshold — every sweep hands the
+      // player a free map-wide fix on the Hunter, and that trade is only
+      // worth it when the circle is already big.
+      next.sinceProbeS += 1;
+      next.sincePingS += 1;
+      if (r >= C.HUNTER_DATUM_PING_R_M && you.ping?.ready) {
+        const interval = Math.max(
+          1,
+          Math.round((C.HUNTER_DATUM_PING_BASE_S * C.HUNTER_DATUM_PING_R_M) / r)
+        );
+        if (next.sincePingS >= interval) {
+          commands.push({ verb: "sensor_ping", params: {} });
+          next.sincePingS = 0;
+        }
+      } else if (
+        r >= C.HUNTER_DATUM_PROBE_R_M &&
+        (you.probes ?? 0) > 0 &&
+        next.sinceProbeS >= C.HUNTER_DATUM_PROBE_EVERY_S
+      ) {
+        // an ear on the circle, one spoke ahead of the sweep
+        const [sx, sy] = headingVec(norm360((next.spokeIdx + 1) * 137.5));
+        const rho = C.HUNTER_DATUM_SPOKE_FRAC * r;
+        const ear = clampWp(next.datum.x + sx * rho, next.datum.y + sy * rho);
+        commands.push({
+          verb: "launch_probe",
+          params: { bearing_degrees: Math.round(bearingTo(you.x, you.y, ear.x, ear.y)) },
+        });
+        next.sinceProbeS = 0;
+      }
     } else if (snap.ghost && dist(you.x, you.y, snap.ghost.x, snap.ghost.y) > C.HUNTER_PATROL_ARRIVE_M) {
-      heading = bearingTo(you.x, you.y, snap.ghost.x, snap.ghost.y);
+      const g = clampWp(snap.ghost.x, snap.ghost.y);
+      heading = bearingTo(you.x, you.y, g.x, g.y);
       throttle = C.HUNTER_HUNT_THROTTLE;
       next.dryS += 1; // a stale fix is a lead, not a signal — the clock runs
       next.rumbleChaseS = 0;
@@ -241,18 +346,21 @@ export function hunterDecide(
         next.wpIdx = (next.wpIdx + (intel.sites.length > 0 || wps.length > 2 ? 1 : 7)) % wps.length;
         wp = wps[next.wpIdx % wps.length];
       }
+      wp = clampWp(wp.x, wp.y); // §1a
       heading = bearingTo(you.x, you.y, wp.x, wp.y);
       throttle = C.HUNTER_HUNT_THROTTLE;
       next.dryS += 1;
       next.rumbleChaseS = 0;
     }
 
-    // ESCALATION: a Hunter that can't find you starts SPENDING. Every
-    // HUNTER_DRY_SPELL_S of silence: PING first — the reveal is priced in,
-    // and the frustrated scream is the player's gift — then probes (the
-    // gate first: the player must come there eventually; after that, down
-    // the last bearing it ever heard, else a spread off the patrol index).
-    if (next.dryS >= C.HUNTER_DRY_SPELL_S) {
+    // ESCALATION (cold hunt only — a live datum runs the §1c uncertainty
+    // ladder above instead): a Hunter that can't find you starts SPENDING.
+    // Every HUNTER_DRY_SPELL_S of silence: PING first — the reveal is
+    // priced in, and the frustrated scream is the player's gift — then
+    // probes (the gate first: the player must come there eventually; after
+    // that, down the last bearing it ever heard, else a spread off the
+    // patrol index).
+    if (!next.datum && next.dryS >= C.HUNTER_DRY_SPELL_S) {
       if (you.ping?.ready) {
         commands.push({ verb: "sensor_ping", params: {} });
         next.dryS = 0;
@@ -315,6 +423,14 @@ export function hunterDecide(
     const travel = norm360((Math.atan2(you.vx, you.vy) * 180) / Math.PI);
     heading = norm360(travel + next.dodge * 60);
     throttle = 100; // survival outranks fuel discipline
+  } else if (boundaryThreat(you)) {
+    // Anvil §1a: the boundary is in AVOID — outward momentum that could
+    // carry past the rim steers home at full burn. Waypoint clamping
+    // keeps this rare; this is the backstop that makes "never exits the
+    // region" a law.
+    next.dodge = 0;
+    heading = bearingTo(you.x, you.y, 0, 0);
+    throttle = 100;
   } else {
     next.dodge = 0;
     if (next.lowFuel) throttle = Math.min(throttle, C.REGEN_MAX_THRUST_PCT);

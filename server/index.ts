@@ -12,6 +12,7 @@ import {
   SALVAGE_DOCK_RANGE_M,
   RUMOR_RESOLVE_RANGE_M,
   SALVAGE_APPROACH_RANGE_M,
+  GATE_PYLON_RADIUS_M,
 } from "./constants.js";
 import { Match, sanitizeName } from "./match.js";
 import { sttAvailable, transcribe, SttBusyError } from "./stt.js";
@@ -102,6 +103,7 @@ wss.on("connection", (ws: WebSocket) => {
         salvageDockRangeM: SALVAGE_DOCK_RANGE_M,
         rumorResolveRangeM: RUMOR_RESOLVE_RANGE_M,
         salvageApproachRangeM: SALVAGE_APPROACH_RANGE_M,
+        gatePylonRadiusM: GATE_PYLON_RADIUS_M, // Anvil §4: client re-derives the creeping pylons
         // v5.1 §6: the select screen renders stat bars straight from the
         // runtime source of truth — the client never hardcodes a number
         archetypes: ARCHETYPES,

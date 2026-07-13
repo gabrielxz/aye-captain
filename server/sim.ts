@@ -415,6 +415,8 @@ export type SimEvent =
       placementNames: string[];
       // campaign (Stage 0): the player flew out through the gate
       gateCleared?: boolean;
+      // Anvil §4b: in-system when the gate reached zero — RUN ENDED, STRANDED
+      stranded?: boolean;
     };
 
 // Campaign salvage (§4): one item per SALVAGE_ITEM_S, worst -> best — a
@@ -441,6 +443,11 @@ export interface Wreck {
   // "salvage Bravo" must never collide with "lock up Bravo"
   x: number;
   y: number;
+  // Anvil §3c: a HULK is a wreck with velocity — the dead Hunter's, exactly
+  // as he died. Absent (0) on every static site: the salvage math runs in
+  // the wreck's frame, so static behavior is bit-identical by construction.
+  vx?: number;
+  vy?: number;
   marked: boolean;
   checked: boolean;
   items: SalvageItem[];
@@ -481,6 +488,13 @@ export interface Mission {
   // gate-solution XO bookkeeping (edge-triggered, rate-limited)
   solGood: boolean;
   solCooldownS: number;
+  // Anvil §4: seconds since the LAST Hunter died (null = gate stable);
+  // gateCloseCalled counts the 50%/25% NEWS lines already spoken; pylonIdx
+  // holds the two pylon rocks' indices in terrain.rocks so the physical
+  // wall can creep inward with the aperture (null in hand-built test sims)
+  gateCloseS: number | null;
+  gateCloseCalled: number;
+  pylonIdx: [number, number] | null;
 }
 
 // ---------- angle helpers ----------
@@ -1222,14 +1236,20 @@ export class Sim {
           mask.push(t === null ? C.PING_RANGE_M : t * C.PING_RANGE_M);
         }
         this.fx.push({ type: "ping", x: ship.x, y: ship.y, r: C.PING_RANGE_M, mask });
-        // the scream is heard by everyone, terrain or not
+        // the scream is heard by everyone, terrain or not. Anvil §1c: a
+        // HUNTER's sweep gets the campaign line — same information, but
+        // "he's sweeping for us" is the sentence that raises the hairs.
         for (const other of this.ships.values()) {
           if (other.id === ship.id || other.isDrone) continue;
+          const sweep = this.mission && ship.hunterAI;
+          const lead = sweep
+            ? "Active ping — he's sweeping for us, Captain."
+            : "Active ping — he's lit himself up.";
           events.push({
             kind: "notice",
             ship: other.id,
-            text: `Active ping — he's lit himself up. Bearing ${fmtBearing(bearingTo(other.x, other.y, ship.x, ship.y))}.`,
-            speak: `Active ping — he's lit himself up. Bearing ${spokenBearing(bearingTo(other.x, other.y, ship.x, ship.y))}.`,
+            text: `${lead} Bearing ${fmtBearing(bearingTo(other.x, other.y, ship.x, ship.y))}.`,
+            speak: `${lead} Bearing ${spokenBearing(bearingTo(other.x, other.y, ship.x, ship.y))}.`,
             alert: true,
           });
         }
@@ -2040,18 +2060,30 @@ export class Sim {
     if (this.mission && target.hunterAI) {
       this.mission.stats.huntersKilled += 1;
       const cycle: ("sig" | "sensor" | "accel" | "hull")[] = ["sig", "sensor", "accel", "hull"];
+      const k = this.mission.stats.huntersKilled;
+      // Anvil §3: the Hunter dies into a HULK — a drifting wreck carrying
+      // exactly the velocity he had when he died (no static wreck, no
+      // teleported loot). Anvil §2: the hold is THE BOUNTY — the richest
+      // loot in the system, a large multiple of the best generated hold
+      // (Patch-1 placeholder; Patch 5 replaces this with modules — no
+      // bespoke loot category). Worst → best: the second module is the
+      // reason to stay aboard a hold that's dragging you off the map.
       this.mission.wrecks.push({
         id: this.nextId++,
         letter: String.fromCharCode(65 + this.mission.wrecks.length), // next free letter
         x: target.x,
         y: target.y,
+        vx: target.vx,
+        vy: target.vy,
         marked: true,
         checked: false,
         items: [
-          { kind: "pdc_ammo", amount: 30 },
-          { kind: "missiles", amount: 2 },
-          { kind: "probes", amount: 2 },
-          { kind: "upgrade", amount: 1, upgrade: cycle[(this.mission.stats.huntersKilled - 1) % 4] },
+          { kind: "pdc_ammo", amount: 60 },
+          { kind: "decoys", amount: 4 },
+          { kind: "missiles", amount: 4 },
+          { kind: "probes", amount: 4 },
+          { kind: "upgrade", amount: 1, upgrade: cycle[(k - 1) % 4] },
+          { kind: "upgrade", amount: 1, upgrade: cycle[k % 4] },
         ],
       });
     }
@@ -2128,6 +2160,18 @@ export class Sim {
             ship: player.id,
             text: "It's gone quiet, Captain. The system is ours.",
           });
+          // Anvil §4: the LAST Hunter's death destabilizes the gate — the
+          // bounty and the clock arrive in the same breath. CRITICAL: this
+          // is the sentence that turns the loot run into a decision.
+          if (this.mission.gateCloseS === null) {
+            this.mission.gateCloseS = 0;
+            events.push({
+              kind: "notice",
+              ship: player.id,
+              text: "The gate's destabilizing, Captain. She's closing.",
+              alert: true,
+            });
+          }
         }
         return;
       }
@@ -2639,6 +2683,7 @@ export class Sim {
       // campaign: gate-solution XO lines (edge-triggered, rate-limited)
       // + rumor resolution by presence + the salvage transfer clock (§4.2)
       if (this.mission) {
+        this.stepGateClose(events); // Anvil §4 — the vise turns before the XO reads the solution
         this.updateGateXO(events);
         this.stepRumors(events);
         this.stepSalvage(events);
@@ -2666,6 +2711,25 @@ export class Sim {
       d.x += d.vx * dt;
       d.y += d.vy * dt;
       d.age += dt;
+    }
+    // Anvil §3c: hulks — wrecks carrying the velocity their owner died
+    // with. Debris physics: integrates, NO collision, NO decay; shroud
+    // drag applies outside the region and it is NEVER clamped inside —
+    // if he died fleeing outward the hold drifts into the light, and
+    // chasing it means going lit-up and fighting the current.
+    if (this.mission) {
+      for (const w of this.mission.wrecks) {
+        if (!w.vx && !w.vy) continue;
+        w.x += (w.vx ?? 0) * dt;
+        w.y += (w.vy ?? 0) * dt;
+        const wr = Math.hypot(w.x, w.y);
+        if (wr > C.REGION_RADIUS_M) {
+          const beyond = wr - C.REGION_RADIUS_M;
+          const pull = Math.min(C.EDGE_PULL_CAP_MPS2, C.EDGE_PULL_MPS2_PER_50KM * (beyond / 50000));
+          w.vx = (w.vx ?? 0) + (-w.x / wr) * pull * dt;
+          w.vy = (w.vy ?? 0) + (-w.y / wr) * pull * dt;
+        }
+      }
     }
     for (const sl of this.slugs) {
       sl.prevX = sl.x;
@@ -3937,15 +4001,26 @@ export class Sim {
     // wreck, braking to arrive inside dock range, then station-keeping
     // while the transfer runs. The captain flew the hundreds of km to get
     // here; the XO flies the last handful.
+    //
+    // Anvil §3b: the whole regime runs in the WRECK'S FRAME — v below is
+    // v_rel = v_ship − v_wreck, "stopped" means matched, and the hop aims
+    // a lead intercept. A static wreck has v_wreck = 0, so every line is
+    // bit-identical to the pre-hulk behavior (the existing salvage tests
+    // are the proof).
+    let wvx = 0;
+    let wvy = 0;
     if (type === "salvage") {
       const wreck = this.mission?.wrecks.find((w) => w.id === (ship.maneuver as { wreckId: number }).wreckId);
       if (wreck) {
+        wvx = wreck.vx ?? 0;
+        wvy = wreck.vy ?? 0;
+        const rspeed = Math.hypot(ship.vx - wvx, ship.vy - wvy);
         const d = dist(ship.x, ship.y, wreck.x, wreck.y);
-        const stopping = (speed * speed) / (2 * accel);
+        const stopping = (rspeed * rspeed) / (2 * accel);
         if (
           d > C.SALVAGE_DOCK_RANGE_M * 0.6 &&
           d - stopping > 400 &&
-          speed < Math.min(250, d / 12)
+          rspeed < Math.min(250, d / 12)
         ) {
           if (ship.propellant <= 0) {
             ship.maneuver = null;
@@ -3954,7 +4029,10 @@ export class Sim {
             events.push({ kind: "notice", ship: ship.id, text: "Tanks dry — I can't finish the stop, Captain.", alert: true });
             return;
           }
-          const to = bearingTo(ship.x, ship.y, wreck.x, wreck.y);
+          // lead intercept: aim where the wreck WILL be at hop speed —
+          // for a static wreck the lead term is zero (current position)
+          const tLead = d / Math.max(50, rspeed);
+          const to = bearingTo(ship.x, ship.y, wreck.x + wvx * tLead, wreck.y + wvy * tLead);
           ship.goal = { mode: "absolute", degrees: to };
           ship.thrust = Math.abs(angDiff(ship.facing, to)) <= 15 ? 35 : 0;
           return;
@@ -3962,7 +4040,11 @@ export class Sim {
       }
     }
 
-    if (speed < 5) {
+    const rvx = ship.vx - wvx; // wreck frame (v_wreck = 0 for everything but a hulk salvage)
+    const rvy = ship.vy - wvy;
+    const rspeed = Math.hypot(rvx, rvy);
+
+    if (rspeed < 5) {
       if (type === "full_stop") {
         ship.maneuver = null;
         events.push({ kind: "notice", ship: ship.id, text: "Answering all stop." });
@@ -3971,8 +4053,8 @@ export class Sim {
       // runs (stepSalvage owns the clock and the end states)
       ship.thrust = 0;
       ship.goal = null;
-      ship.vx = 0; // kill the last crawl — "all stop" means stopped
-      ship.vy = 0;
+      ship.vx = wvx; // kill the last crawl IN THE WRECK'S FRAME — alongside
+      ship.vy = wvy; // a hulk means riding with it ("all stop" when static)
       return;
     }
     if (ship.propellant <= 0) {
@@ -3987,12 +4069,12 @@ export class Sim {
       });
       return;
     }
-    const retro = norm360(bearingTo(0, 0, -ship.vx, -ship.vy));
+    const retro = norm360(bearingTo(0, 0, -rvx, -rvy));
     ship.goal = { mode: "absolute", degrees: retro };
     const off = Math.abs(angDiff(ship.facing, retro));
     if (off <= 15) {
       // full burn until one second from stopped, then feather the throttle
-      ship.thrust = clamp(Math.round((speed / accel) * 100), 5, 100);
+      ship.thrust = clamp(Math.round((rspeed / accel) * 100), 5, 100);
     } else {
       ship.thrust = 0; // still flipping; don't burn off-axis
     }
@@ -4112,6 +4194,60 @@ export class Sim {
 
   // ---------- campaign "Deep Black" (Stage 0) ----------
 
+  // Anvil §4: the LIVE aperture — APERTURE_W until the last Hunter dies,
+  // then linear to EXACTLY ZERO across [START, END]. No floor (§4a: the
+  // knob is END, never a minimum).
+  gateApertureNow(): number {
+    const m = this.mission!;
+    if (m.gateCloseS === null || m.gateCloseS <= C.GATE_CLOSE_START_S) return m.gate.apertureW;
+    const f = (m.gateCloseS - C.GATE_CLOSE_START_S) / (C.GATE_CLOSE_END_S - C.GATE_CLOSE_START_S);
+    return Math.max(0, m.gate.apertureW * (1 - Math.min(1, f)));
+  }
+
+  // Anvil §4: one command tick of the closing gate. The pylons ride the
+  // live aperture inward (closed = a WALL — they touch at zero); the XO
+  // calls 50% and 25% (the CRITICAL destabilizing line fired at the kill);
+  // at END, a player still in-system is RUN ENDED — STRANDED.
+  private stepGateClose(events: SimEvent[]): void {
+    const m = this.mission!;
+    if (m.gateCloseS === null || m.cleared || this.winner) return;
+    m.gateCloseS += 1;
+    const ap = this.gateApertureNow();
+    if (m.pylonIdx) {
+      const gl = Math.max(1, Math.hypot(m.gate.x, m.gate.y));
+      const tx = -m.gate.y / gl;
+      const ty = m.gate.x / gl;
+      const off = ap / 2 + C.GATE_PYLON_RADIUS_M;
+      const [i1, i2] = m.pylonIdx;
+      const p1 = this.terrain.rocks[i1];
+      const p2 = this.terrain.rocks[i2];
+      if (p1) { p1.x = m.gate.x - tx * off; p1.y = m.gate.y - ty * off; }
+      if (p2) { p2.x = m.gate.x + tx * off; p2.y = m.gate.y + ty * off; }
+    }
+    const calls: [number, string][] = [
+      [0.5, "Gate's at half aperture, Captain."],
+      [0.25, "Quarter aperture — she's nearly shut, Captain."],
+    ];
+    while (m.gateCloseCalled < calls.length && ap / m.gate.apertureW <= calls[m.gateCloseCalled][0]) {
+      events.push({ kind: "notice", ship: m.playerId, text: calls[m.gateCloseCalled][1] });
+      m.gateCloseCalled += 1;
+    }
+    if (m.gateCloseS >= C.GATE_CLOSE_END_S) {
+      const player = this.ships.get(m.playerId);
+      if (!player) return; // a death already ended the run
+      this.winner = "nobody";
+      const placements = [player.id, ...[...this.placements].reverse()];
+      events.push({
+        kind: "gameover",
+        winner: this.winner,
+        winnerName: "the deep black",
+        placements,
+        placementNames: placements.map((id) => this.callsigns.get(id) ?? id),
+        stranded: true,
+      });
+    }
+  }
+
   // The aperture: the rim tangent segment through the gate center
   // (perpendicular to the outward radial).
   apertureSegment(): [number, number, number, number] {
@@ -4119,7 +4255,7 @@ export class Sim {
     const gl = Math.max(1, Math.hypot(g.x, g.y));
     const tx = -g.y / gl; // tangent = outward radial rotated 90°
     const ty = g.x / gl;
-    const h = g.apertureW / 2;
+    const h = this.gateApertureNow() / 2; // Anvil §4: the LIVE aperture
     return [g.x - tx * h, g.y - ty * h, g.x + tx * h, g.y + ty * h];
   }
 
@@ -4279,7 +4415,15 @@ export class Sim {
       }
       return;
     }
-    if (this.speedOf(player) >= C.SALVAGE_STOP_SPEED_MPS) return; // still killing velocity
+    // Anvil §3a: the transfer gate is RELATIVE — |v_ship − v_wreck| under
+    // the stop speed. Static wrecks have v = 0: nothing about them changes.
+    // To loot a hulk you adopt the dead Hunter's escape vector; the
+    // momentum is the price (§3d — no timer, no penalty on top).
+    if (
+      Math.hypot(player.vx - (wreck.vx ?? 0), player.vy - (wreck.vy ?? 0)) >=
+      C.SALVAGE_STOP_SPEED_MPS
+    )
+      return; // still matching velocity
     if (!wreck.checked) wreck.checked = true; // docking is the closest look there is
     if (!m.salvaging || m.salvaging.wreckId !== wreck.id) {
       m.salvaging = { wreckId: wreck.id, t: 0 };
@@ -4396,7 +4540,10 @@ export class Sim {
     const lx = Math.sin(travel - Math.PI / 2);
     const ly = Math.cos(travel - Math.PI / 2);
     const side = cx * lx + cy * ly > 0 ? "left" : "right";
-    return { ttg: t, missM, side, good: missM < g.apertureW / 2 };
+    // Anvil §4c: good against the LIVE aperture — as the gate narrows the
+    // captain watches a good solution turn bad on an instrument that
+    // already existed
+    return { ttg: t, missM, side, good: missM < this.gateApertureNow() / 2 };
   }
 
   // XO solution calls: NEWS tier, edge-triggered on good/wide transitions,
@@ -5143,6 +5290,19 @@ export class Sim {
                           ?.items.length ?? 0,
                     }
                   : null,
+                // Anvil §4c: the closing gate on the HUD — countdown to
+                // closure + the live aperture (drawGate narrows from this;
+                // the client walks its pylon sprites in with it)
+                gateClosing:
+                  this.mission.gateCloseS !== null
+                    ? {
+                        leftS: Math.max(0, C.GATE_CLOSE_END_S - this.mission.gateCloseS),
+                        apertureW: Math.round(this.gateApertureNow()),
+                        aperturePct: Math.round(
+                          (100 * this.gateApertureNow()) / this.mission.gate.apertureW
+                        ),
+                      }
+                    : null,
               },
               gate: (() => {
                 const sol = this.gateSolution(ship);

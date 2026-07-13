@@ -58,7 +58,7 @@ export interface ArchetypeStats {
   probes: number;
 }
 export const ARCHETYPES: Record<ArchetypeName, ArchetypeStats> = {
-  corvette: { hull: 60, accel: 85, turn: 28, sigBase: 20, sensorBase: 210000, tubes: 1, magazine: 4, tubeReload: 20, decoys: 6, pdcAmmoS: 40, railguns: 0, railSlugs: 0, probes: 4 },
+  corvette: { hull: 60, accel: 85, turn: 39.2, sigBase: 20, sensorBase: 210000, tubes: 1, magazine: 4, tubeReload: 20, decoys: 6, pdcAmmoS: 40, railguns: 0, railSlugs: 0, probes: 4 }, // turn 28 → 39.2: Anvil §5, +40% exactly (the wanted turn-rate pass, corvette leg)
   frigate:  { hull: 100, accel: 60, turn: 20, sigBase: 30, sensorBase: 180000, tubes: 2, magazine: 6, tubeReload: 30, decoys: 4, pdcAmmoS: 60, railguns: 1, railSlugs: 20, probes: 2 },
   cruiser:  { hull: 160, accel: 40, turn: 14, sigBase: 45, sensorBase: 160000, tubes: 3, magazine: 9, tubeReload: 30, decoys: 4, pdcAmmoS: 90, railguns: 1, railSlugs: 30, probes: 1 },
 };
@@ -452,6 +452,30 @@ export const HUNTER_PATROL_ARRIVE_M = 15000; // waypoint arrival radius while HU
 // a noise pointing outward was marching hunters off the map). PURSUE of a
 // real contact and the gate picket are exempt.
 export const HUNTER_LEASH_FRAC = 0.9;
+// Anvil §1a: the HARD leash. Every waypoint and intercept solution the
+// Hunter steers for clamps inside this fraction of the region radius, and
+// the region boundary joins AVOID — a projected exit steers home at full
+// burn. (The PURSUE exemption above is Anvil-overridden: the chase bends
+// at the rim too. tests: hunter never exits REGION_RADIUS_M.)
+export const HUNTER_WP_CLAMP_FRAC = 0.9;
+// Anvil §1b: the datum search. Losing a contact records a datum; the
+// uncertainty circle grows at prey max speed (r = age × MAX_SPEED_MPS) and
+// the Hunter sweeps golden-angle spokes of THAT circle instead of falling
+// back to the patrol random-walk. The intended consequence: sitting still
+// after being seen gets you found; coasting away silently does not — the
+// circle outruns the search. Past the give-up radius the trail is cold.
+export const HUNTER_DATUM_SPOKE_FRAC = 0.6; // search waypoints sit at this fraction of r
+export const HUNTER_DATUM_GIVEUP_R_M = REGION_RADIUS_M; // r covers the region: back to patrol
+// Anvil §1c: escalation by UNCERTAINTY, not silence — PASSIVE spiral below
+// the probe threshold, remote ears seeded around the circle past it, active
+// PINGS past the ping threshold with frequency scaling ∝ r (interval =
+// BASE × PING_R / r, floored by the transducer recharge). NEVER ping at low
+// uncertainty — pinned. The pre-Anvil dry-spell spending survives for the
+// datum-less COLD hunt (spawn, expired trails), where uncertainty is max.
+export const HUNTER_DATUM_PROBE_R_M = 60000;
+export const HUNTER_DATUM_PROBE_EVERY_S = 30;
+export const HUNTER_DATUM_PING_R_M = 120000;
+export const HUNTER_DATUM_PING_BASE_S = 75; // ping interval at the threshold radius
 // Escalation (playtest ask): every dry spell this long — no contact, no
 // rumble, no ghost — the Hunter spends something: an active PING first
 // (which reveals IT map-wide: the frustrated scream is the player's gift),
@@ -481,6 +505,15 @@ export const HUNTER_GATE_DRIFT_S = 150; // hunt seconds before the gate joins th
 export const GATE_ASSIST_RANGE_M = 15000;
 export const GATE_ASSIST_MAX_SPEED_MPS = 300;
 export const GATE_XO_COOLDOWN_S = 10; // min gap between gate-solution XO calls (§5.4: rate-limited HARD)
+
+// Anvil §4: the closing gate. When the LAST Hunter dies the gate
+// destabilizes — warning at the kill, narrowing begins at START, aperture
+// reaches EXACTLY ZERO at END. No minimum aperture, ever: if playtest says
+// the window is too tight, RAISE END — do not add a floor, do not widen
+// APERTURE_W_M (§4a). A player still in-system at closure is
+// RUN ENDED — STRANDED. The pylons ride the aperture inward: closed = wall.
+export const GATE_CLOSE_START_S = 180;
+export const GATE_CLOSE_END_S = 300;
 
 // --- Stage 1: the run (§1) + salvage (§4) + progression (§6) ---
 export const CAMPAIGN_SYSTEMS = 8;
