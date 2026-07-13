@@ -522,6 +522,25 @@ export const HUNTER_BLIND_FIRE_S = 25; // continuous rumble-chase without a cont
 export const HUNTER_BLIND_FIRE_LOUD = 0.15;
 export const HUNTER_GATE_DRIFT_S = 150; // hunt seconds before the gate joins the patrol rotation
 
+// Patch 2 "Two Ships" §1a: the Hunter pursues the LOUDEST contact he
+// currently holds — the rule that makes the bait play work (one captain
+// burns, the Hunter comes for him, the other loots dark). Loudness rides
+// the wire on every contact as the same signature-derived scalar the
+// hearing channel already broadcasts (sig / LOUD_SIG_REF — the sound
+// doesn't stop when you can see it). Target re-evaluation runs on a
+// CADENCE with HYSTERESIS: a challenger must be meaningfully louder or
+// meaningfully closer to steal the chase — he must not oscillate between
+// two comparably-loud ships.
+export const LOUD_SIG_REF = 150; // loud = min(1, signature / this) — rumbles and contacts alike
+export const HUNTER_RETARGET_EVERY_S = 5; // target re-evaluation cadence
+export const HUNTER_RETARGET_LOUDER = 1.4; // challenger needs >= this x current loudness...
+export const HUNTER_RETARGET_CLOSER = 0.6; // ...or <= this x current range
+// §3a: the XO's loudness read ("we're the loudest thing on the board") —
+// the flip that turns the bait play on. Edge-triggered with a margin
+// (throttle jitter must not flap it), rate-limited HARD.
+export const LOUD_CALL_COOLDOWN_S = 20;
+export const LOUD_CALL_MARGIN = 1.15; // a new loudest must clear the old by this factor
+
 // Gate-run assist (playtest ask): within this range and below this speed,
 // "take us through the gate" hands the aperture to the XO — he stops,
 // lines the ballistic through center, and burns straight. The slow-entry
@@ -580,6 +599,12 @@ export const GATE_CLOSE_DURATION_S = 180;
 export const CAMPAIGN_SYSTEMS = 8;
 // The stop is the cost (§4.1): momentum is the most precious thing you own.
 export const SALVAGE_STOP_SPEED_MPS = 25; // must be under this for the transfer to run
+// The approach hop only flies while the relative velocity points mostly AT
+// the dock target (closing rate >= this fraction of relative speed, ~37°
+// cone). Crossrange motion falls through to the retro-brake instead —
+// thrusting at a target you're sliding past is a circular orbit, and the
+// XO flew one (playtest 2026-07-13: "it kept going around and around").
+export const SALVAGE_HOP_ALIGN = 0.8;
 export const SALVAGE_DOCK_RANGE_M = 2000; // come alongside — the XO won't grapple across the map
 export const SALVAGE_ITEM_S = 10; // per item; the haul is sequential, worst -> best (§4.2 — a greed curve, not a progress bar)
 export const SALVAGE_MARKED_SITES = 2; // reliable contents. WATCHED by the Hunter (§4.3/§4.4)

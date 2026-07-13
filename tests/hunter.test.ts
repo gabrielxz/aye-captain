@@ -384,4 +384,111 @@ const thrustOf = (cmds: ReturnType<typeof hunterDecide>["commands"]) =>
     `never exits: max radius ${(maxR / 1000).toFixed(1)} km of ${C.REGION_RADIUS_M / 1000} — the burn-leash law holds at max speed`);
 }
 
+// ---------- Patch 2 "Two Ships" §1: loudest-signature targeting ----------
+
+// T1. Two contacts held: he pursues the LOUDEST, not the nearest — the
+// bait-play rule. Quiet ship 30 km east; loud ship 120 km north.
+{
+  const quiet = { cid: "a", tier: 2, loud: 0.2, x: 30000, y: 0, vx: 0, vy: 0 };
+  const loud = { cid: "b", tier: 2, loud: 0.9, x: 0, y: 120000, vx: 0, vy: 0 };
+  const { commands, mem } = hunterDecide(
+    snap({ contacts: [quiet, loud] }), initialHunterMem(), emptyTerrain(), intel());
+  assert(Math.abs(headingOf(commands) - 0) < 1, "pursues the LOUDEST contact, not the nearest");
+  assert(mem.targetCid === "b", "commits to the loud one");
+}
+
+// T2. Contact on only ONE ship: that is the target regardless of loudness.
+{
+  const whisper = { cid: "a", tier: 2, loud: 0.05, x: 30000, y: 0, vx: 0, vy: 0 };
+  const { commands, mem } = hunterDecide(
+    snap({ contacts: [whisper] }), initialHunterMem(), emptyTerrain(), intel());
+  assert(Math.abs(headingOf(commands) - 90) < 1, "single contact: pursued regardless of signature");
+  assert(mem.targetCid === "a", "commitment recorded");
+}
+
+// T3. Hysteresis: a challenger only slightly louder NEVER steals the chase;
+// a meaningfully louder one steals it on the cadence tick, not before.
+{
+  const cur = { cid: "a", tier: 2, loud: 0.5, x: 0, y: 60000, vx: 0, vy: 0 };
+  const meh = { cid: "b", tier: 2, loud: 0.6, x: 60000, y: 0, vx: 0, vy: 0 }; // 1.2x — under the bar
+  let mem = initialHunterMem();
+  mem = hunterDecide(snap({ contacts: [cur] }), mem, emptyTerrain(), intel()).mem; // commit to a
+  let stayed = true;
+  for (let t = 0; t < C.HUNTER_RETARGET_EVERY_S * 3; t++) {
+    const r = hunterDecide(snap({ contacts: [cur, meh] }), mem, emptyTerrain(), intel());
+    mem = r.mem;
+    if (mem.targetCid !== "a") stayed = false;
+  }
+  assert(stayed, "a 1.2x challenger never steals the chase (hysteresis)");
+  const hot = { ...meh, cid: "c", loud: 0.8 }; // 1.6x — meaningfully louder
+  let switchedAt = -1;
+  for (let t = 0; t < C.HUNTER_RETARGET_EVERY_S + 2; t++) {
+    const r = hunterDecide(snap({ contacts: [cur, hot] }), mem, emptyTerrain(), intel());
+    mem = r.mem;
+    if (mem.targetCid === "c") { switchedAt = t; break; }
+  }
+  assert(switchedAt >= 0, "a meaningfully louder challenger steals the chase");
+  assert(switchedAt >= 1, "…on the re-evaluation cadence, not instantly");
+}
+
+// T4. No oscillation: two comparably-loud contacts trading tiny loudness
+// wiggles — the target NEVER flips (the pinned §8 requirement).
+{
+  let mem = initialHunterMem();
+  let flips = 0;
+  let last: string | null = null;
+  for (let t = 0; t < 40; t++) {
+    const wiggle = t % 2 === 0 ? 0.05 : -0.05;
+    const a = { cid: "a", tier: 2, loud: 0.5 + wiggle, x: 0, y: 70000, vx: 0, vy: 0 };
+    const b = { cid: "b", tier: 2, loud: 0.5 - wiggle, x: 70000, y: 0, vx: 0, vy: 0 };
+    const r = hunterDecide(snap({ contacts: [a, b] }), mem, emptyTerrain(), intel());
+    mem = r.mem;
+    if (last !== null && mem.targetCid !== last) flips++;
+    last = mem.targetCid;
+  }
+  assert(flips === 0, "comparably-loud pair: zero target flips across 40 ticks (no oscillation)");
+}
+
+// T5. Meaningfully CLOSER also steals (the other hysteresis gate): same
+// loudness, 0.4x the range.
+{
+  const far = { cid: "a", tier: 2, loud: 0.5, x: 0, y: 100000, vx: 0, vy: 0 };
+  const near = { cid: "b", tier: 2, loud: 0.5, x: 35000, y: 0, vx: 0, vy: 0 };
+  let mem = initialHunterMem();
+  mem = hunterDecide(snap({ contacts: [far] }), mem, emptyTerrain(), intel()).mem;
+  for (let t = 0; t < C.HUNTER_RETARGET_EVERY_S + 1; t++) {
+    mem = hunterDecide(snap({ contacts: [far, near] }), mem, emptyTerrain(), intel()).mem;
+  }
+  assert(mem.targetCid === "b", "an equally-loud contact at 0.4x range steals the chase");
+}
+
+// T5b. The closer-gate breaks NEAR-TIES only: a drastically quieter
+// contact never steals by proximity, no matter how the range opens —
+// otherwise the bait play dies the moment the bait runs (found by the §8
+// checkpoint; pinned).
+{
+  let mem = initialHunterMem();
+  const bait0 = { cid: "a", tier: 2, loud: 0.87, x: 0, y: 150000, vx: 0, vy: 0 };
+  mem = hunterDecide(snap({ contacts: [bait0] }), mem, emptyTerrain(), intel()).mem;
+  for (let t = 0; t < C.HUNTER_RETARGET_EVERY_S * 4; t++) {
+    const bait = { ...bait0, y: 150000 + t * 2500 }; // the bait opens the range
+    const looter = { cid: "b", tier: 1, loud: 0.2, x: 60000, y: 0 };
+    mem = hunterDecide(snap({ contacts: [bait, looter] }), mem, emptyTerrain(), intel()).mem;
+  }
+  assert(mem.targetCid === "a", "a quiet looter never steals the chase by proximity while the bait burns");
+}
+
+// T6. Losing the committed track picks fresh IMMEDIATELY (no cadence wait —
+// hysteresis lives on the switch, not the pick).
+{
+  const a = { cid: "a", tier: 2, loud: 0.9, x: 0, y: 60000, vx: 0, vy: 0 };
+  const b = { cid: "b", tier: 1, loud: 0.3, x: 50000, y: 0 };
+  let mem = initialHunterMem();
+  mem = hunterDecide(snap({ contacts: [a, b] }), mem, emptyTerrain(), intel()).mem;
+  assert(mem.targetCid === "a", "committed to the loud track");
+  const r = hunterDecide(snap({ contacts: [b] }), mem, emptyTerrain(), intel());
+  assert(r.mem.targetCid === "b", "track lost: re-picks immediately from what remains");
+  assert(Math.abs(headingOf(r.commands) - 90) < 1, "…and pursues it");
+}
+
 console.log("done");

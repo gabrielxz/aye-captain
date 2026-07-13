@@ -16,7 +16,7 @@ const missionSim = (): Sim => {
   const sim = new Sim();
   sim.addShip("A", 0, -C.SPAWN_RING_RADIUS_M, 0);
   sim.mission = {
-    playerId: "A",
+    playerIds: ["A"],
     system: 2,
     systemName: "Sharp Ears",
     gate: { x: 0, y: C.REGION_RADIUS_M, apertureW: C.APERTURE_W_M },
@@ -26,14 +26,14 @@ const missionSim = (): Sim => {
     hunters: [{ archetype: "corvette", sensorMult: 1.4, sigMult: 0.75, gateCamp: false }],
     spawnLine: "Clock's run out, Captain — a drive just lit off in-system.",
     wrecks: [],
-    salvaging: null,
+    salvaging: {},
     cleared: false,
     stats: { huntersKilled: 0, salvaged: 0, pingsFired: 0, upgrades: 0 },
     haul: [],
     decoyTaught: false,
     upgradeCounts: { sig: 0, sensor: 0, accel: 0, hull: 0 },
-    solGood: false,
-    solCooldownS: 0,
+    solGood: {},
+    solCooldownS: {},
   } satisfies Mission;
   return sim;
 };

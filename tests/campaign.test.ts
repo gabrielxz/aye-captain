@@ -17,7 +17,7 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
   const sim = new Sim(); // empty terrain: exact fields by hand
   sim.addShip("A", 0, -C.SPAWN_RING_RADIUS_M, 0);
   sim.mission = {
-    playerId: "A",
+    playerIds: ["A"],
     system: 2, // "Sharp Ears" — the Stage 0 baseline row
     systemName: "Sharp Ears",
     gate: { x: 0, y: C.REGION_RADIUS_M, apertureW: C.APERTURE_W_M },
@@ -27,14 +27,14 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
     hunters: [{ archetype: "corvette", sensorMult: C.HUNTER_SENSOR_MULT, sigMult: C.HUNTER_SIG_MULT, gateCamp: false }],
     spawnLine: "Clock's run out, Captain — a drive just lit off in-system.",
     wrecks: [],
-    salvaging: null,
+    salvaging: {},
     cleared: false,
     stats: { huntersKilled: 0, salvaged: 0, pingsFired: 0, upgrades: 0 },
     haul: [],
     decoyTaught: false,
     upgradeCounts: { sig: 0, sensor: 0, accel: 0, hull: 0 },
-    solGood: false,
-    solCooldownS: 0,
+    solGood: {},
+    solCooldownS: {},
     gateCloseS: null,
     gateCloseCalled: 0,
     pylonIdx: null, // hand-built sims have no pylon rocks to move
@@ -911,7 +911,7 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
   const a = sim.addShip("A", 0, -C.REGION_RADIUS_M, 0, false, null, undefined, "cruiser");
   sim.mission = {
     ...(missionSim().mission as Mission),
-    playerId: "A",
+    playerIds: ["A"],
     hunterSpawned: true,
     gateCloseS: C.GATE_CLOSE_GRACE_S, // the narrowing begins NOW
   };
@@ -952,13 +952,66 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
     pools: { propellant: 4, missiles: 3, decoys: 2, pdcAmmoS: 33, hull: 61 },
     totals: { huntersKilled: 0, salvaged: 0, pingsFired: 0, upgrades: 0, timeS: 0 },
   };
-  const sim = (Match as any).buildCampaignSim("refill-test", "frigate", run) as Sim;
+  const sim = (Match as any).buildCampaignSim("refill-test", [{ id: "A", archetype: "frigate" }], run, null) as Sim;
   const a = sim.ships.get("A")!;
   assert(a.propellant === C.PROPELLANT_MAX, "propellant arrives FULL — the tanks refill between systems");
   assert(a.hull === 61, "hull carries the scars");
   const aboard = a.tubes.filter((t: any) => t.loaded).length + a.reserve;
   assert(aboard === 3 && a.decoys === 2 && Math.abs(a.pdcAmmoS - 33) < 1e-9,
     "missiles, decoys, and PDC ammo carry over unchanged — the attrition axes");
+}
+
+// 33. Playtest fixes 2026-07-13 (post-1.1):
+// (a) the ORBIT bug — a salvage approach entered with crossrange momentum
+// must brake it off and dock, never fly circles around the wreck ("it
+// kept going around and around the target").
+{
+  const sim = missionSim();
+  sim.mission!.wrecks.push({
+    id: 1, letter: "A", x: 0, y: 0, marked: true, checked: false,
+    items: [{ kind: "pdc_ammo", amount: 10 }],
+  });
+  const a = sim.ships.get("A")!;
+  a.x = 2500;
+  a.y = 0;
+  a.vx = 0;
+  a.vy = 150; // pure crossrange: the old hop thrust centripetally forever
+  sim.enqueue("A", [{ verb: "salvage", params: { target: "A" } } as any]);
+  let dockedAt = -1;
+  for (let t = 0; t < 240 && dockedAt < 0; t++) {
+    sim.tick();
+    if (sim.mission!.stats.salvaged > 0) dockedAt = t;
+  }
+  assert(dockedAt >= 0, `crossrange entry converges to a dock (${dockedAt}s) — the XO brakes the orbit off first`);
+}
+
+// (b) the stop marker's promise — you.stopAccel is the deceleration the
+// XO will ACTUALLY fly (archetype accel x drive modules x the standing
+// discipline cap), so the all-stop bracket stops lying at standard 60%.
+{
+  const sim = new Sim();
+  const a = sim.addShip("A", 0, 0, 0);
+  const base = C.ARCHETYPES[a.archetype].accel;
+  const snap1 = (sim.snapshotFor("A") as any).you;
+  assert(
+    Math.abs(snap1.stopAccel - base * (C.DISCIPLINE_CAP.standard / 100)) < 1e-9 &&
+      snap1.discipline === "standard",
+    "stopAccel carries the standing posture's real braking (standard 60%)"
+  );
+  sim.enqueue("A", [{ verb: "set_maneuver_discipline", params: { level: "silent" } } as any]);
+  sim.tick();
+  const snap2 = (sim.snapshotFor("A") as any).you;
+  assert(
+    Math.abs(snap2.stopAccel - base * (C.DISCIPLINE_CAP.silent / 100)) < 1e-9 && snap2.discipline === "silent",
+    "…and follows a posture change live"
+  );
+  a.accelMult = 1.2;
+  const snap3 = (sim.snapshotFor("A") as any).you;
+  assert(
+    Math.abs(snap3.stopAccel - base * 1.2 * (C.DISCIPLINE_CAP.silent / 100)) < 1e-9 &&
+      Math.abs(snap3.accel - base * 1.2) < 1e-9,
+    "…and counts drive modules (accel + stopAccel both)"
+  );
 }
 
 console.log("done: campaign");

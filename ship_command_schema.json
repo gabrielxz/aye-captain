@@ -24,6 +24,7 @@
             "deploy_decoy",
             "maneuver",
             "salvage",
+            "come_alongside",
             "set_maneuver_discipline",
             "show_vector",
             "set_overlay",
@@ -211,13 +212,34 @@
     },
 
     "salvage": {
-      "description": "CAMPAIGN ONLY (rejected in multiplayer). Fly to a salvage site and run the transfer. Sites carry LETTER designations shown in CURRENT SHIP STATE ('wreck A', 'rumor C' — plain letters, never the NATO contact words). Within ~15 km of the named site the XO flies the ENTIRE approach: velocity-match, terminal dock, then items aboard one at a time, worst first, ~10s each. Targeting an UNRESOLVED RUMOR is how you investigate it — the approach resolves it en route (loot: he docks and transfers; dry hole: he calls it and stops). Beyond 15 km the server rejects and teaches the range. ANY subsequent set_thrust/set_heading breaks off; everything already landed stays aboard. `target` = the site letter; omit it for the nearest site. Use on ANY travel-or-take intent naming a site: 'come alongside rumor A', 'bring me to wreck B', 'MANEUVER to rumor D', 'take me to / go to / head to wreck A', 'investigate rumor C', 'salvage', 'strip the wreck'. CAUTION: 'maneuver to <site>' is THIS verb, never set_heading — captain-speak 'maneuver to X' means GO THERE. BUT pointing is NOT traveling: 'turn to / point at / face / nose on wreck A' = set_heading absolute at its bearing from the state line, at ANY range — never the salvage verb. 'Break off' = set_thrust 0. Leave acknowledgement EMPTY — the ship speaks its own line.",
+      "description": "CAMPAIGN ONLY (rejected in multiplayer). Fly to a salvage site and run the transfer. Sites carry LETTER designations shown in CURRENT SHIP STATE ('wreck A', 'rumor C' — plain letters, never the NATO contact words). Within ~15 km of the named site the XO flies the ENTIRE approach: velocity-match, terminal dock, then items aboard one at a time, worst first, ~10s each. Targeting an UNRESOLVED RUMOR is how you investigate it — the approach resolves it en route (loot: he docks and transfers; dry hole: he calls it and stops). Beyond 15 km the server rejects and teaches the range. ANY subsequent set_thrust/set_heading breaks off; everything already landed stays aboard. `target` = the site letter; omit it for the nearest site. Use on ANY travel-or-take intent naming a site: 'come alongside rumor A', 'bring me to wreck B', 'MANEUVER to rumor D', 'take me to / go to / head to wreck A', 'investigate rumor C', 'salvage', 'strip the wreck'. Sites are LETTERS — 'come alongside KESTREL' (a ship CALLSIGN) is come_alongside, the crew rendezvous, never this verb. CAUTION: 'maneuver to <site>' is THIS verb, never set_heading — captain-speak 'maneuver to X' means GO THERE. BUT pointing is NOT traveling: 'turn to / point at / face / nose on wreck A' = set_heading absolute at its bearing from the state line, at ANY range — never the salvage verb. 'Break off' = set_thrust 0. Leave acknowledgement EMPTY — the ship speaks its own line.",
       "type": "object",
       "properties": {
         "target": { "type": "string", "description": "Site letter from the state line ('A'). Omit for nearest." },
         "discipline": { "enum": ["silent", "standard", "flank"], "description": "Optional per-command override of the maneuver-discipline posture ('get me to wreck A, fast' = flank; 'bring us in quietly' = silent). Does not change the standing posture." }
       },
       "examples": [ {}, { "target": "A" }, { "target": "A", "discipline": "flank" } ]
+    },
+
+    "come_alongside": {
+      "description": "CAMPAIGN CO-OP ONLY (rejected elsewhere). Rendezvous with YOUR TEAMMATE'S ship and optionally hand consumables across. The XO flies the same terminal approach as salvage — velocity-match, dock inside 2 km — then each `give` consignment crosses (~10s apiece). DISAMBIGUATION: salvage sites are LETTERS ('come alongside rumor A' = salvage verb); the teammate is a CALLSIGN shown in the teammate strip ('come alongside KESTREL', 'form up on Kestrel', 'rendezvous with my friend', 'give Kestrel two missiles' = THIS verb). THE APPROACH IS INCLUDED: a give-intent at any range inside ~15 km is ONE command — emit the verb with the manifest and the XO closes, docks, and moves it. NEVER answer that you must close or dock first; that reply-only line is the phantom-ack trap. `target` = the teammate's callsign; omit it — there is only one. `give` = what to hand over: missiles, decoys, propellant (units), pdc_ammo (seconds of fire), probes; omit `give` to just hold formation alongside. A request for supplies is the PARTNER's give — tell the captain to ask their friend. Any set_thrust/set_heading breaks off (what's crossed stays crossed). Within ~15 km only; beyond, the server rejects and teaches the range. Leave acknowledgement EMPTY — the ship speaks its own line.",
+      "type": "object",
+      "properties": {
+        "target": { "type": "string", "description": "Teammate callsign ('Kestrel'). Omit for your only partner." },
+        "give": {
+          "type": "object",
+          "description": "Consumables to hand across once docked. Omit to hold formation.",
+          "properties": {
+            "propellant": { "type": "number" },
+            "pdc_ammo": { "type": "number" },
+            "decoys": { "type": "number" },
+            "probes": { "type": "number" },
+            "missiles": { "type": "number" }
+          }
+        },
+        "discipline": { "enum": ["silent", "standard", "flank"], "description": "Optional per-command override ('come alongside quietly' = silent). Does not change the standing posture." }
+      },
+      "examples": [ {}, { "target": "Kestrel" }, { "target": "Kestrel", "give": { "missiles": 2 } }, { "give": { "propellant": 40, "decoys": 1 }, "discipline": "silent" } ]
     },
 
     "show_vector": {

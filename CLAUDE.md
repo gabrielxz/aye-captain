@@ -109,7 +109,36 @@ must not freeze); Hunter throttles already encode §2e discipline
 (hunt 55 ≈ standard, 100 = flank for the kill) — no new constants; the
 burn-leash guarantee is conditional on closed-loop flight (the trigger
 fires at the recoverability boundary; an arbitrarily deep injected state
-is physically unrecoverable). **CAMPAIGN PATCH 1 "The Anvil"
+is physically unrecoverable). **CAMPAIGN PATCH 2 "Two Ships"
+(HANDOFF-CAMPAIGN-COOP.md) DEPLOYED 2026-07-13** (merged from
+`campaign-coop`, 1,186 assertions; the two-human playtest is the open
+milestone item): two-captain co-op campaign. Step 0 landed the Anvil §9 debt (mission.playerIds[] — every
+consumer iterates; per-captain salvage clocks + solGood/solCooldownS
+records). The §0 asymmetry is the law: teammates ride the transponder
+(allies block + propellant/sig, the HUD strip, the TEAMMATE state-summary
+line) and NEVER share contacts/rumbles/ghosts — no datalink, pinned hard
+in tests/coop.test.ts. §1 the Hunter pursues the LOUDEST detected
+signature: wire contacts carry `loud` (= hearing's sig/LOUD_SIG_REF
+scalar; decoys indistinguishable), retarget on a 5 s cadence with
+hysteresis (1.4x louder steals; 0.6x closer breaks NEAR-TIES ONLY — the
+§8 bait checkpoint caught proximity beating loudness and the bait play
+dying whenever the bait opened the range). §4 death = role change:
+survivor's-eyes snapshots (coopEyes label, never omniscient), hulk with
+the whole hold at 0.4 death-v (marked — the Hunter patrols the corpse),
+fresh base ship + empty hold next system. §5 gate: through-ships stay in
+the sim FROZEN as `departed` (off every board + weapons enumeration, but
+the coopCarry export still reads them); the system resolves when every
+captain is through or dead; first-through coaches; stranded_death with a
+partner through keeps the run alive. §6 come_alongside (campaign-co-op
+only): the EXACT salvage rendezvous against the partner's hull (existing
+salvage tests unchanged — the proof), give manifest one consignment per
+SALVAGE_ITEM_S, cheap-to-dear, honest clamps; live-API-verified doctrine
+incl. "give Kestrel two missiles" = ONE command (the close-first
+reply-only answer is the phantom-ack trap, schema forbids it). Co-op run
+state is SERVER-owned (Match.coopCarry, one sitting, no save — a
+deliberate exception to invariant 21's client-owned rule; solo unchanged).
+Hunter ladder deliberately unscaled for two (§2: the lever is COUNT,
+never stats). **CAMPAIGN PATCH 1 "The Anvil"
 (HANDOFF-CAMPAIGN-ANVIL.md) DEPLOYED 2026-07-13** (merged abedfa5;
 playtest verdict: Hunter works, bounty + gate legibility fixed by 1.1): §1
 Hunter datum search (uncertainty circle r = age × MAX_SPEED, golden-angle

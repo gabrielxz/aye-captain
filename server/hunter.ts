@@ -31,7 +31,7 @@ export interface HunterSnap {
     ping?: { ready: boolean };
     probes?: number;
   };
-  contacts: { cid: string; tier: number; x: number; y: number; vx?: number; vy?: number }[];
+  contacts: { cid: string; tier: number; loud?: number; x: number; y: number; vx?: number; vy?: number }[];
   rumbles: { bearing: number; loud: number }[];
   ghost: { x: number; y: number } | null;
 }
@@ -52,6 +52,11 @@ export interface HunterMem {
   // to a contact (the dust fortress), and total hunt seconds (gate drift)
   rumbleChaseS: number;
   huntS: number;
+  // Patch 2 §1a: the target he is committed to (a contact cid) and the
+  // re-evaluation cadence clock. Hysteresis lives on the SWITCH, not the
+  // pick — losing the target picks fresh immediately.
+  targetCid: string | null;
+  retargetS: number;
   // Anvil §1b: the datum — where the trail went cold and how stale it is.
   // The uncertainty radius is DERIVED (ageS × MAX_SPEED_MPS), never stored.
   datum: { x: number; y: number; ageS: number } | null;
@@ -78,6 +83,8 @@ export function initialHunterMem(): HunterMem {
     lowFuel: false,
     wpIdx: 0,
     lockedCid: null,
+    targetCid: null,
+    retargetS: 0,
     dryS: 0,
     lastSignalBearing: null,
     gateProbed: false,
@@ -154,18 +161,53 @@ export function hunterDecide(
   if (!next.lowFuel && you.propellant < C.HUNTER_FUEL_FLOOR) next.lowFuel = true;
   if (next.lowFuel && you.propellant >= C.HUNTER_FUEL_RESUME) next.lowFuel = false;
 
-  // best contact: highest tier, then nearest. Decoy contacts are
-  // indistinguishable here (invariant 11) — the Hunter chases them like
-  // any hull until its own sensors resolve the lie. That is the design.
+  // Patch 2 §1a: he pursues the LOUDEST contact he currently holds — the
+  // one rule that makes the bait play work (the burning friend draws him;
+  // the dark one loots in the silence that buys). With contact on only
+  // one ship, that is his target regardless of the other's signature.
+  // Re-evaluation runs on a CADENCE with HYSTERESIS: a challenger must be
+  // meaningfully louder or meaningfully closer — never oscillate between
+  // two comparably-loud ships. Decoy contacts are indistinguishable here
+  // (invariant 11, loudness included) — the Hunter chases them like any
+  // hull until its own sensors resolve the lie. That is the design.
+  const range = (c: HunterSnap["contacts"][number]) => dist(you.x, you.y, c.x, c.y);
+  const louder = (a: HunterSnap["contacts"][number] | null, c: HunterSnap["contacts"][number]) =>
+    !a || (c.loud ?? 0) > (a.loud ?? 0) || ((c.loud ?? 0) === (a.loud ?? 0) && range(c) < range(a))
+      ? c
+      : a;
   let best: HunterSnap["contacts"][number] | null = null;
-  let bestRange = Infinity;
-  for (const c of snap.contacts) {
-    const r = dist(you.x, you.y, c.x, c.y);
-    if (!best || c.tier > best.tier || (c.tier === best.tier && r < bestRange)) {
-      best = c;
-      bestRange = r;
+  if (snap.contacts.length > 0) {
+    const current = mem.targetCid
+      ? snap.contacts.find((c) => c.cid === mem.targetCid) ?? null
+      : null;
+    if (!current) {
+      // no commitment (or the track vanished): take the loudest now
+      best = snap.contacts.reduce(louder, null);
+      next.retargetS = C.HUNTER_RETARGET_EVERY_S;
+    } else {
+      best = current;
+      next.retargetS = mem.retargetS - 1;
+      if (next.retargetS <= 0) {
+        next.retargetS = C.HUNTER_RETARGET_EVERY_S;
+        // the closer-gate breaks NEAR-TIES only — it must not outrank
+        // loudness, or the bait play dies the moment the bait opens the
+        // range (found by the §8 checkpoint: the fleeing burner's range
+        // grows until the dark looter 'steals' by proximity — wrong)
+        const challenger = snap.contacts
+          .filter(
+            (c) =>
+              c.cid !== current.cid &&
+              ((c.loud ?? 0) >= (current.loud ?? 0) * C.HUNTER_RETARGET_LOUDER ||
+                (range(c) <= range(current) * C.HUNTER_RETARGET_CLOSER &&
+                  (c.loud ?? 0) * C.HUNTER_RETARGET_LOUDER >= (current.loud ?? 0)))
+          )
+          .reduce(louder, null);
+        if (challenger) best = challenger;
+      }
     }
   }
+  next.targetCid = best?.cid ?? null;
+  const bestRange = best ? range(best) : Infinity;
 
   // Anvil §1b datum bookkeeping: a live contact refreshes the datum every
   // tick (age 0, sweep reset); silence ages it until the uncertainty circle

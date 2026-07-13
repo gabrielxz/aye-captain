@@ -56,6 +56,7 @@ function handleMessage(msg) {
       hideRoomLobby();
       state.practice = !!msg.practice;
       state.campaign = !!msg.campaign;
+      state.coop = !!msg.coop; // Patch 2: server-owned run — no localStorage save
       state.gate = msg.gate ?? null; // campaign: fixed public landmark
       document.body.classList.toggle("campaign", state.campaign);
       state.terrain = msg.terrain ?? null;
@@ -102,18 +103,26 @@ function handleMessage(msg) {
         // klaxon, thrust hum — a ghost has no alarms (playtest 2026-07-12:
         // the lock pulse clicked through all of spectator mode)
         audio.stopContinuous();
-        // referee framing: whole region, nothing to follow
-        camera.follow = false;
-        camera.x = 0;
-        camera.y = 0;
-        camera.zoom = 0; // recomputed to the full-region view on the next frame
+        if (msg.coop) {
+          // Patch 2 §4/§5: coach mode — we ride our partner's sensors, so
+          // the camera rides their ship (the snapshot's `you` is them)
+          camera.follow = true;
+        } else {
+          // referee framing: whole region, nothing to follow
+          camera.follow = false;
+          camera.x = 0;
+          camera.y = 0;
+          camera.zoom = 0; // recomputed to the full-region view on the next frame
+        }
       }
       hideBanner();
       enterGame();
       addTranscript(
         "sys",
         msg.role === "spectator"
-          ? `spectating as ${msg.callsign} — the room sees your callsign`
+          ? msg.coop
+            ? "riding your partner's sensors — read the board, call the numbers"
+            : `spectating as ${msg.callsign} — the room sees your callsign`
           : msg.campaign
             ? "deep black — reach the gate; the clock is a budget"
             : msg.practice
@@ -133,6 +142,10 @@ function handleMessage(msg) {
       state.prevSnap = state.lastSnap;
       state.lastSnap = msg;
       state.lastSnapAt = now;
+      // Patch 2 §4/§5: the badge names whose eyes these are
+      if (msg.coopEyes && state.role === "spectator") {
+        setSpectator(`${state.callsign ?? "DOWN"} — ${msg.coopEyes}'s eyes`);
+      }
       for (const fx of msg.fx ?? []) {
         state.fxBuffer.push({ fx, at: now });
         if (fx.type === "pdc") audio.sfxPdc(fx.owner === state.role); // internally rate-limited
@@ -211,11 +224,19 @@ function handleMessage(msg) {
       }
       if (state.campaign && msg.runSummary) {
         // §9: SYSTEMS CLEARED is the headline and the score. The run is
-        // over either way — clear the save, keep the best.
+        // over either way — clear the save, keep the best. (Co-op runs are
+        // server-owned and never touch the solo save file or best.)
         const s = msg.runSummary;
-        localStorage.removeItem("campaignRun");
-        const best = Math.max(Number(localStorage.getItem("campaignBest") ?? 0), s.systemsCleared);
-        localStorage.setItem("campaignBest", String(best));
+        if (!state.coop) {
+          localStorage.removeItem("campaignRun");
+          localStorage.setItem(
+            "campaignBest",
+            String(Math.max(Number(localStorage.getItem("campaignBest") ?? 0), s.systemsCleared))
+          );
+        }
+        const best = state.coop
+          ? s.systemsCleared
+          : Number(localStorage.getItem("campaignBest") ?? 0);
         const tm = `${Math.floor(s.timeS / 60)}:${String(s.timeS % 60).padStart(2, "0")}`;
         const cause = msg.runComplete
           ? "eight of eight — the deep black, crossed"
@@ -269,7 +290,11 @@ function handleMessage(msg) {
       audio.stopContinuous();
       audio.musicExit(); // §8: the beat of silence, the rising tone, the resolve
       gateExitFx(); // …and the flash + streak
-      localStorage.setItem("campaignRun", JSON.stringify(msg.runState));
+      // solo: the run state is OURS to keep; co-op runs carry none (the
+      // server owns the run — §7: one sitting, in memory)
+      if (msg.runState && !state.coop) {
+        localStorage.setItem("campaignRun", JSON.stringify(msg.runState));
+      }
       const dots = Array.from({ length: msg.totalSystems }, (_, i) =>
         i < msg.system ? "◆" : "◇"
       ).join(" ");
@@ -294,7 +319,7 @@ function handleMessage(msg) {
       break;
     }
     case "created":
-      showLobbyStatus(`ROOM CODE: ${msg.code}`);
+      showLobbyStatus(`${msg.coop ? "CO-OP RUN" : "ROOM"} CODE: ${msg.code}`);
       break;
     case "lobby":
       // v5 §2: roster/config while the room fills; creator launches
@@ -487,6 +512,23 @@ function updateHUDFromSnapshot(snap) {
     { label: "HULL", value: `${you.hull}`, cls: you.hull <= 35 ? "alert" : you.hull <= 65 ? "warn" : "" },
     { label: "EN HULL", value: enemyHull, cls: idContact && idContact.hull <= (idContact.hullMax ?? 100) / 2 ? "good" : "" },
     { label: "CONTACTS", value: contactsLine, cls: contacts.some((c) => c.tier >= 2) ? "good" : contacts.length ? "warn" : "", full: true },
+    // Patch 2 §3: the teammate strip — SIG is the critical field (it says
+    // who the Hunter is coming for; ▲ marks whoever is louder right now).
+    // Campaign co-op only; placement is temporary (§3b — Patch 3 is the
+    // panel redesign). Never their contacts: the strip is transponder data.
+    ...(you.mission
+      ? (snap.allies ?? []).map((t) => {
+          const km = Math.hypot(t.x - you.x, t.y - you.y) / 1000;
+          const brg = Math.round((Math.atan2(t.x - you.x, t.y - you.y) * 180) / Math.PI + 360) % 360;
+          const louder = (t.sig ?? 0) > (you.signature ?? 0);
+          return {
+            label: (t.callsign ?? t.id).toUpperCase(),
+            value: `hull ${Math.round((t.hull / (t.hullMax || 100)) * 100)}% · SIG ${t.sig ?? "—"}${louder ? "▲" : ""} · prop ${t.propellant ?? "—"} · ${km.toFixed(0)} km brg ${String(brg).padStart(3, "0")}`,
+            cls: t.hull <= (t.hullMax || 100) * 0.35 ? "alert" : louder ? "warn" : "good",
+            full: true,
+          };
+        })
+      : []),
     // campaign: the mission clock + the gate approach solution + the
     // transfer. Server-owned numbers, PING-LIT-style rendering — no
     // client timers.
