@@ -531,17 +531,30 @@ function updateHUDFromSnapshot(snap) {
             cls: you.gate ? (you.gate.good ? "good" : "alert") : "",
             full: true,
           },
-          // Anvil §4c: the vise, on an instrument — countdown to closure
-          // and the live aperture; the GATE row above shows the solution
-          // going bad as this shrinks
+          // Anvil §4c / 1.1 §3b: the vise, on an instrument — two DISTINCT
+          // states so "counting down to closing" and "closing now" never
+          // blur: STABLE is calm and says when the narrowing starts;
+          // CLOSING is the alarm with the live aperture. The GATE row
+          // above shows the solution going bad as it shrinks.
           ...(you.mission.gateClosing
             ? [
-                {
-                  label: "GATE CLOSING",
-                  value: `${Math.floor(you.mission.gateClosing.leftS / 60)}:${String(you.mission.gateClosing.leftS % 60).padStart(2, "0")} · aperture ${you.mission.gateClosing.aperturePct}%`,
-                  cls: "alert",
-                  full: true,
-                },
+                (() => {
+                  const gc = you.mission.gateClosing;
+                  const mmss = `${Math.floor(gc.leftS / 60)}:${String(gc.leftS % 60).padStart(2, "0")}`;
+                  return gc.phase === "stable"
+                    ? {
+                        label: "GATE STABLE",
+                        value: `closing in ${mmss}`,
+                        cls: "warn",
+                        full: true,
+                      }
+                    : {
+                        label: "GATE CLOSING",
+                        value: `${mmss} · aperture ${gc.aperturePct}%`,
+                        cls: "alert",
+                        full: true,
+                      };
+                })(),
               ]
             : []),
         ]

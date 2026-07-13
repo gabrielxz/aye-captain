@@ -294,9 +294,13 @@ export class Match {
     ship.sensorMult = Math.pow(C.UPGRADE_SENSOR_MULT, run.upgrades.sensor);
     ship.accelMult = Math.pow(C.UPGRADE_ACCEL_MULT, run.upgrades.accel);
     ship.hullMult = Math.pow(C.UPGRADE_HULL_MULT, run.upgrades.hull);
-    // pools persist across jumps (§6) — arrive as you left
+    // pools persist across jumps (§6) — arrive as you left. EXCEPT
+    // propellant (1.1 §6): it refills to 100% on transition — it's the one
+    // resource that already regenerates in flight, and starting a system
+    // at 0% was a bug, not a difficulty. Hull/missiles/PDC ammo never
+    // regenerate and stay the attrition axes.
     if (run.pools) {
-      ship.propellant = Math.min(C.PROPELLANT_MAX, run.pools.propellant);
+      ship.propellant = C.PROPELLANT_MAX;
       ship.decoys = run.pools.decoys;
       ship.pdcAmmoS = run.pools.pdcAmmoS;
       const stats = C.ARCHETYPES[archetype];

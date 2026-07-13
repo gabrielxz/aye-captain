@@ -1,5 +1,37 @@
 # TODO — next steps
 
+## CAMPAIGN PATCH 1.1 "The Anvil, Sharpened" (HANDOFF-CAMPAIGN-ANVIL-1.1.md) — BUILT 2026-07-13
+
+Branch `campaign-anvil-1.1`, all sections, 1,043+ assertions green.
+Playtest verdict absorbed: Hunter finds/presses ✓, but the bounty failed
+(2 km/s corpse into deep space) and the gate close was illegible. Built:
+§3a the missM HULL-RADIUS fix (SOLUTION GOOD while scraping a pylon was
+the mystery rock — pinned) + §3c aperture 3000→3600 (band re-checked);
+§2 MANEUVER DISCIPLINE (the big one): silent 25 / standard 60 (NEW
+DEFAULT, was 100) / flank 100, set_maneuver_discipline verb + per-command
+override, XO quotes the price (silent ETA in minutes, flank warning),
+timed burns exempt, synonyms verified against the live API; §1 the hulk
+is a live decision — momentum retention 0.4 (direction preserved: kill
+quality still decides pay), rock collision (crunch, keep loot, never
+despawn), the SHROUD CURRENT (unpowered bodies entrained back inside,
+~174 s from max escape, arriving ~80 m/s; ships keep the old edge pull —
+pinned); §5b rendezvous PURSUE (braking envelope to engage range, no
+yo-yo — ≤1 reversal pinned) + §5a burn-leash verified at max speed; §4
+railgun tiers (ID pinpoint / TRACK ±1.2° cone / FAINT bearing-only); §6
+propellant refills per jump (hull/missiles/ammo attrition — pinned,
+don't re-litigate); §3b gate phases GRACE 240 + CLOSE 180 (7 min total,
+tune DOWN), GATE STABLE / GATE CLOSING HUD states, grace-end NEWS line.
+
+- [ ] **Playtest, report** (§8.7). Watch: does the hulk chase-or-wait
+  decision land? Hunter quieter under discipline doctrine — too quiet?
+  (§2e: raise his default if unhearable.) Is 7 minutes the right vise?
+  (knob: GATE_CLOSE_DURATION_S, never a floor.) Silent-approach ETA
+  quotes accurate enough to trust?
+- [ ] Datum/current knobs are first-guess: SHROUD_CURRENT_* (174 s
+  return), RAIL_TRACK_DISPERSION_DEG 1.2, HUNTER_CLOSE_RATE_FLOOR 150.
+- [ ] The Mine Layer is BANKED (§9 — reached for unprompted mid-flight;
+  anchor of the module catalog. NOT before the module patch.)
+
 ## CAMPAIGN PATCH 1 "The Anvil" (HANDOFF-CAMPAIGN-ANVIL.md) — BUILT 2026-07-13
 
 Branch `campaign-anvil`, all sections, 1,002 assertions green. §1 the

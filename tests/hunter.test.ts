@@ -316,4 +316,72 @@ const thrustOf = (cmds: ReturnType<typeof hunterDecide>["commands"]) =>
   assert(off <= 90, `the ear points at the datum circle, not away from it (offset ${off.toFixed(0)}°, r ${(rr / 1000).toFixed(0)} km)`);
 }
 
+// 16. ANVIL 1.1 §5b — rendezvous, not ram: a clean intercept closes to the
+// engage envelope with a BOUNDED closing rate and does not yo-yo (at most
+// one closure reversal). Kinematic integration against a parked target.
+{
+  let hx = 0, hy = -180000, hvx = 0, hvy = 0; // 180 km out, at rest
+  const tgt = { cid: "Alpha", tier: 2, x: 0, y: 0, vx: 0, vy: 0 };
+  let mem = initialHunterMem();
+  let reversals = 0;
+  let prevClosing: number | null = null;
+  let atEnvelopeRate: number | null = null;
+  const A = C.ARCHETYPES.corvette.accel;
+  for (let t = 0; t < 400; t++) {
+    const s = snap({ you: you({ x: hx, y: hy, vx: hvx, vy: hvy }) , contacts: [tgt] });
+    const r = hunterDecide(s, mem, emptyTerrain(), intel());
+    mem = r.mem;
+    const h = headingOf(r.commands) * (Math.PI / 180);
+    const thr = thrustOf(r.commands) / 100;
+    hvx += Math.sin(h) * A * thr; hvy += Math.cos(h) * A * thr;
+    const sp = Math.hypot(hvx, hvy);
+    if (sp > C.MAX_SPEED_MPS) { hvx *= C.MAX_SPEED_MPS / sp; hvy *= C.MAX_SPEED_MPS / sp; }
+    hx += hvx; hy += hvy;
+    const d = Math.hypot(hx, hy);
+    const closing = -(hvx * hx + hvy * hy) / Math.max(1, d);
+    if (prevClosing !== null && prevClosing > 50 && closing < -50) reversals++;
+    prevClosing = closing;
+    if (atEnvelopeRate === null && d <= C.HUNTER_ENGAGE_RANGE_M) atEnvelopeRate = closing;
+    if (d <= C.HUNTER_ENGAGE_RANGE_M * 0.5) break;
+  }
+  assert(atEnvelopeRate !== null, "the rendezvous reaches the engage envelope");
+  assert(
+    atEnvelopeRate! <= 0.85 * Math.sqrt(2 * 40 * C.HUNTER_ENGAGE_RANGE_M * 0.4) + C.HUNTER_CLOSE_RATE_FLOOR_MPS + 100,
+    `…arriving with a MANAGEABLE closing rate (${atEnvelopeRate!.toFixed(0)} m/s) — a rendezvous, not a ram`
+  );
+  assert(reversals <= 1, `no yo-yo: at most one closure reversal in a clean intercept (saw ${reversals})`);
+}
+
+// 17. ANVIL 1.1 §5a — the leash BURNS: at max speed on an outbound radial
+// vector the Hunter commands a retro burn (home, full throttle) and the
+// braking math holds it inside the region. Kinematic integration.
+{
+  // 135 km out doing 3000: braking distance (112.5 km on the weakest
+  // drive) + margin has just crossed the rim — the trigger MUST be live,
+  // and physics can still recover (135 + 112.5 < 250). Closed-loop flight
+  // never gets deeper than this — the trigger fires the moment
+  // recoverability is at stake (pinned at sim level in campaign.test §25).
+  let hx = 0, hy = 135000, hvx = 0, hvy = C.MAX_SPEED_MPS;
+  let mem = initialHunterMem();
+  const A = C.ARCHETYPES.cruiser.accel; // the WEAKEST drive — the floor the brake math assumes
+  let maxR = 0;
+  const first = hunterDecide(snap({ you: you({ x: hx, y: hy, vx: hvx, vy: hvy }) }), mem, emptyTerrain(), intel());
+  assert(Math.abs(headingOf(first.commands) - 180) < 1 && thrustOf(first.commands) === 100,
+    "outbound at max speed: the boundary commands a full retro burn NOW, not a heading change");
+  for (let t = 0; t < 300; t++) {
+    const s = snap({ you: you({ x: hx, y: hy, vx: hvx, vy: hvy }) });
+    const r = hunterDecide(s, mem, emptyTerrain(), intel());
+    mem = r.mem;
+    const h = headingOf(r.commands) * (Math.PI / 180);
+    const thr = thrustOf(r.commands) / 100;
+    hvx += Math.sin(h) * A * thr; hvy += Math.cos(h) * A * thr;
+    const sp = Math.hypot(hvx, hvy);
+    if (sp > C.MAX_SPEED_MPS) { hvx *= C.MAX_SPEED_MPS / sp; hvy *= C.MAX_SPEED_MPS / sp; }
+    hx += hvx; hy += hvy;
+    maxR = Math.max(maxR, Math.hypot(hx, hy));
+  }
+  assert(maxR <= C.REGION_RADIUS_M,
+    `never exits: max radius ${(maxR / 1000).toFixed(1)} km of ${C.REGION_RADIUS_M / 1000} — the burn-leash law holds at max speed`);
+}
+
 console.log("done");

@@ -86,9 +86,32 @@ oscillators; audio.js driver with rumble sidechain), the §8 exit
 spectacle, and the how-to-play CAMPAIGN tab. The Hunter's AI
 (server/hunter.ts `hunterDecide`) and the music brain are PURE FUNCTIONS
 OF WIRE SNAPSHOTS — the function signature is the fog guarantee.
-**CAMPAIGN PATCH 1 "The Anvil" (HANDOFF-CAMPAIGN-ANVIL.md) BUILT
-2026-07-13 on branch `campaign-anvil`** (1,002 assertions; AWAITING the
-§0 playtest gate — nothing further gets built until the verdict): §1
+**CAMPAIGN PATCH 1.1 "The Anvil, Sharpened"
+(HANDOFF-CAMPAIGN-ANVIL-1.1.md) BUILT 2026-07-13 on branch
+`campaign-anvil-1.1`** (1,043+ assertions; awaiting playtest): §3a missM
+hull-radius fix (SHIP_RADIUS_M — SOLUTION GOOD means the HULL fits; the
+pylon-scrape "mystery rock" pinned) + aperture 3600; §2 MANEUVER
+DISCIPLINE — autopilot throttle posture silent 25 / standard 60 (NEW
+DEFAULT, was 100) / flank 100, `set_maneuver_discipline` verb +
+per-command `discipline` override on maneuver/salvage (override never
+changes the posture), XO quotes the price (silent ETA minutes as words,
+flank warning), timed burns exempt; §1 the hulk: momentum retention 0.4
+(direction preserved), rock collision (keeps loot, never despawns), the
+SHROUD CURRENT (entrainment of unpowered bodies outside the rim, walked
+home ~174 s from max escape arriving ~80 m/s; ships keep EDGE_PULL —
+pinned); §5b rendezvous PURSUE (braking envelope, ≤1 reversal pinned);
+§4 railgun tier gating (ID pinpoint / TRACK ±1.2° cone / faint bearing);
+§6 propellant refills per jump (other pools attrit — pinned); §3b gate
+phases GRACE 240 + DURATION 180 with GATE STABLE / GATE CLOSING HUD
+states. 1.1 judgment calls: the wreck skip-guard skips static sites AT
+HOME only (an entrained hulk landing on exactly 0.0 velocity outside
+must not freeze); Hunter throttles already encode §2e discipline
+(hunt 55 ≈ standard, 100 = flank for the kill) — no new constants; the
+burn-leash guarantee is conditional on closed-loop flight (the trigger
+fires at the recoverability boundary; an arbitrarily deep injected state
+is physically unrecoverable). **CAMPAIGN PATCH 1 "The Anvil"
+(HANDOFF-CAMPAIGN-ANVIL.md) DEPLOYED 2026-07-13** (merged abedfa5;
+playtest verdict: Hunter works, bounty + gate legibility fixed by 1.1): §1
 Hunter datum search (uncertainty circle r = age × MAX_SPEED, golden-angle
 spokes, escalation by r: probes then pings, ping frequency ∝ r, never at
 low uncertainty — pinned) + hard leash (waypoints/intercepts clamped to

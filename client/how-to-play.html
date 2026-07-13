@@ -131,6 +131,10 @@
       <p>You may fly straight to the gate at the first bell and leave with nothing. Nobody
       will stop you. You will not survive system five that way — the wrecks you skipped
       were the hull and the baffles you'll be missing when the Pair comes.</p>
+      <p>What carries between systems: hull damage, missiles, PDC ammo, decoys, probes,
+      and every module you fitted. What doesn't: <strong>propellant — the tanks arrive
+      full at every jump.</strong> Fuel is a tactical resource; the other three are the
+      campaign.</p>
 
       <h2 id="two-silences">DOCTRINE: THE TWO SILENCES</h2>
       <p><strong>Before the clock runs out, noise is free.</strong> Burn hard. Take the
@@ -167,21 +171,28 @@
       <h2 id="the-anvil">DOCTRINE: THE ANVIL</h2>
       <p>Kill the Hunter and two things happen in the same breath.</p>
       <p><strong>The bounty drifts.</strong> His hold — the richest in the system, twice
-      the modules of any wreck — does not stop where he died. The hulk keeps every meter
-      per second he had when you broke him, tumbling on down his own escape vector. To
-      loot it you must <em>match its velocity</em>: adopt the dead man's course, far from
-      the gate, moving fast in the wrong direction, with a hold full of new mass to kill
-      and reverse. The momentum is the price. There is no other.</p>
+      the modules of any wreck — does not stop where he died. A hull breach is an
+      explosion, not a handoff: the hulk keeps a real fraction of his final velocity,
+      on his final course. <em>How you kill him decides whether you get paid</em> — a
+      stern-chase kill leaves a corpse you're nearly matched to; a head-on pass leaves
+      one doing hundreds of meters a second the wrong way. To loot it you must
+      <em>match its velocity</em>. The momentum is the price. There is no other.</p>
+      <p><strong>Or wait.</strong> If he died running for the dark, the shroud current
+      does what currents do: unpowered things are carried by it. A hulk that drifts
+      outside the rim is slowed, turned, and walked back inside over a couple of
+      minutes, arriving nearly still — trivially lootable. <strong>But the gate is
+      closing while you wait.</strong> Chase it hot, or wait it out broke — both paths
+      exist, priced differently. That question is the whole design.</p>
       <p><strong>The door starts closing.</strong> <em>"The gate's destabilizing, Captain.
-      She's closing."</em> Three minutes of grace, then the pylons start walking inward,
-      and two minutes after that the gap is <strong>zero</strong>. Not narrow. Zero — a
-      wall. The GATE CLOSING row on your HUD is the countdown; the GATE row shows your
-      good solution going bad as the aperture shrinks. Still in-system when it shuts and
-      the run is over: <strong>stranded</strong>.</p>
-      <p>So the kill is not the victory. The kill is the <em>bet</em>: that you can chase
-      down a corpse doing eight hundred meters a second, strip it, kill all that velocity
-      plus his, and thread a shrinking needle — all inside five minutes. Greed with a
-      stopwatch. That's the anvil.</p>
+      She's closing."</em> Four minutes of grace — the HUD reads <strong>GATE STABLE ·
+      closing in 3:12</strong>, calm — and then it doesn't: <strong>GATE CLOSING</strong>,
+      alarm, live aperture percentage, pylons walking inward, three minutes to
+      <strong>zero</strong>. Not narrow. Zero — a wall. The GATE row shows your good
+      solution going bad as the gap shrinks. Still in-system when it shuts and the run
+      is over: <strong>stranded</strong>.</p>
+      <p>So the kill is not the victory. The kill is the <em>bet</em>: that you can
+      collect the richest hold in the system and still thread a shrinking needle — all
+      inside seven minutes. Greed with a stopwatch. That's the anvil.</p>
 
       <h2 id="salvage">DOCTRINE: SALVAGE</h2>
       <p><strong>You must match the wreck's velocity.</strong> For the dead ships salted
@@ -233,6 +244,7 @@
         <tr><td>"Head for the gate, full burn"</td><td>helm to the gate bearing + throttle</td></tr>
         <tr><td>"How far to the gate?" / "What's the clock?"</td><td>mission report from the XO</td></tr>
         <tr><td>"Come alongside rumor A" / "Bring me to wreck B"</td><td>the XO flies the whole approach + transfer (be within 15 km)</td></tr>
+        <tr><td>"…quietly" / "…fast" / "Maneuver discipline silent"</td><td>throttle ceiling on everything the XO flies — silent is slow and unheard, flank is loud and now</td></tr>
         <tr><td>"Investigate rumor C"</td><td>same command — the rumor resolves on the way in</td></tr>
         <tr><td>"Break off"</td><td>end the transfer, keep what's aboard</td></tr>
         <tr><td>Everything in the multiplayer phrasebook</td><td>works here too — same ship, same XO</td></tr>
@@ -415,6 +427,14 @@
       <li>Speed is a purchase you must also pay to return. Every m/s you gain, you'll spend fuel to shed.</li>
       <li>At high speed your turn radius is enormous and rocks are lethal. A gentle bump scratches paint. Hitting rock at speed is a funeral.</li>
     </ul>
+    <p><strong>Maneuver discipline.</strong> When the XO flies for you — a stop, an
+    approach — he burns to a standing throttle ceiling, and burning is how you are
+    seen. Default is STANDARD (60%). <em>"Maneuver discipline silent"</em> caps him at a
+    whisper (25% — roughly four times slower, and nobody hears you); <em>"flank"</em>
+    takes the limits off. Any single order can override it — <em>"come to a full stop,
+    quietly"</em>, <em>"get me there fast"</em> — without changing the standing posture.
+    When you order a silent approach he quotes the price in minutes; when you order
+    flank he tells you who's listening. The trade is spoken aloud, every time.</p>
 
     <figure>
       <svg viewBox="0 0 880 190" aria-label="Flip and burn sequence in four beats">
@@ -707,7 +727,10 @@
     on a computed lead kills anything that keeps coasting — and misses anything that
     burns, because the solution assumes constant velocity. Every posture now has a
     predator: missiles punish burners, rails punish coasters, PDCs punish missiles.
-    Nothing stops a slug except not being where it lands — not PDCs, and not a
+    <strong>The solution is only pinpoint at ID tier.</strong> On a mere track the rail
+    fires a cone, not a line — the miss grows with range — so closing for the full
+    readout is what buys the sniper shot. Winning the sensor game <em>is</em> the
+    accuracy. Nothing stops a slug except not being where it lands — not PDCs, and not a
     transponder: in team games a slug will hit whoever is in the line of fire.
     <em>If you hear rail fire, burn.</em></p>
     <p><strong>Teams share transponders — and nothing else.</strong> Your teammates ride
@@ -752,7 +775,8 @@
       <tr><td>Go quiet</td><td>"Go dark" <span class="alt">·</span> "Cut engines" <span class="alt">·</span> "Stop engines" <span class="alt">·</span> "Throttle to fifteen and drift"</td></tr>
       <tr><td>Turn</td><td>"Come left forty" <span class="alt">·</span> "Hard starboard" <span class="alt">·</span> "Steer 090" <span class="alt">·</span> "Keep us pointed at Bravo" <span class="alt">·</span> "Steer for that rumble"</td></tr>
       <tr><td>Pick a target</td><td>"Point us at Contact Alpha" <span class="alt">·</span> "Lock up Kestrel" <span class="alt">·</span> "Target the near one"</td></tr>
-      <tr><td>Stop</td><td>"Come to a full stop" <span class="alt">·</span> "Kill our velocity"</td></tr>
+      <tr><td>Stop</td><td>"Come to a full stop" <span class="alt">·</span> "Kill our velocity" <span class="alt">·</span> "…quietly" / "…fast"</td></tr>
+      <tr><td>Discipline</td><td>"Maneuver discipline silent" <span class="alt">·</span> "standard" <span class="alt">·</span> "flank — I don't care who hears"</td></tr>
       <tr><td>Understand motion</td><td>"Show me my vector" <span class="alt">·</span> "What's our speed?"</td></tr>
       <tr><td>Fuel</td><td>"How's our propellant?" <span class="alt">·</span> "Warn me at twenty-five percent"</td></tr>
       <tr><td>Sensors</td><td>"Any contacts?" <span class="alt">·</span> "Give me a ping" <span class="alt">·</span> "What's the range to him?" <span class="alt">·</span> "Sing out if you hear anything" <span class="alt">·</span> "Show me our drift" <span class="alt">·</span> "Drop the drift marker"</td></tr>

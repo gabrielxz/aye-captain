@@ -187,20 +187,39 @@ export function hunterDecide(
   let throttle: number;
 
   if (best) {
-    // PURSUE: lead the target when we hold a vector (tier >= 2), else
-    // steer at the faint fix. The intercept is a cheap constant-bearing
-    // projection, not a solver — a state machine, not a mind.
-    let aimX = best.x;
-    let aimY = best.y;
+    // PURSUE (1.1 §5b): a RENDEZVOUS, not a ram. With a vector in hand
+    // (tier >= 2) he flies the braking envelope — close to weapons range
+    // arriving with a manageable rate — instead of lead-intercepting the
+    // position like a heat-seeker (the observed yo-yo: overshoot, flip,
+    // burn back). Above the allowed closing rate for the distance left,
+    // flip and kill closure; below it, lead and burn. A faint fix has no
+    // vector to rendezvous with: direct pursuit stays (and stays fallible
+    // — fix physics, no omniscience).
     if (best.tier >= 2 && best.vx !== undefined && best.vy !== undefined) {
-      const closeSpeed = Math.max(800, Math.hypot(you.vx, you.vy));
-      const t = bestRange / closeSpeed;
-      aimX += best.vx * t;
-      aimY += best.vy * t;
+      const rvx = you.vx - best.vx; // our velocity in the target's frame
+      const rvy = you.vy - best.vy;
+      const closing =
+        (rvx * (best.x - you.x) + rvy * (best.y - you.y)) / Math.max(1, bestRange);
+      const dRem = Math.max(0, bestRange - C.HUNTER_ENGAGE_RANGE_M * 0.6);
+      const vAllow =
+        0.85 * Math.sqrt(2 * BRAKE_ACCEL_FLOOR * dRem) + C.HUNTER_CLOSE_RATE_FLOOR_MPS;
+      if (closing > vAllow) {
+        // too hot for the distance left: retrograde of the RELATIVE
+        // velocity, full burn — the kill approach is flank (§2e)
+        heading = norm360(bearingTo(0, 0, -rvx, -rvy));
+        throttle = C.HUNTER_PURSUE_THROTTLE;
+      } else {
+        const closeSpeed = Math.max(800, Math.hypot(you.vx, you.vy));
+        const t = bestRange / closeSpeed;
+        const aim = clampWp(best.x + best.vx * t, best.y + best.vy * t); // §1a: the chase bends at the rim
+        heading = bearingTo(you.x, you.y, aim.x, aim.y);
+        throttle = C.HUNTER_PURSUE_THROTTLE;
+      }
+    } else {
+      const aim = clampWp(best.x, best.y); // §1a
+      heading = bearingTo(you.x, you.y, aim.x, aim.y);
+      throttle = C.HUNTER_PURSUE_THROTTLE;
     }
-    ({ x: aimX, y: aimY } = clampWp(aimX, aimY)); // §1a: the chase bends at the rim
-    heading = bearingTo(you.x, you.y, aimX, aimY);
-    throttle = C.HUNTER_PURSUE_THROTTLE;
 
     if (best.tier >= 2 && bestRange <= C.HUNTER_ENGAGE_RANGE_M) {
       // ENGAGE: designate, and shoot on cadence once the lock holds.

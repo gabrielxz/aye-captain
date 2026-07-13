@@ -93,4 +93,86 @@ const assert = (cond: boolean, msg: string) => {
   assert(validateCommand({ verb: "fire_laser", params: {} }) === null, "fire_laser is gone");
 }
 
+// ANVIL 1.1 §2 — maneuver discipline: the autopilot throttle ceiling.
+// Default STANDARD (60, down from the old 100 — deliberate); a per-command
+// override caps that command only and leaves the posture unchanged; a
+// SILENT stop takes ~4× the distance of a FLANK one; the XO quotes the
+// price; timed burns are exempt (the captain named the percent).
+{
+  // helper: run a full stop from `v0` at the given posture/override and
+  // return {maxThrust, distance}
+  const runStop = (posture: C.Discipline | null, override: C.Discipline | null) => {
+    const sim = new Sim();
+    const a = sim.addShip("A", 0, 0, 0);
+    a.pdcPosture = "hold";
+    a.vx = 0; a.vy = 1500;
+    if (posture) a.discipline = posture;
+    const params: Record<string, unknown> = { type: "full_stop" };
+    if (override) params.discipline = override;
+    sim.enqueue("A", [{ verb: "maneuver", params } as any]);
+    let maxThrust = 0;
+    let yBurn: number | null = null; // distance from BURN start (the flip is constant overhead)
+    for (let t = 0; t < 400 && (a.maneuver || sim.speedOf(a) >= 5); t++) {
+      sim.tick();
+      if (yBurn === null && a.thrust > 0) yBurn = a.y;
+      maxThrust = Math.max(maxThrust, a.thrust);
+    }
+    return { maxThrust, distance: Math.abs(a.y - (yBurn ?? a.y)), ship: a, sim };
+  };
+
+  const std = runStop(null, null);
+  assert(std.maxThrust <= C.DISCIPLINE_CAP.standard && std.maxThrust > 0,
+    `default posture is STANDARD: autopilot never exceeds ${C.DISCIPLINE_CAP.standard}% (saw ${std.maxThrust})`);
+
+  const silent = runStop("silent", null);
+  assert(silent.maxThrust <= C.DISCIPLINE_CAP.silent,
+    `SILENT posture: never above ${C.DISCIPLINE_CAP.silent}% (saw ${silent.maxThrust})`);
+
+  const flank = runStop(null, "flank");
+  assert(flank.maxThrust > C.DISCIPLINE_CAP.standard,
+    "a per-command flank override outruns the standing posture");
+  assert(flank.ship.discipline === "standard",
+    "…and leaves the posture unchanged (override is for that command only)");
+
+  const ratio = silent.distance / flank.distance;
+  assert(ratio > 3 && ratio < 5.5,
+    `a SILENT stop takes ~4× the distance of a FLANK one (${ratio.toFixed(1)}×)`);
+
+  // the posture verb: cap applies, the ship speaks the line
+  const sim = new Sim();
+  const a = sim.addShip("A", 0, 0, 0);
+  a.pdcPosture = "hold";
+  sim.enqueue("A", [{ verb: "set_maneuver_discipline", params: { level: "silent" } } as any]);
+  const ev = sim.tick();
+  assert(a.discipline === "silent", "set_maneuver_discipline sets the standing posture");
+  assert(ev.some((e) => e.kind === "notice" && /discipline silent.*twenty-five/i.test((e as any).text)),
+    "…and the XO names the cap aloud");
+  sim.enqueue("A", [{ verb: "set_maneuver_discipline", params: { level: "loud" } } as any]);
+  assert(sim.tick().some((e) => e.kind === "reject"), "an unknown level rejects");
+
+  // the price is quoted: silent full_stop speaks an ETA; flank warns
+  a.vx = 0; a.vy = 1500;
+  sim.enqueue("A", [{ verb: "maneuver", params: { type: "full_stop" } } as any]);
+  const evS = sim.tick();
+  assert(evS.some((e) => e.kind === "notice" && /Silent approach — about \d+ minute/.test((e as any).text)),
+    "accepting a maneuver under SILENT quotes the cost in minutes");
+  sim.enqueue("A", [{ verb: "maneuver", params: { type: "full_stop", discipline: "flank" } } as any]);
+  const evF = sim.tick();
+  assert(evF.some((e) => e.kind === "notice" && /Flank — full burn/.test((e as any).text)),
+    "accepting a FLANK maneuver warns about the noise");
+
+  // timed burns are exempt: the captain's percent wins over the posture
+  sim.enqueue("A", [{ verb: "set_thrust", params: { percent: 0 } } as any]);
+  sim.tick();
+  sim.enqueue("A", [{ verb: "maneuver", params: { type: "burn", seconds: 3, percent: 90 } } as any]);
+  sim.tick();
+  assert(a.thrust === 90, "a timed burn at 90% runs at 90% even under SILENT — the captain named the number");
+
+  // validator: discipline enum on maneuver + salvage, and the new verb
+  assert(validateCommand({ verb: "maneuver", params: { type: "full_stop", discipline: "silent" } } as any) !== null, "validator: full_stop + discipline");
+  assert(validateCommand({ verb: "maneuver", params: { type: "full_stop", discipline: "sneaky" } } as any) === null, "validator: bad discipline rejected");
+  assert(validateCommand({ verb: "salvage", params: { target: "A", discipline: "flank" } } as any) !== null, "validator: salvage + discipline");
+  assert(validateCommand({ verb: "set_maneuver_discipline", params: { level: "flank" } } as any) !== null, "validator: the posture verb");
+}
+
 console.log("done");

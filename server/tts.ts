@@ -126,6 +126,7 @@ const STOCK_LINES = [
   // carries a quantized bearing — bounded dynamic, cached on first use
   // like the existing lit-himself-up shapes)
   "The gate's destabilizing, Captain. She's closing.",
+  "The gate's started to close, Captain.",
   "Gate's at half aperture, Captain.",
   "Quarter aperture — she's nearly shut, Captain.",
   "We're through, Captain.",
@@ -135,6 +136,12 @@ const STOCK_LINES = [
   "Burn complete — engines to zero.",
   "Burn belayed — you have the conn.",
   "Gate run belayed — you have the conn.",
+  // Anvil 1.1 §2: maneuver discipline (the silent-approach ETA line is
+  // bounded dynamic — minutes as words — and caches on first use)
+  "Maneuver discipline silent, Captain. Nothing above twenty-five percent.",
+  "Maneuver discipline standard, Captain.",
+  "Flank discipline, Captain — no throttle limits.",
+  "Flank — full burn. They'll hear us the whole way.",
   // salvage (§4): the haul narrates itself, one line per landing
   "Coming alongside, Captain.",
   "Alongside. Transfer's running, Captain.",

@@ -33,12 +33,19 @@ be going somewhere — not both.
   but once it has seen you it searches outward from your last fix in a
   circle that grows at your max speed (sitting still gets you found;
   coasting away silently does not), spending probes and then active pings
-  as its uncertainty grows. Kill it (the Anvil patch) and two things
+  as its uncertainty grows. Kill it (the Anvil patches) and two things
   happen at once: its hold — the richest in the system, double modules —
-  becomes a drifting hulk carrying the exact velocity it died with (loot
-  it by MATCHING that velocity; the momentum is the price), and the gate
-  destabilizes — 3 minutes of grace, then the pylons walk inward to a
-  fully closed wall at 5; still in-system then and the run ends STRANDED.
+  becomes a drifting hulk keeping 40% of its death velocity on its death
+  course (loot it by MATCHING that velocity — the momentum is the price —
+  or let the shroud current walk an escaped corpse back inside over a few
+  minutes while the clock spends), and the gate destabilizes — 4 minutes
+  of GATE STABLE grace, then 3 of GATE CLOSING as the pylons walk inward
+  to a fully closed wall; still in-system at zero and the run ends
+  STRANDED. Autopilot maneuvers fly under a discipline posture
+  (silent 25% / standard 60% / flank 100%, per-order overrides —
+  "come to a full stop, quietly"), propellant refills at each jump
+  (hull/missiles/ammo are the attrition axes), and the railgun's pinpoint
+  solution now requires ID tier — a mere track fires a cone.
   The gate is flown
   through, not commanded — thread a 3 km aperture on your drift, or
   overshoot into the naked dark outside the shroud. Salvaged modules and
@@ -115,7 +122,9 @@ be going somewhere — not both.
 - **The railgun** (Frigate & Cruiser — a Corvette mounts none): 6 km/s
   slugs, 25 damage, 6 s recharge, no resupply. **Solution mode** computes a
   lead against a TRACK-or-better contact and fires instantly — lethal to
-  anything coasting; *any thrust during the slug's flight is a miss*.
+  anything coasting; *any thrust during the slug's flight is a miss*. The
+  pinpoint needs **ID tier**: on a mere track the shot is a ±1.2° cone and
+  the miss grows with range — winning the sensor game is the accuracy.
   **Bearing mode** is a manual skill shot. Slugs are pure physics: rocks
   stop them, PDCs can't, they check no IFF (they WILL hit a teammate in the
   line of fire), and firing is heard across the map — if you hear rail

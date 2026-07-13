@@ -48,6 +48,7 @@ export interface Command {
     | "deploy_decoy"
     | "maneuver"
     | "salvage"
+    | "set_maneuver_discipline"
     | "show_vector"
     | "set_overlay"
     | "sensor_ping"
@@ -64,17 +65,21 @@ export type PdcPosture = "free" | "hold";
 // additive. salvage (campaign §4): full-stop physics, then the sequential
 // transfer runs while stopped alongside the wreck — any thrust/heading
 // order aborts it (you keep what already landed).
+// Anvil 1.1 §2b: `discipline` is a PER-COMMAND override of the ship's
+// standing posture — it caps this maneuver's autopilot throttle and leaves
+// the posture untouched. Absent = fly the posture.
 export type Maneuver =
-  | { type: "full_stop" }
-  | { type: "salvage"; wreckId: number }
+  | { type: "full_stop"; discipline?: C.Discipline }
+  | { type: "salvage"; wreckId: number; discipline?: C.Discipline }
   // timed burn ("give me a 5 second burn at 50%"): thrust at `percent`
-  // until secondsLeft runs out, then engines to zero, announced.
+  // until secondsLeft runs out, then engines to zero, announced. Exempt
+  // from discipline caps — the captain named the number.
   | { type: "burn"; secondsLeft: number; percent: number }
   // campaign gate-run assist: brake off the crossline, then (STICKY —
   // the phase never reverts, or the controller dithers at the speed
   // threshold) aim the aperture center and burn straight until the
   // crossing takes the system.
-  | { type: "gate_run"; phase: "brake" | "run" };
+  | { type: "gate_run"; phase: "brake" | "run"; discipline?: C.Discipline };
 
 // Goal heading as stored.
 // absolute: steer shortest-arc to a compass heading. turn: a RELATIVE turn
@@ -231,6 +236,9 @@ export interface Ship {
   sigMult: number;
   accelMult: number;
   hullMult: number;
+  // Anvil 1.1 §2: standing maneuver-discipline posture — caps every
+  // autopilot maneuver's throttle (silent 25 / standard 60 / flank 100)
+  discipline: C.Discipline;
   // Campaign Hunter: when set, step() phase-0 feeds this ship's own fog
   // snapshot to hunterDecide (server/hunter.ts — the fog firewall).
   hunterAI: boolean;
@@ -739,6 +747,7 @@ export class Sim {
       sensorMult: 1,
       sigMult: 1,
       accelMult: 1,
+      discipline: "standard",
       hullMult: 1,
       hunterAI: false,
       hunterMem: initialHunterMem(),
@@ -1078,13 +1087,37 @@ export class Sim {
         ship.pdcPosture = posture;
         return null;
       }
+      case "set_maneuver_discipline": {
+        // Anvil 1.1 §2a: the standing posture. The ship owns this voice —
+        // the stock line names the cap, so the trade is spoken every time.
+        const level = cmd.params.level;
+        if (level !== "silent" && level !== "standard" && level !== "flank") {
+          return "Discipline is silent, standard, or flank, Captain.";
+        }
+        ship.discipline = level;
+        delete cmd.acknowledgement;
+        if (!ship.isDrone) {
+          events.push({
+            kind: "notice",
+            ship: ship.id,
+            text:
+              level === "silent"
+                ? "Maneuver discipline silent, Captain. Nothing above twenty-five percent."
+                : level === "flank"
+                  ? "Flank discipline, Captain — no throttle limits."
+                  : "Maneuver discipline standard, Captain.",
+          });
+        }
+        return null;
+      }
       case "maneuver": {
         const mtype = cmd.params.type;
+        const discipline = this.parseDiscipline(cmd.params.discipline);
         if (mtype === "full_stop") {
           if (this.speedOf(ship) < 5) return "We're already stopped, Captain.";
-          ship.maneuver = { type: "full_stop" };
+          ship.maneuver = { type: "full_stop", ...(discipline ? { discipline } : {}) };
           if (!ship.isDrone) {
-            events.push({ kind: "notice", ship: ship.id, text: "Flipping to kill our velocity." });
+            this.quoteManeuverPrice(ship, discipline, this.speedOf(ship), 0, events, "Flipping to kill our velocity.");
           }
           return null;
         }
@@ -1108,7 +1141,11 @@ export class Sim {
           if (this.speedOf(ship) > C.GATE_ASSIST_MAX_SPEED_MPS) {
             return "We're too hot for the aperture, Captain — kill some speed and I'll thread it.";
           }
-          ship.maneuver = { type: "gate_run", phase: this.speedOf(ship) < 10 ? "run" : "brake" };
+          ship.maneuver = {
+            type: "gate_run",
+            phase: this.speedOf(ship) < 10 ? "run" : "brake",
+            ...(discipline ? { discipline } : {}),
+          };
           events.push({ kind: "notice", ship: ship.id, text: "I have the aperture, Captain — taking us through." });
           delete cmd.acknowledgement; // the stock line is the confirmation
           return null;
@@ -1156,12 +1193,22 @@ export class Sim {
           }
           target = cand.w;
         }
-        ship.maneuver = { type: "salvage", wreckId: target.id };
+        const salvDisc = this.parseDiscipline(cmd.params.discipline);
+        ship.maneuver = { type: "salvage", wreckId: target.id, ...(salvDisc ? { discipline: salvDisc } : {}) };
         events.push({
           kind: "notice",
           ship: ship.id,
           text: `Coming alongside ${noun(target).toLowerCase()} ${target.letter}, Captain.`,
         });
+        // 1.1 §2d: SILENT/FLANK approaches get the price spoken aloud
+        this.quoteManeuverPrice(
+          ship,
+          salvDisc,
+          Math.hypot(ship.vx - (target.vx ?? 0), ship.vy - (target.vy ?? 0)),
+          dist(ship.x, ship.y, target.x, target.y),
+          events,
+          null
+        );
         // the stock notice is the whole confirmation (set_overlay precedent)
         delete cmd.acknowledgement;
         return null;
@@ -1293,6 +1340,7 @@ export class Sim {
           // nearest tracked hostile. Decoy contacts are legal subjects at
           // track tier (they show a vector; refusing would unmask them).
           let tgt: { x: number; y: number; vx: number; vy: number } | null = null;
+          let tgtTier = 2;
           const ref = typeof cmd.params.target === "string" ? cmd.params.target : null;
           if (ref) {
             const key = this.resolveContactRef(ship.id, ref);
@@ -1300,16 +1348,32 @@ export class Sim {
             if (key.startsWith("a")) return "They're squawking friendly, Captain.";
             if (key.startsWith("s")) {
               const t = this.ships.get(key.slice(1));
-              if (t && this.contactOn(ship.id, t.id).tier >= 2) tgt = t;
+              if (t && this.contactOn(ship.id, t.id).tier >= 2) {
+                tgt = t;
+                tgtTier = this.contactOn(ship.id, t.id).tier;
+              }
             } else {
               const d = this.decoys.find((k) => `d${k.id}` === key);
-              if (d && this.decoyTierFor(ship, d) >= 2) tgt = d;
+              if (d && this.decoyTierFor(ship, d) >= 2) {
+                tgt = d;
+                tgtTier = this.decoyTierFor(ship, d);
+              }
             }
           } else {
-            tgt = this.nearestTrackedHostile(ship);
+            const t = this.nearestTrackedHostile(ship);
+            if (t) {
+              tgt = t;
+              tgtTier = this.contactOn(ship.id, t.id).tier;
+            }
           }
           if (!tgt) return "No track for a solution, Captain — I can fire on a bearing.";
           dir = this.railSolutionBearing(ship, tgt.x, tgt.y, tgt.vx, tgt.vy);
+          // 1.1 §4: at TRACK the solution is a CONE, not a line — angular
+          // dispersion, so the miss grows with range. ID keeps the
+          // pinpoint: winning the sensor game IS the accuracy.
+          if (tgtTier === 2) {
+            dir = norm360(dir + (Math.random() * 2 - 1) * C.RAIL_TRACK_DISPERSION_DEG);
+          }
         }
         const [dx, dy] = headingVec(dir);
         this.slugs.push({
@@ -2073,8 +2137,10 @@ export class Sim {
         letter: String.fromCharCode(65 + this.mission.wrecks.length), // next free letter
         x: target.x,
         y: target.y,
-        vx: target.vx,
-        vy: target.vy,
+        // 1.1 §1a: the breach spends most of his momentum — direction
+        // preserved, fraction real (the kill-quality gradient survives)
+        vx: target.vx * C.HULK_MOMENTUM_RETENTION,
+        vy: target.vy * C.HULK_MOMENTUM_RETENTION,
         marked: true,
         checked: false,
         items: [
@@ -2712,22 +2778,60 @@ export class Sim {
       d.y += d.vy * dt;
       d.age += dt;
     }
-    // Anvil §3c: hulks — wrecks carrying the velocity their owner died
-    // with. Debris physics: integrates, NO collision, NO decay; shroud
-    // drag applies outside the region and it is NEVER clamped inside —
-    // if he died fleeing outward the hold drifts into the light, and
-    // chasing it means going lit-up and fighting the current.
+    // Anvil §3c / 1.1 §1: hulks — wrecks carrying (a fraction of) the
+    // velocity their owner died with. Debris physics: integrates; ROCKS
+    // are solid to it (1.1 §1b — it crunches, sheds velocity, keeps every
+    // item, never despawns); NO decay; NEVER clamped inside the region.
+    // Outside the rim the shroud CURRENT entrains it (1.1 §1c): the medium
+    // flows inward, an unpowered body is dragged toward that flow, and the
+    // corpse is walked back home arriving near-zero. Ships are unaffected
+    // — engines fight currents (applyBounds keeps the EDGE_PULL model).
     if (this.mission) {
       for (const w of this.mission.wrecks) {
-        if (!w.vx && !w.vy) continue;
+        // skip static sites AT HOME — but a wreck sitting outside the rim
+        // stays in the current's hands even at exactly zero velocity (the
+        // entrainment step can land on 0.0 dead; it must not freeze there)
+        if (!w.vx && !w.vy && Math.hypot(w.x, w.y) <= C.REGION_RADIUS_M) continue;
+        const ox = w.x;
+        const oy = w.y;
         w.x += (w.vx ?? 0) * dt;
         w.y += (w.vy ?? 0) * dt;
+        const hit = firstRockHit(ox, oy, w.x, w.y, this.terrain);
+        if (hit) {
+          const rock = hit.rock;
+          const ix = ox + (w.x - ox) * hit.t;
+          const iy = oy + (w.y - oy) * hit.t;
+          let nx = ix - rock.x;
+          let ny = iy - rock.y;
+          const nl = Math.hypot(nx, ny) || 1;
+          nx /= nl;
+          ny /= nl;
+          const vN = (w.vx ?? 0) * nx + (w.vy ?? 0) * ny;
+          if (vN < 0) {
+            w.vx = (w.vx ?? 0) - (1 + C.COLLISION_RESTITUTION) * vN * nx;
+            w.vy = (w.vy ?? 0) - (1 + C.COLLISION_RESTITUTION) * vN * ny;
+          }
+          w.x = rock.x + nx * (rock.r + 1);
+          w.y = rock.y + ny * (rock.r + 1);
+          this.fx.push({ type: "boom", x: ix, y: iy }); // venting, debris — cosmetic
+        }
         const wr = Math.hypot(w.x, w.y);
         if (wr > C.REGION_RADIUS_M) {
           const beyond = wr - C.REGION_RADIUS_M;
-          const pull = Math.min(C.EDGE_PULL_CAP_MPS2, C.EDGE_PULL_MPS2_PER_50KM * (beyond / 50000));
-          w.vx = (w.vx ?? 0) + (-w.x / wr) * pull * dt;
-          w.vy = (w.vy ?? 0) + (-w.y / wr) * pull * dt;
+          const flow = Math.min(
+            C.SHROUD_CURRENT_FLOW_MAX_MPS,
+            C.SHROUD_CURRENT_FLOW_FLOOR_MPS + beyond * C.SHROUD_CURRENT_FLOW_GAIN
+          );
+          const ux = (-w.x / wr) * flow; // the medium, flowing home
+          const uy = (-w.y / wr) * flow;
+          const dvx = ux - (w.vx ?? 0);
+          const dvy = uy - (w.vy ?? 0);
+          const dvl = Math.hypot(dvx, dvy);
+          if (dvl > 1e-9) {
+            const step = Math.min(C.SHROUD_CURRENT_ACCEL * dt, dvl);
+            w.vx = (w.vx ?? 0) + (dvx / dvl) * step;
+            w.vy = (w.vy ?? 0) + (dvy / dvl) * step;
+          }
         }
       }
     }
@@ -3952,14 +4056,63 @@ export class Sim {
     }
   }
 
+  // Anvil 1.1 §2: a command's optional discipline override, validated.
+  private parseDiscipline(raw: unknown): C.Discipline | null {
+    return raw === "silent" || raw === "standard" || raw === "flank" ? raw : null;
+  }
+
+  // 1.1 §2d: the XO teaches by quoting the price. SILENT accepts speak an
+  // ETA (minutes, quantized — the TTS cache stays bounded); FLANK accepts
+  // warn about the noise; STANDARD keeps the classic line. This is how the
+  // player learns the mechanic — the choice is a trade, spoken every time.
+  private quoteManeuverPrice(
+    ship: Ship,
+    override: C.Discipline | null,
+    relSpeed: number,
+    travelM: number,
+    events: SimEvent[],
+    standardLine: string | null
+  ): void {
+    if (ship.isDrone) return;
+    const eff = override ?? ship.discipline;
+    if (eff === "flank") {
+      events.push({ kind: "notice", ship: ship.id, text: "Flank — full burn. They'll hear us the whole way." });
+      return;
+    }
+    if (eff === "silent") {
+      const cap = C.DISCIPLINE_CAP.silent / 100;
+      const a = statsOf(ship).accel * ship.accelMult * cap;
+      const etaS = 120 / statsOf(ship).turn + relSpeed / Math.max(1, a) + travelM / 150;
+      const mins = Math.max(1, Math.round(etaS / 60));
+      const WORDS = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+        "eleven", "twelve", "thirteen", "fourteen", "fifteen"];
+      const word = mins <= 15 ? WORDS[mins - 1] : "twenty-plus";
+      events.push({
+        kind: "notice",
+        ship: ship.id,
+        text: `Silent approach — about ${mins} minute${mins === 1 ? "" : "s"}, Captain.`,
+        speak: `Silent approach — about ${word} minute${mins === 1 ? "" : "s"}, Captain.`,
+      });
+      return;
+    }
+    if (standardLine) events.push({ kind: "notice", ship: ship.id, text: standardLine });
+  }
+
   // Autopilot executor, one substep. full_stop: turn to retrograde, burn at
-  // an appropriate throttle, cut thrust when speed < 5 m/s. Future macros
+  // an appropriate throttle (capped by the 1.1 §2 discipline posture or the
+  // command's own override), cut thrust when speed < 5 m/s. Future macros
   // switch on maneuver.type here.
   private stepManeuver(ship: Ship, events: SimEvent[], dt: number): void {
     if (!ship.maneuver) return;
     const type = ship.maneuver.type;
     const speed = this.speedOf(ship);
     const accel = statsOf(ship).accel * ship.accelMult;
+    // 1.1 §2: the autopilot throttle ceiling — per-command override first,
+    // else the standing posture. Timed burns are exempt (captain's number).
+    const cap =
+      C.DISCIPLINE_CAP[
+        (ship.maneuver as { discipline?: C.Discipline }).discipline ?? ship.discipline
+      ];
 
     // timed burn: hold the throttle, count down, cut, announce
     if (type === "burn") {
@@ -3990,7 +4143,7 @@ export class Sim {
       if (man.phase === "run") {
         const toGate = bearingTo(ship.x, ship.y, m.gate.x, m.gate.y);
         ship.goal = { mode: "absolute", degrees: toGate };
-        ship.thrust = Math.abs(angDiff(ship.facing, toGate)) <= 6 ? 100 : 0;
+        ship.thrust = Math.abs(angDiff(ship.facing, toGate)) <= 6 ? cap : 0;
         return;
       }
       // brake phase: fall through to the shared retro-brake below
@@ -4034,7 +4187,7 @@ export class Sim {
           const tLead = d / Math.max(50, rspeed);
           const to = bearingTo(ship.x, ship.y, wreck.x + wvx * tLead, wreck.y + wvy * tLead);
           ship.goal = { mode: "absolute", degrees: to };
-          ship.thrust = Math.abs(angDiff(ship.facing, to)) <= 15 ? 35 : 0;
+          ship.thrust = Math.abs(angDiff(ship.facing, to)) <= 15 ? Math.min(35, cap) : 0;
           return;
         }
       }
@@ -4073,8 +4226,9 @@ export class Sim {
     ship.goal = { mode: "absolute", degrees: retro };
     const off = Math.abs(angDiff(ship.facing, retro));
     if (off <= 15) {
-      // full burn until one second from stopped, then feather the throttle
-      ship.thrust = clamp(Math.round((rspeed / accel) * 100), 5, 100);
+      // burn to the discipline ceiling until one second from stopped,
+      // then feather the throttle
+      ship.thrust = clamp(Math.round((rspeed / accel) * 100), 5, cap);
     } else {
       ship.thrust = 0; // still flipping; don't burn off-axis
     }
@@ -4194,13 +4348,13 @@ export class Sim {
 
   // ---------- campaign "Deep Black" (Stage 0) ----------
 
-  // Anvil §4: the LIVE aperture — APERTURE_W until the last Hunter dies,
-  // then linear to EXACTLY ZERO across [START, END]. No floor (§4a: the
-  // knob is END, never a minimum).
+  // Anvil §4 / 1.1 §3b: the LIVE aperture — UNTOUCHED through the grace
+  // window after the last Hunter dies, then linear to EXACTLY ZERO over
+  // the close duration. No floor (the knob is DURATION, never a minimum).
   gateApertureNow(): number {
     const m = this.mission!;
-    if (m.gateCloseS === null || m.gateCloseS <= C.GATE_CLOSE_START_S) return m.gate.apertureW;
-    const f = (m.gateCloseS - C.GATE_CLOSE_START_S) / (C.GATE_CLOSE_END_S - C.GATE_CLOSE_START_S);
+    if (m.gateCloseS === null || m.gateCloseS <= C.GATE_CLOSE_GRACE_S) return m.gate.apertureW;
+    const f = (m.gateCloseS - C.GATE_CLOSE_GRACE_S) / C.GATE_CLOSE_DURATION_S;
     return Math.max(0, m.gate.apertureW * (1 - Math.min(1, f)));
   }
 
@@ -4212,6 +4366,11 @@ export class Sim {
     const m = this.mission!;
     if (m.gateCloseS === null || m.cleared || this.winner) return;
     m.gateCloseS += 1;
+    // 1.1 §3b: the grace ends AUDIBLY — "closing in 3:12" and "closing NOW"
+    // must never blur (the playtest couldn't tell which the timer meant)
+    if (m.gateCloseS === C.GATE_CLOSE_GRACE_S) {
+      events.push({ kind: "notice", ship: m.playerId, text: "The gate's started to close, Captain." });
+    }
     const ap = this.gateApertureNow();
     if (m.pylonIdx) {
       const gl = Math.max(1, Math.hypot(m.gate.x, m.gate.y));
@@ -4232,7 +4391,7 @@ export class Sim {
       events.push({ kind: "notice", ship: m.playerId, text: calls[m.gateCloseCalled][1] });
       m.gateCloseCalled += 1;
     }
-    if (m.gateCloseS >= C.GATE_CLOSE_END_S) {
+    if (m.gateCloseS >= C.GATE_CLOSE_GRACE_S + C.GATE_CLOSE_DURATION_S) {
       const player = this.ships.get(m.playerId);
       if (!player) return; // a death already ended the run
       this.winner = "nobody";
@@ -4542,8 +4701,14 @@ export class Sim {
     const side = cx * lx + cy * ly > 0 ? "left" : "right";
     // Anvil §4c: good against the LIVE aperture — as the gate narrows the
     // captain watches a good solution turn bad on an instrument that
-    // already existed
-    return { ttg: t, missM, side, good: missM < this.gateApertureNow() / 2 };
+    // already existed. 1.1 §3a: the HULL must fit, not the center point —
+    // SOLUTION GOOD while scraping a pylon was the playtest's mystery rock.
+    return {
+      ttg: t,
+      missM,
+      side,
+      good: missM + C.SHIP_RADIUS_M < this.gateApertureNow() / 2,
+    };
   }
 
   // XO solution calls: NEWS tier, edge-triggered on good/wide transitions,
@@ -4709,7 +4874,7 @@ export class Sim {
       }.`
     );
     lines.push(
-      `Position: ${(zoneDist / 1000).toFixed(1)} km from zone center (${this.insideZone(ship) ? "inside" : "OUTSIDE"} the zone)${this.inDust(ship) ? " — INSIDE A DUST CLOUD: sensors blind both ways, no locks" : ""}. Own signature ${Math.round(this.signatureOf(ship))} (detection range others get on us scales with it).`
+      `Position: ${(zoneDist / 1000).toFixed(1)} km from zone center (${this.insideZone(ship) ? "inside" : "OUTSIDE"} the zone)${this.inDust(ship) ? " — INSIDE A DUST CLOUD: sensors blind both ways, no locks" : ""}. Own signature ${Math.round(this.signatureOf(ship))} (detection range others get on us scales with it). Maneuver discipline: ${ship.discipline.toUpperCase()} (autopilot throttle cap ${C.DISCIPLINE_CAP[ship.discipline]}%).`
     );
     // campaign: the mission picture — the gate is a landmark the XO must
     // be able to talk about (playtest 2026-07-12: "I referenced the gate
@@ -5293,13 +5458,22 @@ export class Sim {
                           ?.items.length ?? 0,
                     }
                   : null,
-                // Anvil §4c: the closing gate on the HUD — countdown to
-                // closure + the live aperture (drawGate narrows from this;
-                // the client walks its pylon sprites in with it)
+                // Anvil §4c / 1.1 §3b: the closing gate on the HUD, in two
+                // visually distinct phases — STABLE counts down to when the
+                // narrowing STARTS; CLOSING counts down to zero (drawGate
+                // narrows from apertureW; the client walks its pylons in)
                 gateClosing:
                   this.mission.gateCloseS !== null
                     ? {
-                        leftS: Math.max(0, C.GATE_CLOSE_END_S - this.mission.gateCloseS),
+                        phase:
+                          this.mission.gateCloseS < C.GATE_CLOSE_GRACE_S ? "stable" : "closing",
+                        leftS: Math.max(
+                          0,
+                          (this.mission.gateCloseS < C.GATE_CLOSE_GRACE_S
+                            ? C.GATE_CLOSE_GRACE_S
+                            : C.GATE_CLOSE_GRACE_S + C.GATE_CLOSE_DURATION_S) -
+                            this.mission.gateCloseS
+                        ),
                         apertureW: Math.round(this.gateApertureNow()),
                         aperturePct: Math.round(
                           (100 * this.gateApertureNow()) / this.mission.gate.apertureW

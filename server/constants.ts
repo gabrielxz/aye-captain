@@ -137,6 +137,12 @@ export const RAIL_SLUG_SPEED_MPS = 6000; // LINKED: 2x MAX_SPEED_MPS, 2.5x MISSI
 export const RAIL_HIT_RADIUS_M = 100; // swept-segment collision, MANDATORY (invariant 6)
 export const RAIL_DAMAGE = 25;
 export const RAIL_COOLDOWN_S = 6;
+// Anvil 1.1 §4: the firing solution is gated on CONTACT TIER — a reward
+// for winning the sensor game. ID (3) = pinpoint, current behavior.
+// TRACK (2) = a CONE: uniform angular dispersion, so the miss grows
+// linearly with range. FAINT can't lock (unchanged — bearing fire only).
+// The Hunter defeats the rail by maneuvering; the player by earning ID.
+export const RAIL_TRACK_DISPERSION_DEG = 1.2; // ± at TRACK tier
 export const RAIL_SIG_SPIKE = 80; // rail fire is HEARD; "if you hear rail fire, burn"
 export const RAIL_SIG_SPIKE_S = 3;
 // Not in the handoff: slugs need an end. 60 s covers a full map crossing
@@ -400,7 +406,15 @@ export const CAMPAIGN_HUNTER_SPAWN_S = 240;
 // is when the Hunter catches you. The archetype's defining weakness surfaces
 // at the climax of every system with zero special-casing. Pinned per
 // archetype in tests/campaign.test.ts.
-export const APERTURE_W_M = 3000;
+// Anvil 1.1 §3c: 3000 → 3600 AFTER the §3a hull-radius fix (the half-width
+// must stay inside the derivation band — re-checked in campaign.test.ts).
+export const APERTURE_W_M = 3600;
+// Anvil 1.1 §3a: the ship is not a point when threading a gap. SOLUTION
+// GOOD must mean the HULL fits: |missM| + SHIP_RADIUS_M < half-aperture.
+// (Rock collision remains point-swept; this margin covers hull extent +
+// the diagonal clip of a crossing line against the pylon circles — the
+// "mystery rock" was the HUD calling a pylon scrape good.)
+export const SHIP_RADIUS_M = 150;
 export const GATE_SOLUTION_RANGE_M = 80000; // HUD panel + XO solution lines appear inside this
 // Pylons are rocks (collide, block LOS, render for free). Small ON PURPOSE:
 // the common failure must be the §5.2 shroud overshoot (lit up, current
@@ -443,6 +457,17 @@ export const HUNTER_ENGAGE_RANGE_M = 60000; // inside this with a track: lock an
 export const HUNTER_FIRE_COOLDOWN_S = 25; // missile cadence (corvette carries 4 — spent birds stay spent)
 export const HUNTER_PURSUE_THROTTLE = 100;
 export const HUNTER_HUNT_THROTTLE = 55; // regen band cruise; its own rumble discipline is the player's tell
+// Anvil 1.1 §5b: PURSUE is a RENDEZVOUS, not a ram — close to weapons
+// range arriving with a manageable closing rate (the same braking-envelope
+// idea the salvage approach flies, in the target's frame). Above the
+// allowed rate for the remaining distance, he flips and kills closure;
+// below it, he leads and burns. No more yo-yo. The floor is the rate he's
+// HAPPY to carry through the engagement envelope.
+export const HUNTER_CLOSE_RATE_FLOOR_MPS = 150;
+// 1.1 §2e doctrine note: the throttles above already encode maneuver
+// discipline for the Hunter — HUNT/search at 55 (standard-band stalking,
+// his quiet IS the player's tell) and 100 (flank) only when closing for
+// the kill or dodging. Do not give him exemptions; fix physics only.
 export const HUNTER_FUEL_FLOOR = 20; // % propellant: below this, coast and regen...
 export const HUNTER_FUEL_RESUME = 50; // ...until back above this (hysteresis)
 export const HUNTER_AVOID_LOOKAHEAD_S = 15; // rock-dodge projection window
@@ -506,14 +531,50 @@ export const GATE_ASSIST_RANGE_M = 15000;
 export const GATE_ASSIST_MAX_SPEED_MPS = 300;
 export const GATE_XO_COOLDOWN_S = 10; // min gap between gate-solution XO calls (§5.4: rate-limited HARD)
 
-// Anvil §4: the closing gate. When the LAST Hunter dies the gate
-// destabilizes — warning at the kill, narrowing begins at START, aperture
-// reaches EXACTLY ZERO at END. No minimum aperture, ever: if playtest says
-// the window is too tight, RAISE END — do not add a floor, do not widen
-// APERTURE_W_M (§4a). A player still in-system at closure is
-// RUN ENDED — STRANDED. The pylons ride the aperture inward: closed = wall.
-export const GATE_CLOSE_START_S = 180;
-export const GATE_CLOSE_END_S = 300;
+// Anvil 1.1 §2: maneuver discipline. Every automatic maneuver used to burn
+// at 100% — in a game where burning is how you die, the XO was screaming
+// on the captain's behalf. The posture caps autopilot throttle; a single
+// command can override it for itself only. THE DEFAULT IS STANDARD (60%),
+// deliberately down from the old 100 — slower and quieter is the point.
+// Timed burns are exempt: the captain named a percent, the captain gets it.
+export type Discipline = "silent" | "standard" | "flank";
+export const DISCIPLINE_CAP: Record<Discipline, number> = {
+  silent: 25, // takes forever; nobody hears you
+  standard: 60, // the new default
+  flank: 100, // "I don't care who hears — get me there"
+};
+
+// Anvil 1.1 §1a: a hull breach is not a clean handoff — the hulk keeps
+// this fraction of the death velocity (the rest is venting, tumbling,
+// debris). DIRECTION IS PRESERVED and the fraction is real: how the player
+// kills him still decides whether he gets paid (stern chase = nearly
+// matched corpse; head-on = gone). Do not clamp, normalize, or zero.
+export const HULK_MOMENTUM_RETENTION = 0.4;
+// Anvil 1.1 §1c: the shroud CURRENT. Powered things fight the current;
+// unpowered things (hulks — and any future wreck that ends up outside) are
+// ENTRAINED by it: outside the rim the medium flows inward at
+// GAIN × distance-beyond (capped), and an unpowered body is dragged toward
+// that flow at up to CURRENT_ACCEL. Consequence: it decelerates, turns
+// around, and is walked back inside, arriving near-zero — a hulk at max
+// escape velocity returns in ~2-3 minutes (pinned). Ships are UNAFFECTED
+// (they keep the EDGE_PULL model above — engines fight currents).
+export const SHROUD_CURRENT_ACCEL = 30;
+export const SHROUD_CURRENT_FLOW_GAIN = 0.012; // inward flow m/s per meter beyond the rim
+export const SHROUD_CURRENT_FLOW_MAX_MPS = 300;
+export const SHROUD_CURRENT_FLOW_FLOOR_MPS = 80; // the flow never stalls — the corpse actually crosses the rim
+
+// Anvil §4 as amended by 1.1 §3b: the closing gate, in two LEGIBLE phases.
+// When the LAST Hunter dies the gate destabilizes (CRITICAL warning at the
+// kill); for GRACE the aperture is UNTOUCHED (HUD: GATE STABLE · closing
+// in m:ss); then it narrows linearly to EXACTLY ZERO over DURATION (HUD:
+// GATE CLOSING, alarm). Seven minutes total — tune DOWN from here, never
+// up from too-short: the window must fit chase-the-hulk (or wait out the
+// current), match, loot, flip, kill the momentum, and get home. No minimum
+// aperture, ever: if the window is too tight RAISE DURATION — never a
+// floor, never APERTURE_W_M. Still in-system at closure: RUN ENDED —
+// STRANDED. The pylons ride the aperture inward: closed = wall.
+export const GATE_CLOSE_GRACE_S = 240;
+export const GATE_CLOSE_DURATION_S = 180;
 
 // --- Stage 1: the run (§1) + salvage (§4) + progression (§6) ---
 export const CAMPAIGN_SYSTEMS = 8;

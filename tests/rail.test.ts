@@ -18,15 +18,16 @@ const run = (sim: Sim, ticks: number): SimEvent[] => {
   return out;
 };
 
-// 1. solution mode kills a drifter: B coasts ballistic at 20 km with a
-// track held; one slug, ~3.3 s of flight, 25 hull
+// 1. solution mode kills a drifter: B coasts ballistic at 15 km — inside
+// the ID band (1.1 §4: the PINPOINT shot needs ID; a mere track gets a
+// cone now, tested below) — one slug, 25 hull
 {
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 0);
-  const b = sim.addShip("B", 0, 20000, 90);
+  const b = sim.addShip("B", 0, 15000, 90);
   quiet(sim);
   b.vx = 400; // crossing target, constant velocity
-  sim.tick(); // track
+  sim.tick(); // ID-tier contact
   sim.enqueue("A", [{ verb: "fire_railgun", params: { mode: "solution" } }]);
   const evs = run(sim, 6);
   assert(evs.some((e) => e.kind === "notice" && /Solution ready — firing/.test((e as any).text)), "XO fires the solution");
@@ -197,6 +198,51 @@ const run = (sim: Sim, ticks: number): SimEvent[] => {
   const snapB = sim.snapshotFor("B") as any;
   assert(snapA.slugs.length === 1 && snapA.slugs[0].own, "own slug always in the snapshot");
   assert((snapB.slugs ?? []).length === 0, "a distant enemy slug is invisible in flight");
+}
+
+// 9. ANVIL 1.1 §4 — the firing solution is gated on tier: ID = pinpoint
+// (repeat shots identical); TRACK = a CONE (angular dispersion inside
+// ±RAIL_TRACK_DISPERSION_DEG, so the miss grows with range); winning the
+// sensor game IS the accuracy, and maneuvering defeats the rail.
+{
+  const bearingOfSlug = (sim: Sim, shooter: any) => {
+    const sl = (sim as any).slugs[(sim as any).slugs.length - 1];
+    return ((Math.atan2(sl.vx - shooter.vx, sl.vy - shooter.vy) * 180) / Math.PI + 360) % 360;
+  };
+  const volley = (rangeM: number, shots: number) => {
+    const sim = new Sim();
+    const a = sim.addShip("A", 0, 0, 0);
+    const b = sim.addShip("B", 0, rangeM, 90);
+    quiet(sim);
+    b.vx = 0; b.vy = 0;
+    sim.tick();
+    const bearings: number[] = [];
+    for (let i = 0; i < shots; i++) {
+      a.railCooldownS = 0;
+      a.railSlugs = 20;
+      sim.enqueue("A", [{ verb: "fire_railgun", params: { mode: "solution" } }]);
+      sim.tick();
+      bearings.push(bearingOfSlug(sim, a));
+      (sim as any).slugs.length = 0; // clear so the next read is the next shot
+      b.hull = 100; // nobody dies during the survey
+    }
+    return bearings;
+  };
+
+  const idShots = volley(15000, 5); // ID band (sig 30 → ID ≤ ~16 km)
+  assert(new Set(idShots.map((x) => x.toFixed(6))).size === 1,
+    "ID tier: five solution shots, ONE bearing — the pinpoint is the reward for winning the sensor game");
+
+  const trackShots = volley(25000, 12); // TRACK band
+  const offsets = trackShots.map((x) => Math.abs(((x - 0 + 540) % 360) - 180));
+  assert(offsets.every((o) => o <= C.RAIL_TRACK_DISPERSION_DEG + 1e-9),
+    `TRACK tier: every shot inside the ±${C.RAIL_TRACK_DISPERSION_DEG}° cone`);
+  assert(new Set(trackShots.map((x) => x.toFixed(6))).size > 1,
+    "…and it IS a cone — repeat shots scatter (a track is not a firing solution)");
+  // the cone means range is the price: at 25 km the worst-case miss is
+  // already several times the slug's hit radius
+  const worstMissM = Math.tan((C.RAIL_TRACK_DISPERSION_DEG * Math.PI) / 180) * 25000;
+  assert(worstMissM > C.RAIL_HIT_RADIUS_M * 3, `miss grows with range (worst case ${worstMissM.toFixed(0)} m at 25 km vs ${C.RAIL_HIT_RADIUS_M} m hit radius)`);
 }
 
 console.log("done: rail");

@@ -245,8 +245,12 @@ export function validateCommand(raw: unknown, nested = false): Command | null {
       return out({ posture: p.posture });
     }
     case "maneuver": {
-      if (p.type === "full_stop") return out({ type: p.type });
-      if (p.type === "gate_run") return out({ type: p.type });
+      // 1.1 §2b: optional per-command discipline override on the macros
+      const hasDisc = p.discipline !== undefined;
+      if (hasDisc && p.discipline !== "silent" && p.discipline !== "standard" && p.discipline !== "flank") return null;
+      const disc = hasDisc ? { discipline: p.discipline } : {};
+      if (p.type === "full_stop") return out({ type: p.type, ...disc });
+      if (p.type === "gate_run") return out({ type: p.type, ...disc });
       if (p.type === "burn") {
         const secs = p.seconds;
         const pct = p.percent;
@@ -264,7 +268,16 @@ export function validateCommand(raw: unknown, nested = false): Command | null {
         if (typeof p.target !== "string") return null;
         clean.target = p.target;
       }
+      if (p.discipline !== undefined) {
+        if (p.discipline !== "silent" && p.discipline !== "standard" && p.discipline !== "flank") return null;
+        clean.discipline = p.discipline;
+      }
       return out(clean);
+    }
+    case "set_maneuver_discipline": {
+      // 1.1 §2a: the standing autopilot-throttle posture
+      if (p.level !== "silent" && p.level !== "standard" && p.level !== "flank") return null;
+      return out({ level: p.level });
     }
     case "show_vector":
       return out({});

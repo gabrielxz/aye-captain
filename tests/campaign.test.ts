@@ -311,7 +311,9 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
   match.nextSystem(ws as any, clearMsg.runState);
   const m2 = match.sim.mission!;
   assert(m2.system === 2 && m2.systemName === C.CAMPAIGN_LADDER[1].name, "next system instantiates ladder row 2");
-  assert(match.sim.ships.get("A")!.propellant === 61, "pools arrive as you left them — the campaign economy");
+  // 1.1 §6 amends §6: propellant refills on transition (it regenerates in
+  // flight anyway); the run state still EXPORTS it, but arrival is full
+  assert(match.sim.ships.get("A")!.propellant === C.PROPELLANT_MAX, "propellant refills on transition (1.1 §6); the other pools arrive as you left them");
   assert(match.sim.tickCount === 0 && !m2.hunterSpawned, "fresh system: clock re-armed");
   assert(ws.sent.some((m) => m.type === "transcript" && /System 2/.test(m.text)), "the XO names the new system");
 
@@ -749,9 +751,11 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
   assert(landed, "…and a ship MATCHING its velocity loots it — the momentum is the price, and it is the whole price");
 }
 
-// 27. ANVIL §3c — hulk physics: the dead Hunter's wreck carries exactly
-// his velocity, integrates, ignores rocks (debris), takes shroud drag
-// outside the region, and is never clamped back inside
+// 27. ANVIL §3c as amended by 1.1 §1 — hulk physics: the breach keeps
+// HULK_MOMENTUM_RETENTION of the death velocity with direction preserved
+// (the kill-quality gradient); rocks are SOLID to it (crunch, shed
+// velocity, keep every item, never despawn); outside the rim the shroud
+// current walks it home; it is never clamped inside.
 {
   const sim = missionSim({ hunterSpawnS: 1 });
   sim.tick();
@@ -761,25 +765,56 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
   const ev: SimEvent[] = [];
   (sim as any).damageShip(h, 10, "missile", ev, "A");
   const hulk = sim.mission!.wrecks.find((w) => (w.vx ?? 0) !== 0)!;
-  assert(!!hulk && hulk.vx === 900 && hulk.vy === 0, "the hulk carries exactly the velocity he died with");
+  const kept = 900 * C.HULK_MOMENTUM_RETENTION;
+  assert(!!hulk && Math.abs(hulk.vx! - kept) < 1e-9 && hulk.vy === 0,
+    `the hulk keeps ${C.HULK_MOMENTUM_RETENTION} of the death velocity, direction preserved (1.1 §1a)`);
+  // the gradient in numbers: a stern-chase killer (co-moving) is far
+  // closer to matched than a head-on one — how you kill him decides pay
+  assert(Math.abs(900 - kept) < Math.abs(-900 - kept),
+    "stern-chase kill leaves a nearly-matched corpse; head-on leaves one that's gone");
   assert(hulk.items.filter((i) => i.kind === "upgrade").length === 2 && hulk.items.length === 6,
     "…and the richest hold in the system: six pieces, TWO modules (§2 the bounty)");
-  const x0 = hulk.x;
-  sim.terrain.rocks.push({ x: x0 + 1800, y: hulk.y, r: 1500 }); // dead in its path
-  sim.tick(); sim.tick(); sim.tick();
-  assert(Math.abs(hulk.x - (x0 + 2700)) < 1 && hulk.vx === 900, "it integrates and passes THROUGH the rock — debris collides with nothing");
+  // 1.1 §1b: rocks are solid — it crunches, sheds velocity, loses nothing
+  const nItems = hulk.items.length;
+  sim.terrain.rocks.push({ x: hulk.x + 3000, y: hulk.y, r: 1500 }); // dead in its path
+  for (let t = 0; t < 12; t++) sim.tick();
+  assert((hulk.vx ?? 0) <= 0, "the rock is SOLID to the hulk — it bounces, shedding velocity");
+  assert(hulk.items.length === nItems && sim.mission!.wrecks.includes(hulk),
+    "…and loses no loot and does not despawn");
 
-  // outward past the rim: the current fights it — no clamp, real drag
+  // 1.1 §1c: died fleeing at max escape — out, turned, and WALKED HOME by
+  // the current in the tuned window, arriving nearly stationary
   const sim3 = missionSim({ hunterSpawnS: 1 });
   sim3.tick();
   const h3 = sim3.ships.get("H")!;
-  h3.x = 0; h3.y = C.REGION_RADIUS_M - 1000; h3.vx = 0; h3.vy = 1200; // dying while fleeing outward
+  h3.x = 0; h3.y = C.REGION_RADIUS_M - 1000; h3.vx = 0; h3.vy = C.MAX_SPEED_MPS; // dying at full sprint outward
   h3.hull = 1;
   (sim3 as any).damageShip(h3, 10, "missile", [], "A");
   const hulk3 = sim3.mission!.wrecks.find((w) => (w.vy ?? 0) !== 0)!;
-  for (let t = 0; t < 30; t++) sim3.tick();
-  assert(Math.hypot(hulk3.x, hulk3.y) > C.REGION_RADIUS_M, "died fleeing: the hulk drifts OUT of the shroud — never clamped inside");
-  assert((hulk3.vy ?? 0) < 1200, "…and the current is against it (shroud drag decelerates the drift)");
+  let outMax = 0;
+  let backAtS = -1;
+  for (let t = 0; t < 400; t++) {
+    sim3.tick();
+    const r = Math.hypot(hulk3.x, hulk3.y);
+    outMax = Math.max(outMax, r);
+    if (backAtS < 0 && t > 5 && r <= C.REGION_RADIUS_M) { backAtS = t; break; }
+  }
+  assert(outMax > C.REGION_RADIUS_M, "died fleeing: the hulk drifts OUT of the shroud — never clamped inside");
+  assert(backAtS >= 90 && backAtS <= 200,
+    `…and the current walks it back inside in ~2-3 minutes (${backAtS}s)`);
+  assert(Math.hypot(hulk3.vx ?? 0, hulk3.vy ?? 0) < 100,
+    `…arriving nearly stationary (${Math.hypot(hulk3.vx ?? 0, hulk3.vy ?? 0).toFixed(0)} m/s) — trivially lootable, but the gate was closing while you waited`);
+
+  // ships are UNAFFECTED by the current: a ship outside gets EXACTLY the
+  // pre-1.1 EDGE_PULL model (pinned against the formula for one tick)
+  const sim4 = missionSim();
+  const s4 = sim4.ships.get("A")!;
+  const beyond = 20000;
+  s4.x = 0; s4.y = C.REGION_RADIUS_M + beyond; s4.vx = 0; s4.vy = 0; s4.thrust = 0;
+  sim4.tick();
+  const expectedPull = Math.min(C.EDGE_PULL_CAP_MPS2, C.EDGE_PULL_MPS2_PER_50KM * (beyond / 50000));
+  assert(Math.abs(Math.abs(s4.vy) - expectedPull) < expectedPull * 0.1,
+    `ships keep the OLD edge pull exactly (${Math.abs(s4.vy).toFixed(1)} ≈ ${expectedPull.toFixed(1)} m/s after 1 s) — the current is for unpowered bodies only`);
 }
 
 // 28. ANVIL §3b integration — the XO's terminal approach flies in the
@@ -827,13 +862,19 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
 
   // park the player mid-system on a slightly-off ballistic toward the gate
   a.x = 1000; a.y = C.REGION_RADIUS_M - 60000; a.vx = 0; a.vy = 100;
+  const snapStable = (sim.snapshotFor("A") as any).you.mission.gateClosing;
+  assert(snapStable?.phase === "stable", "HUD phase 1: GATE STABLE — a countdown to when the narrowing STARTS (1.1 §3b)");
   const allEv: SimEvent[] = [];
-  for (let t = 0; t < C.GATE_CLOSE_START_S; t++) allEv.push(...sim.tick());
+  for (let t = 0; t < C.GATE_CLOSE_GRACE_S; t++) allEv.push(...sim.tick());
   assert(sim.gateApertureNow() === C.APERTURE_W_M, "aperture holds FULL through the grace window");
+  assert(allEv.some((e) => e.kind === "notice" && /started to close/.test((e as any).text)),
+    "grace ends AUDIBLY: 'The gate's started to close, Captain.'");
+  assert((sim.snapshotFor("A") as any).you.mission.gateClosing?.phase === "closing",
+    "HUD phase 2: GATE CLOSING — the alarm state, visually distinct");
   const solBefore = sim.gateSolution(a)!;
   assert(solBefore.good, "a 1 km-off ballistic reads SOLUTION GOOD at full aperture");
 
-  for (let t = 0; t < (C.GATE_CLOSE_END_S - C.GATE_CLOSE_START_S) / 2; t++) {
+  for (let t = 0; t < C.GATE_CLOSE_DURATION_S / 2; t++) {
     a.x = 1000; a.y = C.REGION_RADIUS_M - 60000; a.vx = 0; a.vy = 100; // hold position: watch the door, not the ship
     allEv.push(...sim.tick());
   }
@@ -844,7 +885,7 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
   assert(!solAfter.good, "…and the same ballistic now reads WIDE — a good solution went bad on the existing instrument");
 
   let stranded: any = null;
-  for (let t = 0; t < (C.GATE_CLOSE_END_S - C.GATE_CLOSE_START_S) / 2 + 2 && !stranded; t++) {
+  for (let t = 0; t < C.GATE_CLOSE_DURATION_S / 2 + 2 && !stranded; t++) {
     a.x = 1000; a.y = C.REGION_RADIUS_M - 60000; a.vx = 0; a.vy = 100;
     const ev = sim.tick();
     allEv.push(...ev);
@@ -872,17 +913,52 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
     ...(missionSim().mission as Mission),
     playerId: "A",
     hunterSpawned: true,
-    gateCloseS: C.GATE_CLOSE_START_S, // the narrowing begins NOW
+    gateCloseS: C.GATE_CLOSE_GRACE_S, // the narrowing begins NOW
   };
   a.vx = 0; a.vy = 0;
   sim.enqueue("A", [{ verb: "set_heading", params: { mode: "absolute", degrees: 0 } } as any,
                     { verb: "set_thrust", params: { percent: 100 } } as any]);
   let stranded = false;
-  for (let t = 0; t < C.GATE_CLOSE_END_S - C.GATE_CLOSE_START_S + 5 && !stranded; t++) {
+  for (let t = 0; t < C.GATE_CLOSE_DURATION_S + 5 && !stranded; t++) {
     stranded = sim.tick().some((e) => e.kind === "gameover" && (e as any).stranded);
   }
   assert(stranded && !sim.mission!.cleared, "THE VISE holds: the far-side cruiser is stranded — jettison or die is a real decision");
-  assert(dist(a.x, a.y, 0, C.REGION_RADIUS_M) > 100000, `…not even close (${(dist(a.x, a.y, 0, C.REGION_RADIUS_M) / 1000).toFixed(0)} km short)`);
+  assert(dist(a.x, a.y, 0, C.REGION_RADIUS_M) > 20000, `…and falls measurably short (${(dist(a.x, a.y, 0, C.REGION_RADIUS_M) / 1000).toFixed(0)} km)`);
+}
+
+// 31. ANVIL 1.1 §3a — the missM hull-radius pin: SOLUTION GOOD means the
+// HULL fits, not the center point. A crossing whose missM + SHIP_RADIUS_M
+// exceeds the half-aperture must read false (the pylon-scrape lie).
+{
+  const sim = missionSim();
+  const a = sim.ships.get("A")!;
+  const half = C.APERTURE_W_M / 2;
+  a.y = C.REGION_RADIUS_M - 50000; a.vx = 0; a.vy = 1000;
+  a.x = half - C.SHIP_RADIUS_M - 50; // hull clears by 50 m
+  assert(sim.gateSolution(a)!.good, "hull fits with margin: SOLUTION GOOD");
+  a.x = half - C.SHIP_RADIUS_M + 50; // center inside, hull scrapes
+  const sol = sim.gateSolution(a)!;
+  assert(sol.missM < half && !sol.good, "center inside but hull scraping: NOT good — the mystery rock was this lie");
+}
+
+// 32. ANVIL 1.1 §6 — propellant refills to 100% on system transition (it
+// already regenerates in flight; starting a system dry was a bug, not a
+// difficulty). Hull, missiles, and PDC ammo do NOT — they stay the
+// attrition axes. Pinned so this isn't re-litigated.
+{
+  const run = {
+    system: 3,
+    upgrades: { sig: 0, sensor: 0, accel: 0, hull: 0 },
+    pools: { propellant: 4, missiles: 3, decoys: 2, pdcAmmoS: 33, hull: 61 },
+    totals: { huntersKilled: 0, salvaged: 0, pingsFired: 0, upgrades: 0, timeS: 0 },
+  };
+  const sim = (Match as any).buildCampaignSim("refill-test", "frigate", run) as Sim;
+  const a = sim.ships.get("A")!;
+  assert(a.propellant === C.PROPELLANT_MAX, "propellant arrives FULL — the tanks refill between systems");
+  assert(a.hull === 61, "hull carries the scars");
+  const aboard = a.tubes.filter((t: any) => t.loaded).length + a.reserve;
+  assert(aboard === 3 && a.decoys === 2 && Math.abs(a.pdcAmmoS - 33) < 1e-9,
+    "missiles, decoys, and PDC ammo carry over unchanged — the attrition axes");
 }
 
 console.log("done: campaign");
