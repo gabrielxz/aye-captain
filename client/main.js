@@ -550,7 +550,7 @@ function updateHUDFromSnapshot(snap) {
     { label: "THRUST", value: `${Math.round(you.thrust)}%${tanksDry && you.thrust > 0 ? " (DRY)" : ""}`, cls: tanksDry && you.thrust > 0 ? "alert" : "" },
     { label: "SPD", value: `${you.speed} m/s` },
     { label: "HDG", value: `${String(Math.round(you.facing) % 360).padStart(3, "0")}` },
-    // ⟳ = ramscoop harvesting, ✕ = regen gated off (outside zone or
+    // ⟳ = propellant regen harvesting, ✕ = regen gated off (outside zone or
     // throttle > 20%) — the at-a-glance answer to "why isn't fuel coming back"
     { label: `PROP${prop >= 100 ? "" : you.regen ? " ⟳" : " ✕"}`, value: prop, bar: true, cls: prop <= 10 ? "alert" : prop <= 25 ? "warn" : "" },
     { label: "TUBES", value: tubes || "—" },

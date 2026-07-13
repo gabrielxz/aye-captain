@@ -425,7 +425,7 @@ export type SimEvent =
 export interface SalvageItem {
   // "propellant" survives in the type for hand-built fields, but the
   // generators no longer deal it (playtest: the tank caps at 100 and the
-  // ramscoop refills free — fuel salvage was dead weight). Probes took
+  // low-throttle regen refills free — fuel salvage was dead weight). Probes took
   // its slot: consumable, stackable, and the Hunter spends them too.
   kind: "propellant" | "missiles" | "pdc_ammo" | "hull" | "decoys" | "probes" | "upgrade";
   amount: number;
@@ -4115,7 +4115,7 @@ export class Sim {
     }
   }
 
-  // Burn scales linearly with EFFECTIVE thrust; the ramscoop regenerates
+  // Burn scales linearly with EFFECTIVE thrust; low-throttle regen restores
   // only inside the zone with the throttle SETTING at or below the regen
   // ceiling (the captain must actually order low thrust to harvest).
   private stepPropellant(ship: Ship, effective: number, events: SimEvent[], dt: number): void {
@@ -4695,12 +4695,15 @@ export class Sim {
     const lines: string[] = [];
     const zoneDist = dist(ship.x, ship.y, 0, 0);
     lines.push(
+      // "regen", plain — "ramscoop" leaked into the XO's mouth from here
+      // and it names a REJECTED mechanic, not a taught concept (playtest
+      // 2026-07-13)
       `Own ship (${ship.archetype.toUpperCase()}): heading ${fmtBearing(ship.facing)}, speed ${Math.round(this.speedOf(ship))} m/s, thrust ${Math.round(ship.thrust)}%${effectiveThrust(ship) < ship.thrust ? " (NO output — tanks dry)" : ""}, hull ${ship.hull}/${hullMaxOf(ship)}, propellant ${Math.round(ship.propellant)}/${C.PROPELLANT_MAX}${
         ship.propellant < 50 && !ship.isDrone
-          ? ` (ramscoop ${
+          ? ` (propellant regen ${
               this.insideZone(ship) && ship.thrust <= C.REGEN_MAX_THRUST_PCT
-                ? "REGENERATING"
-                : `NOT regenerating — needs: inside the zone AND throttle setting <= ${C.REGEN_MAX_THRUST_PCT}%`
+                ? "ACTIVE"
+                : `OFF — needs: inside the zone AND throttle setting <= ${C.REGEN_MAX_THRUST_PCT}%`
             })`
           : ""
       }.`

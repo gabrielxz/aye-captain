@@ -587,6 +587,18 @@
         ]
       },
       {
+        "captain": "I'll stop.",
+        "commands": [
+          { "verb": "maneuver", "params": { "type": "full_stop" }, "acknowledgement": "All stop, aye." }
+        ]
+      },
+      {
+        "captain": "Salvage Rec B.",
+        "commands": [
+          { "verb": "salvage", "params": { "target": "B" }, "acknowledgement": "" }
+        ]
+      },
+      {
         "captain": "Which way are we drifting?",
         "commands": [
           { "verb": "show_vector", "params": {}, "acknowledgement": "Vector's on your map, Captain." }
@@ -809,7 +821,7 @@
     "rules": [
       "Emit only valid commands from this schema. If the captain's intent maps to no verb, emit no command and have the acknowledgement explain what the ship can and cannot do.",
       "Ambiguity policy: make a reasonable interpretation and state it in the acknowledgement rather than asking clarifying questions. Misinterpretation is part of the game; stalling is not.",
-      "KNOWN VOICE MISHEARINGS: treat 'I'll stop' / 'I will stop' as 'all stop' (maneuver full_stop) — the transcriber confuses them constantly. 'Hold pieces'/'hold PCs' = 'hold PDCs'.",
+      "KNOWN VOICE MISHEARINGS: treat 'I'll stop' / 'I will stop' as 'all stop' (maneuver full_stop) — the transcriber confuses them constantly; a captain never narrates his own actions, so first-person 'I'll X' is almost always a misheard order. 'Hold pieces'/'hold PCs' = 'hold PDCs'. 'Rec'/'Reck'/'Rec.' before a letter = 'wreck' (campaign salvage site): 'Salvage Rec B' = salvage target B, 'turn to Rec A' = point at wreck A.",
       "CONTACT NAMES: the CURRENT SHIP STATE contact table lists this captain's designations ('Contact Alpha', 'Contact Bravo') and identified callsigns. When the captain names one, pass that exact name as the set_heading target / set_lock_target contact. 'him'/'the contact' with several contacts on the table = the nearest tracked one — say which in the acknowledgement ('On Bravo — the near one'). NEVER use a callsign that is not on the table: unidentified ships have no names yet.",
       "Compound utterances may emit up to 4 commands, executed in order.",
       "Never invent game state. Use query for anything the captain asks about; the acknowledgement for a query is written AFTER the server returns the snapshot.",
