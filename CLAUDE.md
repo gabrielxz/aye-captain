@@ -352,6 +352,16 @@ Note: on this machine's rootless Docker, `-p` port publishing doesn't route
   translator.test.ts). Leading-zero bearings (`"degrees": 051`) are
   repaired string-aware. STT saturation returns 503 "voice channel busy"
   (client shows the server's message), distinct from 502 real failures.
+- TTS economy (2026-07-13): the v4.6 furnace lesson GENERALIZED — freeform
+  speech never re-hits the disk cache (~900 unique paid syntheses in one
+  play day). Dynamic acks voice a bounded phrasebook (ACK_SPEAK_LINES,
+  deterministic per-text pick) and query answers voice QUERY_ANSWER_SPEAK;
+  the full text always stays in the transcript. Standing-order readbacks
+  are EXEMPT and speak verbatim (v4.3: the voice must state trigger
+  direction). Every cache-miss synthesis logs to console + SPEECH_SYNTH_LOG
+  (/data/speech-synth.jsonl on Fly) — the audit trail for remaining
+  furnaces. Still deliberately freeform: xo-note replies, comms
+  transmissions (MESSAGE_MAX_CHARS caps those). Pinned in speech.test.ts §8.
 - v4: "tell me when X" standing orders use a harmless `show_vector` action —
   the trigger log line itself is the telling (there is no notify verb).
 - v4: PDC ship-fire hull damage is applied directly (fractional per substep)

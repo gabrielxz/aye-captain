@@ -366,6 +366,15 @@ export const TTS_MODEL = "eleven_flash_v2_5"; // low latency
 export const VOICE_ID = "JBFqnCBsd6RMkjVDRZzb"; // "George" — calm, dry. Browse elevenlabs.io/voice-library and swap.
 export const TTS_TIMEOUT_MS = 10000;
 
+// TTS quota economy (2026-07-13 audit: ~900 unique dynamic syntheses in one
+// play day — freeform ack text never re-hits the disk cache). Dynamic acks
+// and query answers keep their full text in the transcript but the VOICE
+// draws from this bounded phrasebook. Exemption: standing-order readbacks
+// still speak verbatim (v4.3 doctrine — the voice must state the trigger
+// direction; they're rare enough to pay for).
+export const ACK_SPEAK_LINES = ["Aye, Captain.", "Aye aye.", "Copy that, Captain."];
+export const QUERY_ANSWER_SPEAK = "On the board, Captain.";
+
 // ---------------------------------------------------------------------------
 // Campaign "Deep Black" — Stage 0 (HANDOFF-CAMPAIGN-v1.md). Single-player.
 // None of these touch multiplayer balance; the mission block on a Sim is the

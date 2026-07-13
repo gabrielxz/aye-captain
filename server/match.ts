@@ -43,6 +43,17 @@ export type SpeechPriority = "critical" | "news" | "chatter";
 // Rejections of the same verbs DO speak (you can't see a refusal).
 const HUD_VISIBLE_ACK_VERBS = new Set(["set_thrust", "set_heading", "set_pdc", "set_overlay"]);
 
+// TTS economy: the translator's freeform ack text never re-hits the speech
+// cache (~900 unique paid syntheses in one play day, 2026-07-13 audit), so
+// spoken acks draw from the bounded phrasebook while the transcript keeps
+// the full text. Deterministic per-text pick: the same ack always gets the
+// same voice line (cache-friendly, test-stable, varied across acks).
+function ackSpeakLine(text: string): string {
+  let h = 0;
+  for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) >>> 0;
+  return C.ACK_SPEAK_LINES[h % C.ACK_SPEAK_LINES.length];
+}
+
 // v5.1 §5.2: player names are DISPLAY-ONLY user input. They live here at
 // the match layer — the Sim never learns them, so they structurally cannot
 // reach stateSummaryFor/queryData and therefore never enter an LLM prompt
@@ -987,9 +998,13 @@ export class Match {
       // §1.3: you can't see a refusal — rejections always speak
       this.sendTranscript(ev.ship, "xo", ev.reason, { priority: "news" });
     } else if (ev.kind === "ack") {
+      // standing-order readbacks are exempt from the phrasebook: v4.3
+      // doctrine — the VOICE must state the trigger direction
+      const readback = ev.verb === "set_standing_order";
       this.sendTranscript(ev.ship, "xo", ev.text, {
         priority: "chatter",
         noSpeech: HUD_VISIBLE_ACK_VERBS.has(ev.verb),
+        speak: readback ? undefined : ackSpeakLine(ev.text),
       });
     } else if (ev.kind === "death") {
       this.kills.push({ killer: ev.attacker, victim: ev.ship }); // §5.4: for the reveal
@@ -1242,13 +1257,18 @@ export class Match {
         `Hull ${data.hull} of ${data.hull_max}. Propellant ${data.propellant}. ` +
           `${String(data.tube_summary).charAt(0).toUpperCase()}${String(data.tube_summary).slice(1)}. ` +
           `${data.missiles_aboard} missiles aboard, ${data.decoys} decoys, PDC ${data.pdc_posture} with ${data.pdc_ammo_s}s of fire.`,
-        { priority: "news" } // an answer is information the captain asked for
+        // an answer is information the captain asked for; the numbers stay
+        // WRITTEN — the voice just points at the board (TTS economy)
+        { priority: "news", speak: C.QUERY_ANSWER_SPEAK }
       );
       return;
     }
     const line = await phraseQueryAnswer(question, topic, data);
     // Fallback: template the raw data if the phrasing call fails.
-    this.sendTranscript(id, "xo", line ?? `${topic}: ${JSON.stringify(data)}`, { priority: "news" });
+    this.sendTranscript(id, "xo", line ?? `${topic}: ${JSON.stringify(data)}`, {
+      priority: "news",
+      speak: C.QUERY_ANSWER_SPEAK,
+    });
   }
 
   roleOf(ws: WebSocket): ShipId | null {

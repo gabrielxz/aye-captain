@@ -1,5 +1,30 @@
 # TODO — next steps
 
+## TTS quota economy (2026-07-13)
+
+Audit: 15.5k/30k credits gone in ~2 days; the Fly speech cache showed
+~1,340 dynamic one-off lines (904 on Jul 12 alone) vs ~140 stock — the
+v4.6 furnace generalized: FREEFORM SPEECH NEVER RE-HITS THE CACHE.
+Shipped: (1) every cache-miss synthesis logs text+chars to console (fly
+logs) and SPEECH_SYNTH_LOG (/data/speech-synth.jsonl); (2) dynamic acks
+voice a bounded 3-line phrasebook (ACK_SPEAK_LINES, deterministic
+per-text pick) and query answers voice QUERY_ANSWER_SPEAK — full text
+stays in the transcript; standing-order readbacks exempt (v4.3: the
+voice must state trigger direction). Pinned in speech.test.ts §8.
+
+- [ ] After the next playtest, read the synth log for remaining furnace
+  shapes. Known still-freeform speakers (deliberate, priced later):
+  xo-note replies (conversation), comms transmissions (MESSAGE_MAX_CHARS
+  is the cap), rejection reasons (mostly fixed strings from sim).
+- [ ] Local dev burns the same key into a separate cache (data/speech,
+  337 files) — blank ELEVENLABS_API_KEY in .env for silent dev days, or
+  sync the Fly cache down once.
+- [ ] If the phrasebook isn't enough: a daily dynamic-synth budget guard
+  in tts.ts (stock cache keeps playing past the cap).
+- [ ] tests/speech.test.ts §7-8 fire real HTTP at ElevenLabs with a fake
+  key (harmless 401s, but tests shouldn't touch the network) — stub the
+  fetch someday.
+
 ## Campaign "Deep Black" (HANDOFF-CAMPAIGN-v1.md) — RELEASED 2026-07-12
 
 All stages + four playtest patch rounds (rumor resolve-by-presence,

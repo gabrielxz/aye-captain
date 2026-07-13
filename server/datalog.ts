@@ -31,3 +31,27 @@ export function logUtterance(entry: UtteranceEntry): void {
       }
     });
 }
+
+// Every PAID synthesis (disk-cache misses only, see tts.ts) — the audit
+// trail for hunting TTS quota furnaces: which line shapes never re-hit the
+// cache. Same never-blocks rules as the utterance log.
+function synthLogPath(): string {
+  return process.env.SPEECH_SYNTH_LOG ?? path.join(process.cwd(), "data", "speech-synth.jsonl");
+}
+
+let synthDirReady: Promise<unknown> | null = null;
+let synthWarned = false;
+
+export function logSynth(text: string): void {
+  const p = synthLogPath();
+  const line = JSON.stringify({ t: new Date().toISOString(), chars: text.length, text }) + "\n";
+  if (!synthDirReady) synthDirReady = mkdir(path.dirname(p), { recursive: true });
+  synthDirReady
+    .then(() => appendFile(p, line, "utf8"))
+    .catch((err: unknown) => {
+      if (!synthWarned) {
+        synthWarned = true;
+        console.error("synth log failed:", err instanceof Error ? err.message : err);
+      }
+    });
+}

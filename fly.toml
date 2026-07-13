@@ -12,6 +12,7 @@ primary_region = 'iad'
 [env]
   UTTERANCE_LOG = '/data/utterances.jsonl'
   SPEECH_CACHE_DIR = '/data/speech'
+  SPEECH_SYNTH_LOG = '/data/speech-synth.jsonl'
 
 [[mounts]]
   source = 'data'

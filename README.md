@@ -173,7 +173,11 @@ be going somewhere — not both.
   kills people. No hotkey; it's asked for, like everything on this boat.
 - **The XO's speech discipline** (v5.1): he speaks when he knows something
   you don't — rejections, delayed completions, threats. Acks of things the
-  HUD already shows stay text-only, rumble calls batch into one line
+  HUD already shows stay text-only; other acks he voices as a short "Aye,
+  Captain" with the detailed readback in the transcript (standing-order
+  readbacks he still speaks in full — you need to hear the trigger
+  direction). Answers to questions land written; the voice points you at
+  the board. Rumble calls batch into one line
   ("Three drives out there — bearings 040, 180, and 295"), and far-away
   contact changes log silently once the board gets busy. Keying the mic
   cuts him off (life-or-death warnings finish, ducked). The lock alarm

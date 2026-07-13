@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import * as C from "./constants.js";
+import { logSynth } from "./datalog.js";
 
 function apiKey(): string {
   return process.env.ELEVENLABS_API_KEY ?? "";
@@ -76,6 +77,11 @@ export function ensureSpeech(text: string): string | null {
     }
     try {
       const buf = await withSynthSlot(() => synthesize(text));
+      // every synthesis here is PAID quota (cache misses only) — log each
+      // one so the furnace shapes are findable (console → fly logs;
+      // jsonl → SPEECH_SYNTH_LOG, /data on Fly)
+      console.log(`tts synth (${text.length} chars): ${text}`);
+      logSynth(text);
       await mkdir(cacheDir(), { recursive: true });
       await writeFile(file, buf);
       return buf;
@@ -145,7 +151,10 @@ const STOCK_LINES = [
   "There's a wreck here alright, Captain. Worth taking.",
   "Nothing here, Captain — that rumor was a dry hole.",
   "Decoy's away — it holds our old course. We should change ours, Captain.",
-  "Aye, Captain.",
+  // TTS economy: dynamic acks and query answers voice these bounded lines
+  // (full text stays in the transcript) — see ACK_SPEAK_LINES in constants
+  ...C.ACK_SPEAK_LINES,
+  C.QUERY_ANSWER_SPEAK,
   "Say again, Captain?",
   "Acquiring missile lock...",
   "Lock acquired.",

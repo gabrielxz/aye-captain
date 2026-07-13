@@ -8,6 +8,8 @@ import {
   BARGE_FADE_MS,
 } from "../client/speech-scheduler.js";
 import { Match } from "../server/match.js";
+import { speechId } from "../server/tts.js";
+import { ACK_SPEAK_LINES, QUERY_ANSWER_SPEAK } from "../server/constants.js";
 
 const assert = (cond: boolean, msg: string) => {
   if (!cond) { console.error("FAIL:", msg); process.exitCode = 1; }
@@ -172,5 +174,42 @@ function harness() {
   drive();
   const overlay = ws.sent.find((m) => m.type === "transcript" && /Drift marker|not drifting/.test(m.text));
   assert(!!overlay && overlay.speech === undefined, "set_overlay confirmation is transcript-only");
+
+  // 8. TTS economy: dynamic ack/answer text stays written; the VOICE draws
+  //    from the bounded phrasebook. Standing-order readbacks are exempt
+  //    (v4.3: the voice states the trigger direction).
+  const phrasebookIds = new Set(ACK_SPEAK_LINES.map(speechId));
+  assert(
+    !!decoyAck && phrasebookIds.has(decoyAck.speech) && !phrasebookIds.has(speechId("Decoy away.")),
+    "dynamic ack speaks a phrasebook line, not its freeform text"
+  );
+
+  const soAck = "Engines cut when we REACH four hundred, aye.";
+  match.handleUtterance(
+    ws as any,
+    JSON.stringify({
+      verb: "set_standing_order",
+      params: {
+        label: "cut at 400",
+        condition: { metric: "own_speed", op: "gte", value: 400 },
+        actions: [{ verb: "set_thrust", params: { percent: 0 } }],
+        repeat: false,
+      },
+      acknowledgement: soAck,
+    })
+  );
+  drive();
+  const soMsg = ws.sent.find((m) => m.type === "transcript" && m.text === soAck);
+  assert(
+    !!soMsg && soMsg.speech === speechId(soAck),
+    "standing-order readback still speaks verbatim (trigger direction, v4.3)"
+  );
+
+  await (match as any).answerQuery((match as any).seats[0].id, "damage report", "damage_report");
+  const dmg = ws.sent.find((m) => m.type === "transcript" && /^Hull \d/.test(m.text));
+  assert(
+    !!dmg && dmg.speech === speechId(QUERY_ANSWER_SPEAK),
+    "query answer keeps numbers written and voices the stock pointer line"
+  );
 }
 console.log("done");
