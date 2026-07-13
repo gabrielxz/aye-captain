@@ -4363,10 +4363,19 @@ export class Sim {
       const rspeed = Math.hypot(ship.vx - wvx, ship.vy - wvy);
       const d = dist(ship.x, ship.y, dockAt.x, dockAt.y);
       const stopping = (rspeed * rspeed) / (2 * accel);
+      // closing rate toward the target, in the target's frame: the hop is
+      // only legal while the velocity points mostly AT it (or is trivially
+      // small). Crossrange momentum goes to the retro-brake below first —
+      // thrusting centripetally at a target you're sliding past is how the
+      // XO ended up flying orbits around a wreck (playtest 2026-07-13).
+      const closing =
+        ((ship.vx - wvx) * (dockAt.x - ship.x) + (ship.vy - wvy) * (dockAt.y - ship.y)) /
+        Math.max(1, d);
       if (
         d > C.SALVAGE_DOCK_RANGE_M * 0.6 &&
         d - stopping > 400 &&
-        rspeed < Math.min(250, d / 12)
+        rspeed < Math.min(250, d / 12) &&
+        (rspeed < C.SALVAGE_STOP_SPEED_MPS || closing >= C.SALVAGE_HOP_ALIGN * rspeed)
       ) {
         if (ship.propellant <= 0) {
           ship.maneuver = null;
@@ -5827,7 +5836,15 @@ export class Sim {
         callsign: ship.callsign, // own callsign (v5 §3): HUD badge
         archetype: ship.archetype, // own stat block is not a secret (v5 §4)
         hullMax: hullMaxOf(ship),
-        accel: statsOf(ship).accel, // client stop-point projection
+        accel: statsOf(ship).accel * ship.accelMult, // real full-burn accel (campaign drive modules count)
+        // the deceleration an "all stop" RIGHT NOW actually gets: the
+        // 1.1 §2 discipline posture caps the autopilot throttle, and the
+        // stop marker must draw the burn the XO will actually fly
+        // (playtest 2026-07-13: the marker assumed full burn and the ship
+        // blew way past it at standard 60%)
+        stopAccel:
+          statsOf(ship).accel * ship.accelMult * (C.DISCIPLINE_CAP[ship.discipline] / 100),
+        discipline: ship.discipline,
         turnRate: statsOf(ship).turn,
         x: ship.x,
         y: ship.y,

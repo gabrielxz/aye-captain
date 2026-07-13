@@ -201,7 +201,9 @@ be going somewhere — not both.
   region overview, V toggles your velocity vector — a labeled line showing
   10 s of travel plus an "all stop" bracket marking where a full stop
   ordered now would bring you to rest (with the distance: your can-I-stop-
-  before-that-rock number). The cursor shows the bearing from your ship
+  before-that-rock number). The bracket honors your standing maneuver
+  discipline — a silent stop is a much longer stop — and the label names
+  the posture it assumed. The cursor shows the bearing from your ship
   (your plotting table for callouts and blind fire); the single dashed
   ring is a 50 km ruler. Ask for the **drift marker** ("show me our
   drift") and a chevron rides your hull pointing where you're *going* —

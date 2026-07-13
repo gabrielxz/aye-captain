@@ -599,6 +599,12 @@ export const GATE_CLOSE_DURATION_S = 180;
 export const CAMPAIGN_SYSTEMS = 8;
 // The stop is the cost (§4.1): momentum is the most precious thing you own.
 export const SALVAGE_STOP_SPEED_MPS = 25; // must be under this for the transfer to run
+// The approach hop only flies while the relative velocity points mostly AT
+// the dock target (closing rate >= this fraction of relative speed, ~37°
+// cone). Crossrange motion falls through to the retro-brake instead —
+// thrusting at a target you're sliding past is a circular orbit, and the
+// XO flew one (playtest 2026-07-13: "it kept going around and around").
+export const SALVAGE_HOP_ALIGN = 0.8;
 export const SALVAGE_DOCK_RANGE_M = 2000; // come alongside — the XO won't grapple across the map
 export const SALVAGE_ITEM_S = 10; // per item; the haul is sequential, worst -> best (§4.2 — a greed curve, not a progress bar)
 export const SALVAGE_MARKED_SITES = 2; // reliable contents. WATCHED by the Hunter (§4.3/§4.4)

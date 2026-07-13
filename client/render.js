@@ -359,11 +359,16 @@ function drawVectorOverlay(you) {
   // labels dodge each other when the projections coincide)
 
   // projected stop point for an immediate full-stop maneuver: coast through
-  // the retrograde flip, then decelerate at full burn (cheap, educational)
+  // the retrograde flip, then decelerate at what the XO will ACTUALLY burn
+  // — the maneuver-discipline throttle ceiling (stopAccel; playtest
+  // 2026-07-13: drawn at full burn, the ship blew way past the bracket at
+  // standard 60%). The label names the posture so the captain knows which
+  // promise this is.
   const prop = state.lastSnap?.you?.propellant ?? 0;
   // v5 §4: own archetype's numbers ride the snapshot; hello-config is the
   // pre-launch fallback
-  const accel = state.lastSnap?.you?.accel ?? state.config?.accel ?? 60;
+  const accel =
+    state.lastSnap?.you?.stopAccel ?? state.lastSnap?.you?.accel ?? state.config?.accel ?? 60;
   const turnRate = state.lastSnap?.you?.turnRate ?? state.config?.turnRate ?? 20;
   if (prop > 0) {
     const facing = state.lastSnap?.you?.facing ?? 0;
@@ -406,7 +411,9 @@ function drawVectorOverlay(you) {
       stopLabelX = Math.max(px, ex) + 10;
       stopLabelY = Math.max(py, ey) + 16;
     }
-    labelText(`all stop · ${kmLabel}`, stopLabelX, stopLabelY, COLORS.own, 0.9);
+    const disc = state.lastSnap?.you?.discipline;
+    const discTag = disc === "silent" ? " · silent" : disc === "flank" ? " · flank" : disc === "standard" ? " · std" : "";
+    labelText(`all stop · ${kmLabel}${discTag}`, stopLabelX, stopLabelY, COLORS.own, 0.9);
     if (onVectorLabel && !onShip) {
       // vector label takes the high slot in the stacked case
       labelText(`+${VECTOR_SECONDS}s · ${Math.round(speed)} m/s`, Math.max(px, ex) + 10, Math.min(py, ey) - 8, COLORS.own, 0.7);

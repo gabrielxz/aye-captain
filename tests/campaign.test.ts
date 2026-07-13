@@ -961,4 +961,57 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
     "missiles, decoys, and PDC ammo carry over unchanged — the attrition axes");
 }
 
+// 33. Playtest fixes 2026-07-13 (post-1.1):
+// (a) the ORBIT bug — a salvage approach entered with crossrange momentum
+// must brake it off and dock, never fly circles around the wreck ("it
+// kept going around and around the target").
+{
+  const sim = missionSim();
+  sim.mission!.wrecks.push({
+    id: 1, letter: "A", x: 0, y: 0, marked: true, checked: false,
+    items: [{ kind: "pdc_ammo", amount: 10 }],
+  });
+  const a = sim.ships.get("A")!;
+  a.x = 2500;
+  a.y = 0;
+  a.vx = 0;
+  a.vy = 150; // pure crossrange: the old hop thrust centripetally forever
+  sim.enqueue("A", [{ verb: "salvage", params: { target: "A" } } as any]);
+  let dockedAt = -1;
+  for (let t = 0; t < 240 && dockedAt < 0; t++) {
+    sim.tick();
+    if (sim.mission!.stats.salvaged > 0) dockedAt = t;
+  }
+  assert(dockedAt >= 0, `crossrange entry converges to a dock (${dockedAt}s) — the XO brakes the orbit off first`);
+}
+
+// (b) the stop marker's promise — you.stopAccel is the deceleration the
+// XO will ACTUALLY fly (archetype accel x drive modules x the standing
+// discipline cap), so the all-stop bracket stops lying at standard 60%.
+{
+  const sim = new Sim();
+  const a = sim.addShip("A", 0, 0, 0);
+  const base = C.ARCHETYPES[a.archetype].accel;
+  const snap1 = (sim.snapshotFor("A") as any).you;
+  assert(
+    Math.abs(snap1.stopAccel - base * (C.DISCIPLINE_CAP.standard / 100)) < 1e-9 &&
+      snap1.discipline === "standard",
+    "stopAccel carries the standing posture's real braking (standard 60%)"
+  );
+  sim.enqueue("A", [{ verb: "set_maneuver_discipline", params: { level: "silent" } } as any]);
+  sim.tick();
+  const snap2 = (sim.snapshotFor("A") as any).you;
+  assert(
+    Math.abs(snap2.stopAccel - base * (C.DISCIPLINE_CAP.silent / 100)) < 1e-9 && snap2.discipline === "silent",
+    "…and follows a posture change live"
+  );
+  a.accelMult = 1.2;
+  const snap3 = (sim.snapshotFor("A") as any).you;
+  assert(
+    Math.abs(snap3.stopAccel - base * 1.2 * (C.DISCIPLINE_CAP.silent / 100)) < 1e-9 &&
+      Math.abs(snap3.accel - base * 1.2) < 1e-9,
+    "…and counts drive modules (accel + stopAccel both)"
+  );
+}
+
 console.log("done: campaign");
