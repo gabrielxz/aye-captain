@@ -103,18 +103,26 @@ function handleMessage(msg) {
         // klaxon, thrust hum — a ghost has no alarms (playtest 2026-07-12:
         // the lock pulse clicked through all of spectator mode)
         audio.stopContinuous();
-        // referee framing: whole region, nothing to follow
-        camera.follow = false;
-        camera.x = 0;
-        camera.y = 0;
-        camera.zoom = 0; // recomputed to the full-region view on the next frame
+        if (msg.coop) {
+          // Patch 2 §4/§5: coach mode — we ride our partner's sensors, so
+          // the camera rides their ship (the snapshot's `you` is them)
+          camera.follow = true;
+        } else {
+          // referee framing: whole region, nothing to follow
+          camera.follow = false;
+          camera.x = 0;
+          camera.y = 0;
+          camera.zoom = 0; // recomputed to the full-region view on the next frame
+        }
       }
       hideBanner();
       enterGame();
       addTranscript(
         "sys",
         msg.role === "spectator"
-          ? `spectating as ${msg.callsign} — the room sees your callsign`
+          ? msg.coop
+            ? "riding your partner's sensors — read the board, call the numbers"
+            : `spectating as ${msg.callsign} — the room sees your callsign`
           : msg.campaign
             ? "deep black — reach the gate; the clock is a budget"
             : msg.practice
@@ -134,6 +142,10 @@ function handleMessage(msg) {
       state.prevSnap = state.lastSnap;
       state.lastSnap = msg;
       state.lastSnapAt = now;
+      // Patch 2 §4/§5: the badge names whose eyes these are
+      if (msg.coopEyes && state.role === "spectator") {
+        setSpectator(`${state.callsign ?? "DOWN"} — ${msg.coopEyes}'s eyes`);
+      }
       for (const fx of msg.fx ?? []) {
         state.fxBuffer.push({ fx, at: now });
         if (fx.type === "pdc") audio.sfxPdc(fx.owner === state.role); // internally rate-limited

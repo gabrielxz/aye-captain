@@ -1008,7 +1008,9 @@ export class Match {
 
   private broadcast(): void {
     for (const seat of this.seats) {
-      if (!seat.dead && seat.ws && seat.ws.readyState === seat.ws.OPEN) {
+      if (!seat.ws || seat.ws.readyState !== seat.ws.OPEN) continue;
+      const flying = !seat.dead && this.sim.ships.has(seat.id) && !this.sim.departed(seat.id);
+      if (flying) {
         seat.ws.send(
           JSON.stringify({
             type: "snapshot",
@@ -1016,6 +1018,22 @@ export class Match {
             ...this.sim.snapshotFor(seat.id),
           })
         );
+      } else if (this.coop) {
+        // Patch 2 §4/§5: fallen and through captains ride the SURVIVOR's
+        // sensor picture — exactly what their friend sees, nothing more
+        // (the fog holds; never the omniscient feed). coopEyes labels
+        // whose board this is.
+        const eyes = this.crewEyes(seat);
+        if (eyes) {
+          seat.ws.send(
+            JSON.stringify({
+              type: "snapshot",
+              coopEyes: this.matchCallsigns.get(eyes.id) ?? eyes.id,
+              names: this.namesFor(seat),
+              ...this.sim.snapshotFor(eyes.id),
+            })
+          );
+        }
       }
     }
     if (this.spectators.size > 0) {
@@ -1098,6 +1116,31 @@ export class Match {
     this.sendTranscript(seat.id, "xo", "It's been an honor, Captain.", { priority: "news" });
     seat.dead = true;
     if (seat.ws && seat.ws.readyState === seat.ws.OPEN) {
+      // Patch 2 §4: a downed CO-OP captain is a ROLE CHANGE, not a bench —
+      // they ride the SURVIVOR's sensor picture (broadcast() handles it;
+      // never the omniscient spectator feed — the fog holds), they keep
+      // talking, and they return at the next system in a fresh base ship.
+      if (this.coop && this.crewEyes(seat)) {
+        this.sendTranscript(
+          seat.id,
+          "xo",
+          "Escape pod's away — we ride with our partner now, Captain. Read the board for them.",
+          { priority: "news" }
+        );
+        seat.ws.send(
+          JSON.stringify({
+            type: "start",
+            role: "spectator",
+            coop: true,
+            callsign: shipCallsign,
+            practice: this.practice,
+            campaign: true,
+            ...(this.sim.mission ? { gate: this.sim.mission.gate } : {}),
+            terrain: this.sim.terrain,
+          })
+        );
+        return;
+      }
       const callsign = shipCallsign; // "SPECTATOR — Kestrel" (v5 §3)
       this.spectators.set(seat.ws, callsign);
       seat.ws.send(
@@ -1111,6 +1154,20 @@ export class Match {
       );
       this.broadcastSpectators();
     }
+  }
+
+  // Patch 2 §4/§5: the crew member whose eyes a fallen or through captain
+  // borrows — the first seat still actively flying this system.
+  private crewEyes(notMe: Seat): Seat | null {
+    return (
+      this.seats.find(
+        (s) =>
+          s !== notMe &&
+          !s.dead &&
+          this.sim.ships.has(s.id) &&
+          !this.sim.departed(s.id)
+      ) ?? null
+    );
   }
 
   private routeEvent(ev: SimEvent): void {
@@ -1147,6 +1204,45 @@ export class Match {
       // quiet by design: free the seat, tell no one
       const seat = this.seats.find((s) => s.id === ev.ship);
       if (seat) seat.dead = true;
+    } else if (ev.kind === "gate_through") {
+      // Patch 2 §5: through the gate while the partner still flies — the
+      // captain becomes the coach: spectating the partner's picture,
+      // calling the numbers. Same fog as §4 death; broadcast() does it.
+      const seat = this.seats.find((s) => s.id === ev.ship);
+      if (seat?.ws && seat.ws.readyState === seat.ws.OPEN) {
+        this.sendTranscript(
+          seat.id,
+          "xo",
+          "We're out — but our partner's still in there, Captain. We watch, and we talk them home.",
+          { priority: "news" }
+        );
+        seat.ws.send(
+          JSON.stringify({
+            type: "start",
+            role: "spectator",
+            coop: true,
+            callsign: ev.callsign,
+            practice: this.practice,
+            campaign: true,
+            ...(this.sim.mission ? { gate: this.sim.mission.gate } : {}),
+            terrain: this.sim.terrain,
+          })
+        );
+      }
+    } else if (ev.kind === "stranded_death") {
+      // Patch 2 §5: the gate closed on them while their partner was
+      // through — lost with the system, back next system, empty hold.
+      // No boom, no klaxon: the silence is the point (Anvil §4b).
+      const seat = this.seats.find((s) => s.id === ev.ship);
+      if (seat) {
+        seat.dead = true;
+        this.sendTranscript(
+          seat.id,
+          "sys",
+          "The gate closed with us inside. This system keeps us — our partner flies on.",
+          { priority: "critical" }
+        );
+      }
     } else if (ev.kind === "system_clear") {
       // campaign transition (§1): freeze the system, export the run, and
       // hand the wheel to the run map. Solo: the client keeps the state

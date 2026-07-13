@@ -412,6 +412,12 @@ export type SimEvent =
   // The Match exports run state and stages the next system; deliberately
   // NOT a gameover (the Stage-0 coupling was stage-0-only).
   | { kind: "system_clear"; ship: ShipId; system: number }
+  // Patch 2 §5: a captain crossed while their partner is still in-system —
+  // the Match flips them to coach mode (spectating the partner's picture)
+  | { kind: "gate_through"; ship: ShipId; callsign: string }
+  // Patch 2 §5: the gate closed on this captain while their partner was
+  // already through — they are lost with the system; the run continues
+  | { kind: "stranded_death"; ship: ShipId; callsign: string }
   // v5 §7: a delivered transmission — the match routes it to the
   // recipient(s) as a comms transcript line their XO reads verbatim
   | { kind: "transmission"; from: ShipId; fromName: string; to: ShipId | "all"; text: string }
@@ -512,6 +518,11 @@ export interface Mission {
   // hand-built solo test missions don't carry it) — which crew hull is the
   // loudest thing on the board, edge-triggered + hard rate-limited
   loudCall?: { loudest: ShipId | null; cooldownS: number };
+  // Patch 2 §5: captains who have flown out through the gate this system.
+  // A through-ship stays in the sim FROZEN and invisible (departed) — its
+  // between-systems state is captured at system_clear like any survivor —
+  // and the system resolves only when every captain is through or dead.
+  through?: ShipId[];
 }
 
 // ---------- angle helpers ----------
@@ -900,6 +911,19 @@ export class Sim {
     return out;
   }
 
+  // Patch 2 §5: a ship that has flown out through the gate. It is off the
+  // board in every physical and sensory sense (frozen, no side, invisible
+  // to friend and foe) but stays in the ships map so the between-systems
+  // export reads its real state.
+  departed(id: ShipId): boolean {
+    return this.mission?.through?.includes(id) ?? false;
+  }
+
+  // the captains still IN the system — the ones the mission is still about
+  private activePlayers(): Ship[] {
+    return this.missionPlayers().filter((p) => !this.departed(p.id));
+  }
+
   // v5 §2 hostility: everyone in FFA (team null); teammates never.
   isHostile(a: Ship, b: Ship): boolean {
     return a.id !== b.id && (a.team === null || b.team === null || a.team !== b.team);
@@ -911,15 +935,16 @@ export class Sim {
   alliesOf(ship: Ship): Ship[] {
     const out: Ship[] = [];
     for (const s of this.ships.values()) {
-      if (s.id !== ship.id && !this.isHostile(ship, s)) out.push(s);
+      if (s.id !== ship.id && !this.isHostile(ship, s) && !this.departed(s.id)) out.push(s);
     }
     return out;
   }
 
   hostilesOf(ship: Ship): Ship[] {
+    if (this.departed(ship.id)) return []; // gone: hostile to nobody
     const out: Ship[] = [];
     for (const s of this.ships.values()) {
-      if (this.isHostile(ship, s)) out.push(s);
+      if (this.isHostile(ship, s) && !this.departed(s.id)) out.push(s);
     }
     return out;
   }
@@ -2177,6 +2202,34 @@ export class Sim {
         ],
       });
     }
+    // Patch 2 §4a: a dead CO-OP captain's ship becomes a hulk carrying
+    // their entire hold, at their death velocity, under every 1.1 hulk
+    // rule (momentum retention, rock collision, shroud current) — your
+    // friend's cargo is floating out there and you can go get it. Marked:
+    // the partner watched it happen, and the Hunter patrols marked wrecks
+    // (correct — the corpse becomes a trap). Solo death ends the run;
+    // no wreck for nobody.
+    if (this.mission && this.mission.playerIds.length > 1 && this.mission.playerIds.includes(target.id)) {
+      const items: SalvageItem[] = [];
+      if (target.pdcAmmoS >= 1) items.push({ kind: "pdc_ammo", amount: Math.round(target.pdcAmmoS) });
+      if (target.decoys > 0) items.push({ kind: "decoys", amount: target.decoys });
+      if (target.probesLeft > 0) items.push({ kind: "probes", amount: target.probesLeft });
+      const msl = missilesAboard(target);
+      if (msl > 0) items.push({ kind: "missiles", amount: msl });
+      if (items.length > 0) {
+        this.mission.wrecks.push({
+          id: this.nextId++,
+          letter: String.fromCharCode(65 + this.mission.wrecks.length),
+          x: target.x,
+          y: target.y,
+          vx: target.vx * C.HULK_MOMENTUM_RETENTION,
+          vy: target.vy * C.HULK_MOMENTUM_RETENTION,
+          marked: true,
+          checked: false,
+          items,
+        });
+      }
+    }
     this.removeShip(target.id);
     this.placements.push(target.id);
     events.push({
@@ -2242,7 +2295,7 @@ export class Sim {
     // buys the system, not the match (spec §2.3) — the quiet line is the
     // reward, and the player still has to fly out. Player death loses.
     if (this.mission) {
-      const players = this.missionPlayers();
+      const players = this.activePlayers();
       if (players.length > 0) {
         // Every surviving captain must be clear of hostiles (co-op captains
         // share a team, so the Hunter pack is the only hostile set). Both
@@ -2273,6 +2326,12 @@ export class Sim {
             });
           }
         }
+        return;
+      }
+      // §5: nobody active but somebody THROUGH — the system resolves as a
+      // clear (the dead partner returns next system; the run continues)
+      if ((this.mission.through ?? []).length > 0) {
+        this.resolveSystem(events);
         return;
       }
       // every captain is dead: the system wins
@@ -2748,6 +2807,7 @@ export class Sim {
       // disconnected captains) have their standing orders SUSPENDED and
       // their scuttle timer running.
       for (const ship of this.ships.values()) {
+        if (this.departed(ship.id)) continue; // through the gate: off the board
         if (ship.ghost) {
           ship.ghostTimerS -= tickDt;
           if (ship.ghostTimerS <= 0) this.scuttleShip(ship, events);
@@ -2793,6 +2853,7 @@ export class Sim {
 
     // 4. step physics (also: propellant, tube reloads, flash countdown)
     for (const ship of this.ships.values()) {
+      if (this.departed(ship.id)) continue; // §5: frozen at the moment it left
       const preX = ship.x;
       const preY = ship.y;
       this.stepShip(ship, events, dt);
@@ -2905,6 +2966,7 @@ export class Sim {
     // notices; then ship-to-ship missile locks (needs fresh visibility) and
     // painted warnings (needs both locks updated)
     for (const ship of this.ships.values()) {
+      if (this.departed(ship.id)) continue; // no eyes on a board it left
       this.updateSensors(ship);
       this.updateDecoyContacts(ship);
       this.updateDesignations(ship, events); // after tiers + decoy fixes refresh
@@ -2914,9 +2976,11 @@ export class Sim {
       this.announceDust(ship, events);
     }
     for (const ship of this.ships.values()) {
+      if (this.departed(ship.id)) continue;
       this.updateLock(ship, events, tickDt);
     }
     for (const ship of this.ships.values()) {
+      if (this.departed(ship.id)) continue;
       this.announcePainted(ship, events);
     }
   }
@@ -3319,6 +3383,7 @@ export class Sim {
         // hit radius, and at 2x max ship speed the shooter can never
         // re-enter its line afterwards — this is muzzle geometry, not IFF
         if (target.id === sl.owner) continue;
+        if (this.departed(target.id)) continue; // §5: not physically here anymore
         const dMin = segmentMinDist(
           sl.prevX, sl.prevY, sl.x, sl.y,
           target.x - target.vx * dt, target.y - target.vy * dt, target.x, target.y
@@ -3418,6 +3483,7 @@ export class Sim {
       // ships — friendly hulls never trip the fuse (v5 §8 IFF)
       for (const target of this.ships.values()) {
         if (this.sameSide(m.owner, m.team, target.id, target.team)) continue;
+        if (this.departed(target.id)) continue; // §5: not physically here anymore
         const dMin = segmentMinDist(
           m.prevX, m.prevY, m.x, m.y,
           target.x - target.vx * dt, target.y - target.vy * dt, target.x, target.y
@@ -3543,6 +3609,7 @@ export class Sim {
       // v5 §8 IFF: seekers never acquire friendly ships/decoys/probes
       for (const s of this.ships.values()) {
         if (this.sameSide(m.owner, m.team, s.id, s.team)) continue;
+        if (this.departed(s.id)) continue; // §5: not physically here anymore
         const sig = this.signatureOf(s);
         if (seekerSees(s.x, s.y, sig)) {
           cands.push({ lock: { type: "ship", id: s.id }, sig });
@@ -4431,8 +4498,20 @@ export class Sim {
       m.gateCloseCalled += 1;
     }
     if (m.gateCloseS >= C.GATE_CLOSE_GRACE_S + C.GATE_CLOSE_DURATION_S) {
-      const players = this.missionPlayers();
+      const players = this.activePlayers();
       if (players.length === 0) return; // a death already ended the run
+      // Patch 2 §5: a partner already through means the run CONTINUES —
+      // the captains still in-system die STRANDED (quietly: no boom, the
+      // silence is the point) and return next system with an empty hold.
+      if ((m.through ?? []).length > 0) {
+        for (const p of players) {
+          events.push({ kind: "stranded_death", ship: p.id, callsign: p.callsign });
+          this.removeShip(p.id);
+          this.placements.push(p.id);
+        }
+        this.resolveSystem(events);
+        return;
+      }
       this.winner = "nobody";
       const placements = [...players.map((p) => p.id), ...[...this.placements].reverse()];
       events.push({
@@ -4846,11 +4925,12 @@ export class Sim {
     }
   }
 
-  // Crossing the aperture (Stage 1: the gate is a TRANSITION). A non-final
-  // system emits system_clear — the Match exports run state and stages the
-  // next system, no gameover. The FINAL system's crossing ends the run as
-  // a win. Either way the sim is done: `cleared` freezes re-fires until
-  // the Match swaps the sim out.
+  // Crossing the aperture (Stage 1: the gate is a TRANSITION; Patch 2 §5:
+  // the system does not advance until EVERY captain is through or dead).
+  // A crossing marks the ship departed — frozen, off everyone's board, its
+  // between-systems state still readable — and the system resolves when no
+  // active captain remains. Solo is the immediate case (one crossing
+  // resolves on the same substep, exactly as before).
   private checkGateCrossing(ship: Ship, preX: number, preY: number, events: SimEvent[]): void {
     const m = this.mission!;
     if (this.winner || m.cleared) return;
@@ -4858,20 +4938,40 @@ export class Sim {
     if (ship.vx * m.gate.x + ship.vy * m.gate.y <= 0) return;
     const [x1, y1, x2, y2] = this.apertureSegment();
     if (!segsIntersect(preX, preY, ship.x, ship.y, x1, y1, x2, y2)) return;
-    m.cleared = true;
+    (m.through ??= []).push(ship.id);
     events.push({ kind: "notice", ship: ship.id, text: "We're through, Captain." });
+    // partner still flying: the through-captain becomes the second brain —
+    // spectating the partner's picture, coaching (§5). The Match flips
+    // their role on this event.
+    if (this.activePlayers().length > 0) {
+      events.push({ kind: "gate_through", ship: ship.id, callsign: ship.callsign });
+    }
+    this.resolveSystem(events);
+  }
+
+  // Patch 2 §5: the system ends when no captain remains ACTIVE in it —
+  // everyone is through (advance / final win) or dead (loss, owned by
+  // checkVictory). Anyone through means the run continues.
+  private resolveSystem(events: SimEvent[]): void {
+    const m = this.mission!;
+    if (this.winner || m.cleared) return;
+    if (this.activePlayers().length > 0) return;
+    const through = m.through ?? [];
+    if (through.length === 0) return; // all dead — checkVictory's loss path owns it
+    m.cleared = true;
     if (m.system < C.CAMPAIGN_SYSTEMS) {
-      events.push({ kind: "system_clear", ship: ship.id, system: m.system });
+      events.push({ kind: "system_clear", ship: through[0], system: m.system });
       return;
     }
     // system eight: the run is COMPLETE
-    this.winner = ship.id;
-    const others = [...this.ships.keys()].filter((id) => id !== ship.id);
-    const placements = [ship.id, ...others, ...[...this.placements].reverse()];
+    const lead = through[0];
+    this.winner = lead;
+    const others = [...this.ships.keys()].filter((id) => id !== lead);
+    const placements = [lead, ...others, ...[...this.placements].reverse()];
     events.push({
       kind: "gameover",
-      winner: ship.id,
-      winnerName: ship.callsign,
+      winner: lead,
+      winnerName: this.callsigns.get(lead) ?? lead,
       placements,
       placementNames: placements.map((id) => this.callsigns.get(id) ?? id),
       gateCleared: true,

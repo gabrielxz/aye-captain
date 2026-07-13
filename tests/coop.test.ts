@@ -300,9 +300,12 @@ const fakeWs = () => {
   hunter.sensorMult = C.HUNTER_SENSOR_MULT;
   hunter.sigMult = C.HUNTER_SIG_MULT;
 
-  // the bait burns AWAY; the looter sits dark on the wreck
+  // the bait burns AWAY; the looter sits dark on the wreck. East, not
+  // north: due north from this spawn is the GATE, and a bait that crosses
+  // the aperture legitimately leaves the system (§5 — the first draft of
+  // this test discovered that the hard way)
   a.thrust = 100;
-  a.facing = 0; // north, away from the Hunter
+  a.facing = 90;
   b.thrust = 0;
   sim.mission!.wrecks.push({
     id: 1, letter: "A", x: 60000, y: 500, marked: true, checked: false,
@@ -334,6 +337,158 @@ const fakeWs = () => {
   assert(sim.mission!.wrecks[0].items.length === 0, "B strips the whole wreck in the silence his friend bought");
   assert(b.hull === bHull0, "…untouched");
   assert(sim.mission!.stats.salvaged === 2, "both pieces landed");
+}
+
+// ---------- §4: death is a role change, not a bench ----------
+
+// 12. A dead co-op captain's ship becomes a HULK carrying their entire
+// hold at their death velocity, under the 1.1 hulk rules.
+{
+  const sim = coopSim([-100000, 0], [0, 0]);
+  const b = sim.ships.get("B")!;
+  b.vx = 800;
+  b.vy = -400;
+  b.decoys = 3;
+  b.pdcAmmoS = 42;
+  b.probesLeft = 2;
+  const events: SimEvent[] = [];
+  (sim as any).damageShip(b, 9999, "missile", events, "H");
+  const hulk = sim.mission!.wrecks[sim.mission!.wrecks.length - 1];
+  assert(!!hulk && hulk.marked, "the dead captain's ship becomes a marked wreck");
+  assert(Math.abs((hulk.vx ?? 0) - 800 * C.HULK_MOMENTUM_RETENTION) < 1e-9 &&
+    Math.abs((hulk.vy ?? 0) + 400 * C.HULK_MOMENTUM_RETENTION) < 1e-9,
+    "the hulk carries the death velocity under 1.1 momentum retention");
+  const kinds = hulk.items.map((i) => i.kind);
+  assert(kinds.includes("decoys") && kinds.includes("pdc_ammo") && kinds.includes("probes") && kinds.includes("missiles"),
+    "the whole hold is in the wreck — your friend's cargo is floating out there");
+}
+
+// 13. Match level: the fallen captain rides the SURVIVOR's sensors — never
+// the omniscient feed. The fog holds.
+{
+  const wsA = fakeWs();
+  const wsB = fakeWs();
+  const match = Match.createRoom("COOX", wsA as any, null, true);
+  match.joinOrReconnect(wsB as any);
+  match.launch(wsA as any);
+  match.stop();
+  const sim = match.sim;
+  const b = sim.ships.get("B")!;
+  const events: SimEvent[] = [];
+  (sim as any).damageShip(b, 9999, "missile", events, null);
+  for (const ev of events) (match as any).routeEvent(ev);
+  const flip = wsB.sent.filter((m) => m.type === "start" && m.role === "spectator");
+  assert(flip.length === 1 && flip[0].coop === true, "death flips the captain to co-op coach mode");
+  assert(wsB.sent.some((m) => m.type === "transcript" && /ride with our partner/.test(m.text)), "the XO frames the role change");
+  (match as any).broadcast();
+  const snap = wsB.sent[wsB.sent.length - 1];
+  assert(snap.type === "snapshot" && snap.coopEyes === sim.ships.get("A")!.callsign,
+    "the dead captain's feed is labeled with the survivor's callsign");
+  assert(snap.you && snap.you.callsign === sim.ships.get("A")!.callsign, "…and IS the survivor's picture");
+  assert(snap.ships === undefined && snap.spectator === undefined, "🔴 never the omniscient referee feed — the fog holds");
+  match.destroy();
+}
+
+// ---------- §5: the gate needs the whole crew ----------
+
+// 14. First through does NOT advance the system; they coach through the
+// partner's eyes; the LAST crossing advances. Then the next system seats
+// everyone again — the dead/through distinction gone, carries applied.
+{
+  const wsA = fakeWs();
+  const wsB = fakeWs();
+  const match = Match.createRoom("COOZ", wsA as any, null, true);
+  match.joinOrReconnect(wsB as any);
+  match.launch(wsA as any);
+  match.stop();
+  const sim = match.sim;
+  const g = sim.mission!.gate;
+  const R = Math.hypot(g.x, g.y);
+  const ux = g.x / R;
+  const uy = g.y / R;
+  const cross = (id: string) => {
+    const s = sim.ships.get(id)!;
+    s.x = g.x - ux * 400;
+    s.y = g.y - uy * 400;
+    s.vx = ux * 3000;
+    s.vy = uy * 3000;
+    for (let i = 0; i < 30 && !(sim.mission!.through ?? []).includes(id); i++) (match as any).physicsStep();
+  };
+  cross("A");
+  assert((sim.mission!.through ?? []).includes("A"), "A is through");
+  assert(!sim.mission!.cleared, "the system does NOT advance — the partner is still in it");
+  assert(!wsA.sent.some((m) => m.type === "system_clear"), "no run map yet");
+  assert(wsA.sent.some((m) => m.type === "start" && m.role === "spectator" && m.coop === true),
+    "the through captain flips to coach mode");
+  assert(wsA.sent.some((m) => m.type === "transcript" && /talk them home/.test(m.text)), "…and is told to coach");
+  (match as any).broadcast();
+  const coachSnap = wsA.sent[wsA.sent.length - 1];
+  assert(coachSnap.type === "snapshot" && coachSnap.you?.callsign === sim.ships.get("B")!.callsign,
+    "the coach sees exactly the partner's picture");
+  // the departed ship is off everyone's board
+  assert(((sim.snapshotFor("B") as any).allies ?? []).length === 0, "the through-ship vanishes from the partner's transponder");
+
+  cross("B");
+  assert(sim.mission!.cleared, "the LAST captain's crossing clears the system");
+  assert(wsA.sent.some((m) => m.type === "system_clear") && wsB.sent.some((m) => m.type === "system_clear"),
+    "both captains reach the run map");
+  match.nextSystem(wsB as any, undefined);
+  match.stop();
+  assert(match.sim.ships.has("A") && match.sim.ships.has("B") && !(match.sim.mission!.through ?? []).length,
+    "next system: both captains seated and flying again");
+  match.destroy();
+}
+
+// 15. STRANDED with a partner through: the straggler dies with the system,
+// the run CONTINUES (system_clear, not gameover), and next system they
+// return in a fresh base ship with an empty hold (§4).
+{
+  const wsA = fakeWs();
+  const wsB = fakeWs();
+  const match = Match.createRoom("COOS", wsA as any, null, true);
+  match.joinOrReconnect(wsB as any);
+  match.launch(wsA as any);
+  match.stop();
+  const sim = match.sim;
+  const b = sim.ships.get("B")!;
+  b.decoys = 1; // spend the hold down: the fresh ship must NOT keep this
+  const g = sim.mission!.gate;
+  const R = Math.hypot(g.x, g.y);
+  const ux = g.x / R;
+  const uy = g.y / R;
+  const a = sim.ships.get("A")!;
+  a.x = g.x - ux * 400;
+  a.y = g.y - uy * 400;
+  a.vx = ux * 3000;
+  a.vy = uy * 3000;
+  for (let i = 0; i < 30 && !(sim.mission!.through ?? []).includes("A"); i++) (match as any).physicsStep();
+  // slam the gate with B still inside
+  sim.mission!.gateCloseS = C.GATE_CLOSE_GRACE_S + C.GATE_CLOSE_DURATION_S - 1;
+  for (let i = 0; i < 15 && !sim.mission!.cleared; i++) (match as any).physicsStep();
+  assert(!sim.ships.has("B"), "the straggler dies with the system");
+  assert(!wsB.sent.some((m) => m.type === "gameover"), "…but the RUN continues — no gameover");
+  assert(wsB.sent.some((m) => m.type === "transcript" && /gate closed with us inside/.test(m.text)),
+    "the stranded captain is told, without an explosion");
+  assert(wsB.sent.some((m) => m.type === "system_clear"), "the survivor's clear reaches the fallen too");
+  match.nextSystem(wsA as any, undefined);
+  match.stop();
+  const b2 = match.sim.ships.get("B")!;
+  assert(!!b2, "the stranded captain returns at the next system");
+  assert(b2.decoys === C.ARCHETYPES[b2.archetype].decoys, "…in a fresh base ship with an empty hold — losing the cargo is the cost");
+  match.destroy();
+}
+
+// 16. §4b: BOTH dead = run over (the standard summary path).
+{
+  const sim = coopSim([-100000, 0], [0, 0], { hunterSpawned: true, hunterIds: ["H"] });
+  const h = sim.addShip("H", 150000, 0, 270);
+  h.hunterAI = true;
+  const events: SimEvent[] = [];
+  (sim as any).damageShip(sim.ships.get("A")!, 9999, "missile", events, "H");
+  assert(!events.some((e) => e.kind === "gameover"), "one captain down: the run fights on");
+  (sim as any).damageShip(sim.ships.get("B")!, 9999, "missile", events, "H");
+  const over = events.find((e) => e.kind === "gameover") as any;
+  assert(!!over && over.winner === "H", "both dead: the system wins the run");
 }
 
 console.log("done: coop");
