@@ -2395,7 +2395,7 @@ export class Sim {
           key,
           cid: alias(key),
           bearing: Math.round(norm360(bearingTo(ship.x, ship.y, x, y))) % 360, // 359.6 rounds to 360 -> wrap to 000
-          loud: Math.min(1, sig / 150),
+          loud: Math.min(1, sig / C.LOUD_SIG_REF),
         });
       }
     };
@@ -2420,7 +2420,7 @@ export class Sim {
             key,
             cid: alias(key),
             bearing: Math.round(norm360(bearingTo(pr.x, pr.y, x, y))) % 360,
-            loud: Math.min(1, sig / 150),
+            loud: Math.min(1, sig / C.LOUD_SIG_REF),
             probe: pr.idx,
             ox: pr.x,
             oy: pr.y,
@@ -5323,11 +5323,19 @@ export class Sim {
       const rec = this.recordOn(id, `s${enemy.id}`);
       if (!rec) continue; // designated on the next sensor pass
       const label = rec.identified ? enemy.callsign : rec.letter;
+      // Patch 2 §1a: every contact carries its LOUDNESS — the identical
+      // signature-derived scalar the hearing channel broadcasts below
+      // faint (the sound doesn't stop when you can see it; the ladder
+      // stays continuous and a rumble hardening into a contact keeps its
+      // voice). Never range-derived; decoys get the same formula off
+      // DECOY_SIGNATURE and stay indistinguishable (invariant 11).
+      const loud = Math.min(1, this.signatureOf(enemy) / C.LOUD_SIG_REF);
       if (st.tier === 1 && st.faint) {
         contacts.push({
           cid: rec.letter,
           label,
           tier: 1,
+          loud,
           ...(st.viaProbe ? { viaProbe: true } : {}),
           x: st.faint.x,
           y: st.faint.y,
@@ -5338,6 +5346,7 @@ export class Sim {
           cid: rec.letter,
           label,
           tier: st.tier,
+          loud,
           ...(st.viaProbe ? { viaProbe: true } : {}),
           x: enemy.x,
           y: enemy.y,
@@ -5363,14 +5372,18 @@ export class Sim {
       const tier = this.decoyTierFor(ship, d);
       const rec = this.recordOn(id, `d${d.id}`);
       if (!rec || rec.identified) continue; // resolved decoys render in decoys[]
+      // decoy loudness: same formula, its own signature — reads exactly
+      // like a quietly cruising hull (invariant 11)
+      const dLoud = Math.min(1, C.DECOY_SIGNATURE / C.LOUD_SIG_REF);
       if (tier === 1) {
         const fix = faintFixes.get(d.id);
-        if (fix) contacts.push({ cid: rec.letter, label: rec.letter, tier: 1, x: fix.x, y: fix.y });
+        if (fix) contacts.push({ cid: rec.letter, label: rec.letter, tier: 1, loud: dLoud, x: fix.x, y: fix.y });
       } else if (tier === 2) {
         contacts.push({
           cid: rec.letter,
           label: rec.letter,
           tier: 2,
+          loud: dLoud,
           x: d.x,
           y: d.y,
           vx: d.vx,

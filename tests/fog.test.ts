@@ -251,4 +251,41 @@ const quietDetect = C.SENSOR_BASE_M * (C.SIG_BASE / 100); // ~54 km at v4.3 valu
   assert((sim.snapshotFor("A") as any).you.lockedBy === 1, "acquiring is not a held lock");
 }
 
+// Patch 2 §1a: every contact carries `loud` — SIGNATURE-derived (the same
+// scalar the hearing channel broadcasts below faint), NEVER range-derived,
+// and a decoy contact's loudness is exactly a sig-DECOY_SIGNATURE hull's
+// (invariant 11: nothing may unmask a decoy below ID).
+{
+  const sim = new Sim();
+  const a = sim.addShip("A", 0, 0, 0);
+  const burner = sim.addShip("B", 0, 40000, 180, false);
+  const coaster = sim.addShip("C", 20000, 0, 270, false);
+  burner.thrust = 100;
+  coaster.thrust = 0;
+  sim.tick();
+  const contacts = (sim.snapshotFor("A") as any).contacts;
+  const cb = contacts.find((c: any) => c.x === burner.x && c.y === burner.y) ??
+    contacts.find((c: any) => Math.hypot(c.x - burner.x, c.y - burner.y) < 3000);
+  const cc = contacts.find((c: any) => Math.hypot(c.x - coaster.x, c.y - coaster.y) < 3000);
+  assert(!!cb && !!cc, "both hostiles held (setup real)");
+  assert(typeof cb.loud === "number" && typeof cc.loud === "number", "contacts carry loud");
+  assert(cb.loud > cc.loud, "the burner is louder than the coaster — signature-derived");
+  assert(Math.abs(cc.loud - Math.min(1, sim.signatureOf(coaster) / C.LOUD_SIG_REF)) < 1e-9,
+    "loud is exactly min(1, sig/LOUD_SIG_REF) — never range-derived (the nearer coaster is the quiet one)");
+  // decoy contact loudness matches its signature class, not its identity:
+  // a quiet ship 120 km out is invisible, but its decoy (sig 100) reads
+  // as an ordinary FAINT contact carrying a sig-100 hull's loudness
+  const sim2 = new Sim();
+  sim2.addShip("A", 0, 0, 0);
+  const far = sim2.addShip("D", 0, 120000, 180, false);
+  far.thrust = 0;
+  sim2.enqueue("D", [{ verb: "deploy_decoy", params: {} }]);
+  for (let t = 0; t < 3; t++) sim2.tick();
+  const withDecoy = (sim2.snapshotFor("A") as any).contacts;
+  const dLoud = Math.min(1, C.DECOY_SIGNATURE / C.LOUD_SIG_REF);
+  assert(withDecoy.length === 1, "only the decoy is a contact (the quiet owner stays dark)");
+  assert(Math.abs(withDecoy[0].loud - dLoud) < 1e-9,
+    "a decoy contact's loud is exactly DECOY_SIGNATURE/LOUD_SIG_REF — indistinguishable from a cruising hull");
+}
+
 console.log("done");

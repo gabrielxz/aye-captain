@@ -522,6 +522,20 @@ export const HUNTER_BLIND_FIRE_S = 25; // continuous rumble-chase without a cont
 export const HUNTER_BLIND_FIRE_LOUD = 0.15;
 export const HUNTER_GATE_DRIFT_S = 150; // hunt seconds before the gate joins the patrol rotation
 
+// Patch 2 "Two Ships" §1a: the Hunter pursues the LOUDEST contact he
+// currently holds — the rule that makes the bait play work (one captain
+// burns, the Hunter comes for him, the other loots dark). Loudness rides
+// the wire on every contact as the same signature-derived scalar the
+// hearing channel already broadcasts (sig / LOUD_SIG_REF — the sound
+// doesn't stop when you can see it). Target re-evaluation runs on a
+// CADENCE with HYSTERESIS: a challenger must be meaningfully louder or
+// meaningfully closer to steal the chase — he must not oscillate between
+// two comparably-loud ships.
+export const LOUD_SIG_REF = 150; // loud = min(1, signature / this) — rumbles and contacts alike
+export const HUNTER_RETARGET_EVERY_S = 5; // target re-evaluation cadence
+export const HUNTER_RETARGET_LOUDER = 1.4; // challenger needs >= this x current loudness...
+export const HUNTER_RETARGET_CLOSER = 0.6; // ...or <= this x current range
+
 // Gate-run assist (playtest ask): within this range and below this speed,
 // "take us through the gate" hands the aperture to the XO — he stops,
 // lines the ballistic through center, and burns straight. The slow-entry
