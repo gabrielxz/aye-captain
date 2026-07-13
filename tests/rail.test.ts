@@ -37,11 +37,14 @@ const run = (sim: Sim, ticks: number): SimEvent[] => {
 }
 
 // 2. any thrust beats a solution: same geometry, target burns hard after
-// the shot — the slug misses
+// the shot — the slug misses. At ID range like test 1: against the 1.1 §4
+// TRACK cone this assertion is a coin flip (the random scatter can land
+// ON the dodge — the CI flake of 2026-07-13); against the ID pinpoint the
+// dodge wins DETERMINISTICALLY, which is the physics being tested.
 {
   const sim = new Sim();
   sim.addShip("A", 0, 0, 0);
-  const b = sim.addShip("B", 0, 20000, 90);
+  const b = sim.addShip("B", 0, 15000, 90);
   quiet(sim);
   b.vx = 400;
   sim.tick();
