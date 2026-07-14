@@ -29,10 +29,9 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
     wrecks: [],
     salvaging: {},
     cleared: false,
-    stats: { huntersKilled: 0, salvaged: 0, pingsFired: 0, upgrades: 0 },
+    stats: { huntersKilled: 0, salvaged: 0, pingsFired: 0, modules: 0 },
     haul: [],
     decoyTaught: false,
-    upgradeCounts: { sig: 0, sensor: 0, accel: 0, hull: 0 },
     solGood: {},
     solCooldownS: {},
     gateCloseS: null,
@@ -347,7 +346,7 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
     items: [
       { kind: "propellant", amount: 30 },
       { kind: "missiles", amount: 2 },
-      { kind: "upgrade", amount: 1, upgrade: "sig" },
+      { kind: "module", amount: 1, module: "baffles" },
     ],
   });
   const a = sim.ships.get("A")!;
@@ -373,8 +372,8 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
   }
   assert(got === 1 && a.propellant > before, "worst item first: propellant lands and is applied");
   assert(sim.mission!.haul.length === 1 && sim.mission!.haul[0].kind === "propellant", "the haul manifest records the landing (the run map's headline)");
-  const sigBefore = a.sigMult;
-  // teaser fires when only the upgrade remains
+  const installedBefore = a.installed.length;
+  // teaser fires when only the MODULE remains (cc ruling 1: modules, not bumps)
   let teased = false;
   for (let t = 0; t < C.SALVAGE_ITEM_S + 2 && !teased; t++) {
     ev = sim.tick();
@@ -385,18 +384,23 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
   sim.enqueue("A", [{ verb: "set_thrust", params: { percent: 50 } } as any]);
   ev = sim.tick();
   assert(ev.some((e) => e.kind === "notice" && /Breaking off the salvage/.test((e as any).text)), "a thrust order breaks off the transfer");
-  assert(a.sigMult === sigBefore && sim.mission!.wrecks[0].items.length === 1, "the upgrade stays on the wreck; what landed stayed aboard");
+  assert(a.installed.length === installedBefore && sim.mission!.wrecks[0].items.length === 1, "the module stays on the wreck; what landed stayed aboard");
   assert(a.propellant > before, "abort keeps everything already landed");
 }
 
-// 10. §6 progression: an upgrade module applies as a multiplier and is
-// counted for the run-state export
+// 10. cc ruling 1: THE STAT BUMPS ARE DEAD. A salvaged module lands as a
+// REAL module (amendment §4: installed if slot+headroom, else the hold) —
+// priced in mass and noise, never a free multiplier.
 {
   const sim = missionSim();
   const a = sim.ships.get("A")!;
-  (sim as any).applySalvageItem(a, { kind: "upgrade", amount: 1, upgrade: "sig" }, []);
-  assert(Math.abs(a.sigMult - C.UPGRADE_SIG_MULT) < 1e-9, "engine baffles: player sigMult scales down through the same choke point as the Hunter's");
-  assert(sim.mission!.upgradeCounts.sig === 1 && sim.mission!.stats.upgrades === 1, "module counted for the export");
+  const sigBefore = a.sigMult;
+  const evs: SimEvent[] = [];
+  (sim as any).applySalvageItem(a, { kind: "module", amount: 1, module: "baffles" }, evs);
+  assert(a.sigMult === sigBefore && a.sensorMult === 1, "🔴 no free multipliers — the bump lane is closed");
+  assert(a.installed.includes("baffles"), "the module is fitted (slot + headroom were free)");
+  assert(sim.mission!.stats.modules === 1, "module counted for the run summary");
+  assert(evs.some((e: any) => e.kind === "notice" && /Engine baffles, Captain — fitted/.test(e.text)), "the landing speaks its stock line");
 }
 
 // 11. §4.4 THE INTEL PIN: the Hunter's intel struct carries MARKED sites
@@ -421,8 +425,8 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
   h.hull = 1;
   const ev: SimEvent[] = [];
   (sim as any).damageShip(h, 10, "missile", ev, "A");
-  const wreck = sim.mission!.wrecks.find((w) => w.marked && w.items.some((i) => i.kind === "upgrade"));
-  assert(!!wreck && sim.mission!.stats.huntersKilled === 1, "the Hunter's wreck lands, marked, carrying an upgrade module");
+  const wreck = sim.mission!.wrecks.find((w) => w.marked && w.items.some((i) => i.kind === "module"));
+  assert(!!wreck && sim.mission!.stats.huntersKilled === 1, "the Hunter's wreck lands, marked, carrying a real module (cc ruling 1)");
 }
 
 // 13. THE LADDER (§3): a table, not a formula — 8 rows, one new problem
@@ -772,7 +776,7 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
   // closer to matched than a head-on one — how you kill him decides pay
   assert(Math.abs(900 - kept) < Math.abs(-900 - kept),
     "stern-chase kill leaves a nearly-matched corpse; head-on leaves one that's gone");
-  assert(hulk.items.filter((i) => i.kind === "upgrade").length === 2 && hulk.items.length === 6,
+  assert(hulk.items.filter((i) => i.kind === "module").length === 2 && hulk.items.length === 6,
     "…and the richest hold in the system: six pieces, TWO modules (§2 the bounty)");
   // 1.1 §1b: rocks are solid — it crunches, sheds velocity, loses nothing
   const nItems = hulk.items.length;

@@ -21,20 +21,62 @@ doc's +4 (frigate book 2 pins it); looted rail arrives with 20 slugs
 (fire-out/uninstall/reinstall can farm slugs — §6 rearm economy will
 supersede); PDCs do NOT engage mines (unspecced, deferred).
 
-NEXT (before the playtest, per amended build order): §5 wreck types with
-module pools shrunk to the five (Military: railgun/armor/mine layer;
-Survey: deep array/probe rack; Smuggler: baffles; Freighter:
-consumables; type visible from t=0) + 6b bring multiplayer over (wrecks
-on the MP map, salvage verb in MP, death hulks in ALL modes carrying
-loadout+hold at 0.4 momentum). THEN the two-mode playtest (watch 1v1
-snowballing — the lever is POWER_TO_SIG, never a handicap). After
-playtest: §6 ore/refit/Mk II, §8 legibility (sprite from loadout, plume
-from signature, hum from draw), §7 panel fill, rest of the catalog.
+cc-rulings-loadout-next-leg.md (2026-07-14) settled: stat bumps DIE
+(delete upgradeCounts + UPGRADE_* + "upgrade" items; wrecks drop MODULES
+and ORE; migration sig→baffles, sensor→deep array, accel→DRIVE TUNE (new
+module, 1 mass / 2 power, ×1.15 thrust while lit), hull→armor; two axes:
+horizontal = modules found, vertical = refine Mk I→II with ore — no free
+third); rings pushed to prod (DEPLOYED); PDCs clear mines only when FREE
+and loudly (BUILT 3be8a1a); rail auto-light speaks (BUILT); rack +2
+accepted.
 
-OPEN QUESTION (blocks the campaign leg): do modules REPLACE the campaign
-§6 upgradeCounts stat-bumps, and how does the loadout persist in run
-state (invariant 21 localStorage + coopCarry)? The doc implies
-replacement — Gabriel's call.
+IN FLIGHT — the §5 + 6b leg (worked-out design, execute in order):
+1. Drive Tune module (constants + accelOf ×1.15^lit + schema enum).
+2. Field lift: Sim gets fieldWrecks/fieldSalvaging with get wrecks()/get
+   salvaging() delegating to mission when present (campaign paths + tests
+   stay bit-identical); salvage verb gate becomes "wrecks exist && not a
+   drone"; stepSalvage/stepRumors run when wrecks exist (haul/stats
+   pushes stay mission-guarded; stepRumors playerIds → non-drone humans
+   in MP); hulk motion loop reads this.wrecks; top-level `wrecks` on
+   every snapshot (client reads it from either place).
+3. §5 types: Wreck.type military/survey/smuggler/freighter/derelict/
+   hulk. Pools (five+tune): military rail/armor/mine_layer + pdc/msl;
+   survey deep_array/probe_rack + probes; smuggler baffles/drive_tune +
+   decoys; freighter ORE ×lots + consumables; derelict rare (8%): 2
+   modules + ore. Marked sites expose type on the wire FROM t=0 at any
+   range; rumors hide type until checked (Patch 1 rules).
+4. SalvageItem kinds += module{module}/ore, DELETE upgrade. Landing:
+   module → landModule (installed: per-module stock fitted lines, reuse
+   the four existing "fitted" lines + three new; held: "stowed" stock
+   variants); ore → ship.ore += n (NEW ship field, mass = ORE_UNIT_MASS
+   each in massOf, on you.loadout.ore; USES land with §6 refit next leg
+   — this playtest it's a mass-vs-future bet, deliberate).
+5. Death hulks ALL modes (generalize the Patch 2 §4a block): every
+   non-drone death except SOLO-campaign spawns a marked hulk (type
+   "hulk") at 0.4 death-v carrying installed+hold modules as module
+   items + ore + consumables. MP: the leader is the prize (amendment
+   §2). Letters continue the site sequence.
+6. Persistence: CampaignRun.upgrades → CampaignRun.loadout {installed[],
+   hold[], ore} (sanitize: valid ModuleIds only, caps; old saves lose
+   bumps — acceptable, note in check-in); buildCampaignSim applies it
+   (mults stay 1; carried.hull clamps to hullMaxOf-with-plates);
+   CoopCarry mults → installed/hold/ore; totals.upgrades →
+   totals.modules (sanitize accepts either key); mission.stats.upgrades
+   → stats.modules; mission.hold ledger renders module/ore kinds.
+7. MP generation: rooms get generateWrecks(seed) at launch (practice
+   too); schema/translator salvage text loses "CAMPAIGN ONLY"; state
+   summary lists sites for MP ships as it does for mission players.
+8. Client: drawWrecks reads top-level wrecks; marked wrecks draw their
+   TYPE word (the whole "worth going loud for?" decision); run-map
+   manifest renders module/ore items; localStorage run shape v2.
+9. Tests: typed-pool pins, type-on-wire-from-t0 + rumor-hidden pins, MP
+   salvage e2e, MP death-hulk-carries-deck pin, sanitize round-trip,
+   🔴 re-run the calibration pin — starting loadout + empty hold stays
+   bit-identical (the Unification §3 law, do not lose it).
+THEN the two-mode playtest (watch 1v1 snowballing — the lever is
+POWER_TO_SIG, never a handicap). After playtest: §6 ore verbs
+(repair/rearm/refine Mk II), §8 legibility (sprite from loadout, plume
+from signature, hum from draw), §7 panel fill, rest of the catalog.
 
 ## Patch 3.5 "Two Rings" (ADDENDUM-PATCH-3-TWO-RINGS-v2.md) — BUILT 2026-07-14
 

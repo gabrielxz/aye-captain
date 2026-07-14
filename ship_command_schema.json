@@ -391,7 +391,7 @@
       ]
     },
     "salvage": {
-      "description": "CAMPAIGN ONLY (rejected in multiplayer). Fly to a salvage site and run the transfer. Sites carry LETTER designations shown in CURRENT SHIP STATE ('wreck A', 'rumor C' — plain letters, never the NATO contact words). Within ~15 km of the named site the XO flies the ENTIRE approach: velocity-match, terminal dock, then items aboard one at a time, worst first, ~10s each. Targeting an UNRESOLVED RUMOR is how you investigate it — the approach resolves it en route (loot: he docks and transfers; dry hole: he calls it and stops). Beyond 15 km the server rejects and teaches the range. ANY subsequent set_thrust/set_heading breaks off; everything already landed stays aboard. `target` = the site letter; omit it for the nearest site. Use on ANY travel-or-take intent naming a site: 'come alongside rumor A', 'bring me to wreck B', 'MANEUVER to rumor D', 'take me to / go to / head to wreck A', 'investigate rumor C', 'salvage', 'strip the wreck'. Sites are LETTERS — 'come alongside KESTREL' (a ship CALLSIGN) is come_alongside, the crew rendezvous, never this verb. CAUTION: 'maneuver to <site>' is THIS verb, never set_heading — captain-speak 'maneuver to X' means GO THERE. BUT pointing is NOT traveling: 'turn to / point at / face / nose on wreck A' = set_heading absolute at its bearing from the state line, at ANY range — never the salvage verb. 'Break off' = set_thrust 0. Leave acknowledgement EMPTY — the ship speaks its own line.",
+      "description": "EVERY MODE (6b: multiplayer maps carry wrecks too — all marked, typed on the board: military/survey/smuggler/freighter/derelict, plus hulks of the dead carrying their whole loadout). Fly to a salvage site and run the transfer. Sites carry LETTER designations shown in CURRENT SHIP STATE ('wreck A', 'rumor C' — plain letters, never the NATO contact words). Within ~15 km of the named site the XO flies the ENTIRE approach: velocity-match, terminal dock, then items aboard one at a time, worst first, ~10s each. Targeting an UNRESOLVED RUMOR is how you investigate it — the approach resolves it en route (loot: he docks and transfers; dry hole: he calls it and stops). Beyond 15 km the server rejects and teaches the range. ANY subsequent set_thrust/set_heading breaks off; everything already landed stays aboard. `target` = the site letter; omit it for the nearest site. Use on ANY travel-or-take intent naming a site: 'come alongside rumor A', 'bring me to wreck B', 'MANEUVER to rumor D', 'take me to / go to / head to wreck A', 'investigate rumor C', 'salvage', 'strip the wreck'. Sites are LETTERS — 'come alongside KESTREL' (a ship CALLSIGN) is come_alongside, the crew rendezvous, never this verb. CAUTION: 'maneuver to <site>' is THIS verb, never set_heading — captain-speak 'maneuver to X' means GO THERE. BUT pointing is NOT traveling: 'turn to / point at / face / nose on wreck A' = set_heading absolute at its bearing from the state line, at ANY range — never the salvage verb. 'Break off' = set_thrust 0. Leave acknowledgement EMPTY — the ship speaks its own line.",
       "type": "object",
       "properties": {
         "target": {
@@ -702,7 +702,7 @@
       ]
     },
     "power": {
-      "description": "Light up or power down an INSTALLED module. INSTANT and FREE at any speed — the only constraint is reactor capacity (over capacity is rejected; the server never sheds something else to make room). Powered modules draw the reactor AND raise our signature (power IS noise). Use for: 'light up the array', 'power down the railgun', 'go dark on everything' (one power command per lit module, state off), 'kill the deep array'. Module ids: baffles, deep_array, railgun, mine_layer (armor_plate and probe_rack are passive — they work installed and cannot be powered; asking gets a reject that says so). NOTE: firing a COLD railgun does not need this verb — fire_railgun lights it automatically. Leave acknowledgement short; the noise change is visible on the captain's own ring.",
+      "description": "Light up or power down an INSTALLED module. INSTANT and FREE at any speed — the only constraint is reactor capacity (over capacity is rejected; the server never sheds something else to make room). Powered modules draw the reactor AND raise our signature (power IS noise). Use for: 'light up the array', 'power down the railgun', 'go dark on everything' (one power command per lit module, state off), 'kill the deep array'. Module ids: baffles, deep_array, railgun, mine_layer, drive_tune (armor_plate and probe_rack are passive — they work installed and cannot be powered; asking gets a reject that says so). NOTE: firing a COLD railgun does not need this verb — fire_railgun lights it automatically. Leave acknowledgement short; the noise change is visible on the captain's own ring.",
       "type": "object",
       "required": [
         "module",
@@ -716,7 +716,8 @@
             "railgun",
             "mine_layer",
             "armor_plate",
-            "probe_rack"
+            "probe_rack",
+            "drive_tune"
           ]
         },
         "state": {
@@ -751,7 +752,8 @@
             "railgun",
             "mine_layer",
             "armor_plate",
-            "probe_rack"
+            "probe_rack",
+            "drive_tune"
           ]
         }
       },
@@ -775,7 +777,8 @@
             "railgun",
             "mine_layer",
             "armor_plate",
-            "probe_rack"
+            "probe_rack",
+            "drive_tune"
           ]
         }
       },

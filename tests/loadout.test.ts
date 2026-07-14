@@ -268,4 +268,104 @@ const apply = (sim: Sim, ship: any, cmd: any): string | null =>
   void a;
 }
 
+// ===== The §5 + 6b leg: typed wrecks, the MP field, death hulks =========
+import { Match } from "../server/match.js";
+
+// 14. 🔴 the calibration pin SURVIVES the leg (Unification §3 — the proof
+// the unification did not silently rebalance a game people already love)
+{
+  const sim = new Sim();
+  for (const arch of ["corvette", "frigate", "cruiser"] as const) {
+    const sh = sim.addShip(arch, 0, 0, 0, false, null, arch, arch);
+    assert(
+      accelOf(sh) === C.ARCHETYPES[arch].accel && sim.signatureOf(sh) === C.ARCHETYPES[arch].sigBase,
+      `🔴 ${arch}: starting loadout + empty hold stays bit-identical to the book`
+    );
+  }
+}
+
+// 15. §5 typed pools: same seed = same field; loot matches the type;
+// the type rides the wire for marked sites FROM t=0 at any range
+{
+  const wrecks = (Match as any).generateWrecks("pin-seed", new Sim("pin-seed"), true);
+  assert(wrecks.length > 0 && wrecks.every((w: any) => w.marked), "MP field: every site marked (rumor semantics stay campaign)");
+  assert(wrecks.every((w: any) => ["military", "survey", "smuggler", "freighter", "derelict"].includes(w.type)), "every site typed");
+  for (const w of wrecks) {
+    const mods = w.items.filter((i: any) => i.kind === "module").map((i: any) => i.module);
+    if (w.type === "military") assert(mods.every((m: any) => ["railgun", "armor_plate", "mine_layer"].includes(m)), `military pool holds weapons (${w.letter})`);
+    if (w.type === "survey") assert(mods.every((m: any) => ["deep_array", "probe_rack"].includes(m)), `survey pool holds sensors (${w.letter})`);
+    if (w.type === "smuggler") assert(mods.every((m: any) => ["baffles", "drive_tune"].includes(m)), `smuggler pool holds stealth/speed (${w.letter})`);
+    if (w.type === "freighter") assert(mods.length === 0 && w.items.some((i: any) => i.kind === "ore"), `freighter carries ore, no module (${w.letter})`);
+  }
+  const again = (Match as any).generateWrecks("pin-seed", new Sim("pin-seed"), true);
+  assert(JSON.stringify(again) === JSON.stringify(wrecks), "same seed, same field — deterministic");
+}
+
+// 16. 6b: the MP field end to end — seed, see the type across the map,
+// salvage, land a module
+{
+  const sim = new Sim();
+  const a = sim.addShip("A", 0, 0, 0);
+  sim.addShip("B", 0, 200000, 180);
+  (sim as any).seedField([
+    {
+      id: 1, letter: "A", type: "survey", x: 0, y: 220000, marked: true, checked: false,
+      items: [{ kind: "module", amount: 1, module: "deep_array" }],
+    },
+  ]);
+  sim.tick();
+  const snap = sim.snapshotFor("A") as any;
+  assert(snap.wrecks.length === 1 && snap.wrecks[0].type === "survey", "🔴 the TYPE is on the wire at 220 km, t=0 — transit is a decision");
+  // teleport alongside and salvage (the mechanics are the campaign's own)
+  a.x = 0; a.y = 218000; a.vx = 0; a.vy = 0;
+  const err = (sim as any).applyCommand(a, { verb: "salvage", params: { target: "A" } }, []);
+  assert(err === null, `salvage verb legal in multiplayer (${err})`);
+  let landed = false;
+  for (let t = 0; t < 60 && !landed; t++) {
+    sim.tick();
+    landed = a.installed.includes("deep_array");
+  }
+  assert(landed, "the module lands and fits — the landing stop was the install");
+}
+
+// 17. 6b: death drops everything, in every mode — the hulk carries the deck
+{
+  const sim = new Sim();
+  const a = sim.addShip("A", 0, 0, 0); // frigate: railgun + probe_rack
+  const b = sim.addShip("B", 0, 30000, 180);
+  a.hold.push({ module: "deep_array" });
+  a.ore = 3;
+  a.vx = 500;
+  a.hull = 1;
+  const evs: any[] = [];
+  (sim as any).damageShip(a, 10, "missile", evs, "B");
+  const hulk = (sim as any).fieldWrecks.find((w: any) => w.type === "hulk");
+  assert(!!hulk, "🔴 an MP death leaves a hulk — the leader is the biggest prize");
+  const mods = hulk.items.filter((i: any) => i.kind === "module").map((i: any) => i.module).sort();
+  assert(
+    JSON.stringify(mods) === JSON.stringify(["deep_array", "probe_rack", "railgun"]),
+    `the WHOLE deck is aboard: installed + hold (${mods})`
+  );
+  assert(hulk.items.some((i: any) => i.kind === "ore" && i.amount === 3), "the ore too");
+  assert(Math.abs(hulk.vx - 500 * C.HULK_MOMENTUM_RETENTION) < 1e-9, "0.4 momentum retention, direction preserved");
+  assert(hulk.marked === true, "a death is loud — the hulk is public");
+  const bSnap = sim.snapshotFor("B") as any;
+  assert(bSnap.wrecks.some((w: any) => w.type === "hulk"), "and B sees the prize");
+}
+
+// 18. run-state round trip: the deck sanitizes and survives
+{
+  const raw = {
+    system: 3,
+    loadout: { installed: ["railgun", "bogus", "baffles"], hold: ["deep_array"], ore: 7.9 },
+    pools: { propellant: 100, missiles: 4, decoys: 2, pdcAmmoS: 30, hull: 80 },
+    totals: { huntersKilled: 2, salvaged: 9, pingsFired: 1, upgrades: 3, timeS: 600 },
+  };
+  const run = (Match as any).sanitizeRun(raw)!;
+  assert(run.loadout.installed.join(",") === "railgun,baffles", "invalid module ids are dropped, valid ones survive");
+  assert(run.loadout.ore === 8, "ore sanitizes to a finite integer");
+  assert(run.totals.modules === 3, "old saves' totals.upgrades migrates to totals.modules");
+  assert((Match as any).sanitizeRun({ system: 2 })!.loadout === null, "a bump-era save loses its bumps, keeps its run");
+}
+
 console.log("done: loadout");

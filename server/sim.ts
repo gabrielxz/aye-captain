@@ -253,6 +253,9 @@ export interface Ship {
   // §4 mine layer ammunition (granted per installed layer, no reloads)
   minesLeft: number;
   mineCooldownS: number;
+  // §6 ore: workshop feedstock, carried as raw MASS (units of ORE_UNIT_MASS
+  // in massOf). The refit verbs that spend it land next leg.
+  ore: number;
   // v5 §7 comms: per-channel anti-spam cooldowns
   commsCooldownBroadcastS: number;
   commsCooldownTightbeamS: number;
@@ -310,6 +313,27 @@ function cap1(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+// The Loadout: fixed salvage-landing lines, one per module x outcome —
+// bounded on purpose (the TTS economy law; every one is a stock line).
+export const MODULE_FITTED_LINES: Record<C.ModuleId, string> = {
+  baffles: "Engine baffles, Captain — fitted. We run quieter now.",
+  deep_array: "A deep array, Captain — fitted. We hear farther now.",
+  drive_tune: "Drive parts, Captain — fitted. She burns harder now.",
+  armor_plate: "Armor plate, Captain — fitted. She can take more now.",
+  railgun: "A railgun, Captain — fitted. She's got teeth now.",
+  mine_layer: "A mine layer, Captain — fitted. The chase becomes the trap.",
+  probe_rack: "A probe rack, Captain — fitted. More eyes to throw.",
+};
+export const MODULE_STOWED_LINES: Record<C.ModuleId, string> = {
+  baffles: "Engine baffles aboard, Captain — stowed. No room to fit them.",
+  deep_array: "A deep array aboard, Captain — stowed. No room to fit it.",
+  drive_tune: "Drive parts aboard, Captain — stowed. No room to fit them.",
+  armor_plate: "Armor plate aboard, Captain — stowed. No room to fit it.",
+  railgun: "A railgun aboard, Captain — stowed. No room to fit it.",
+  mine_layer: "A mine layer aboard, Captain — stowed. No room to fit it.",
+  probe_rack: "A probe rack aboard, Captain — stowed. No room to fit it.",
+};
+
 // Total missiles aboard: reserve + loaded tubes + missiles mid-reload (a
 // reloading tube already contains its missile).
 export function missilesAboard(ship: Ship): number {
@@ -335,14 +359,20 @@ export function countIn(list: C.ModuleId[], id: C.ModuleId): number {
 export function massOf(ship: Ship): number {
   const installed = ship.installed.reduce((s, m) => s + C.MODULES[m].mass, 0);
   const hold = ship.hold.reduce((s, it) => s + C.MODULES[it.module].mass, 0);
-  return C.ARCH_BASE_MASS[ship.archetype] + installed + hold;
+  return C.ARCH_BASE_MASS[ship.archetype] + installed + hold + ship.ore * C.ORE_UNIT_MASS;
 }
 
 // §1: accel = thrustForce / mass, turn = turnTorque / mass. Braking
 // distance (v²/2a) and gate lateral authority follow automatically —
 // a loaded ship has a harder gate, and that is intended.
 export function accelOf(ship: Ship): number {
-  return (C.ARCH_THRUST_FORCE[ship.archetype] * ship.accelMult) / massOf(ship);
+  // drive tune (cc ruling 1): +15% thrust force per LIT tune — the accel
+  // bump, now priced in mass and noise. accelMult stays as the Hunter
+  // difficulty knob (players no longer touch it).
+  const tunes = countIn(ship.powered, "drive_tune");
+  const force =
+    C.ARCH_THRUST_FORCE[ship.archetype] * ship.accelMult * Math.pow(C.DRIVE_TUNE_THRUST_MULT, tunes);
+  return force / massOf(ship);
 }
 export function turnRateOf(ship: Ship): number {
   return C.ARCH_TURN_TORQUE[ship.archetype] / massOf(ship);
@@ -548,17 +578,24 @@ export interface SalvageItem {
   // generators no longer deal it (playtest: the tank caps at 100 and the
   // low-throttle regen refills free — fuel salvage was dead weight). Probes took
   // its slot: consumable, stackable, and the Hunter spends them too.
-  kind: "propellant" | "missiles" | "pdc_ammo" | "hull" | "decoys" | "probes" | "upgrade";
+  kind: "propellant" | "missiles" | "pdc_ammo" | "hull" | "decoys" | "probes" | "module" | "ore";
   amount: number;
-  upgrade?: "sig" | "sensor" | "accel" | "hull";
+  module?: C.ModuleId; // kind "module": which one (cc ruling 1 — bumps are dead)
 }
 // A wreck: a known location where a ship will predictably be, stationary,
 // for thirty seconds (§4.3). marked = public knowledge, WATCHED by the
 // Hunter; rumored = the player's private lead — the Hunter never learns it.
 // checked: the player has been close enough to eyeball a rumor (contents
 // revealed, or the dry hole discovered and struck off the map).
+export type WreckType = "military" | "survey" | "smuggler" | "freighter" | "derelict" | "hulk";
 export interface Wreck {
   id: number;
+  // Loadout §5: the TYPE is what makes transit a decision — visible from
+  // across the system on MARKED sites (any range, t=0); a RUMOR's type
+  // stays unknown until checked (Patch 1 rules; the Hunter doesn't know
+  // either). Hulks are their own type: somebody's whole deck, adrift.
+  // Optional so hand-built test fields stay valid; generators always set it.
+  type?: WreckType;
   letter: string; // fixed site designation ("A".."H") — plain letters, NOT
   // the NATO words: "Bravo" belongs to hostile contact designations and
   // "salvage Bravo" must never collide with "lock up Bravo"
@@ -600,16 +637,12 @@ export interface Mission {
   salvaging: Record<ShipId, { wreckId: number; t: number }>;
   cleared: boolean; // aperture crossed — the system is over (transition or final win)
   // run bookkeeping for the §9 summary + §6 progression export
-  stats: { huntersKilled: number; salvaged: number; pingsFired: number; upgrades: number };
+  stats: { huntersKilled: number; salvaged: number; pingsFired: number; modules: number };
   // everything that came aboard THIS system, in landing order — the run
   // map's manifest (playtest: "the end screen didn't tell me what I got")
   haul: SalvageItem[];
   // the decoy doctrine line fires at most once per system (teach, don't nag)
   decoyTaught: boolean;
-  // modules collected THIS system, by kind — the Match folds them into the
-  // run state at system clear (counts, not multipliers: the client's
-  // localStorage carries counts and the server re-derives the multipliers)
-  upgradeCounts: { sig: number; sensor: number; accel: number; hull: number };
   // gate-solution XO bookkeeping (edge-triggered, rate-limited, per captain
   // — each ship flies its own approach)
   solGood: Record<ShipId, boolean>;
@@ -755,6 +788,27 @@ export class Sim {
   tickCount = 0;
   // Campaign (Deep Black): null on every multiplayer sim.
   mission: Mission | null = null;
+  // The Loadout 6b: the FIELD — wrecks + per-captain salvage clocks —
+  // is Sim-level now (multiplayer maps have wrecks too). Campaign
+  // missions own their arrays (run persistence + every existing test
+  // builds them there); these accessors give all consumers one path.
+  private fieldWrecks: Wreck[] = [];
+  private fieldSalvaging: Record<ShipId, { wreckId: number; t: number }> = {};
+  get wrecks(): Wreck[] {
+    return this.mission ? this.mission.wrecks : this.fieldWrecks;
+  }
+  get salvaging(): Record<ShipId, { wreckId: number; t: number }> {
+    return this.mission ? this.mission.salvaging : this.fieldSalvaging;
+  }
+  seedField(wrecks: Wreck[]): void {
+    this.fieldWrecks = wrecks;
+  }
+  // who can run a salvage: mission players in campaign, every human
+  // hull in multiplayer (drones don't loot)
+  private salvagers(): Ship[] {
+    if (this.mission) return this.missionPlayers();
+    return [...this.ships.values()].filter((sh) => !sh.isDrone);
+  }
   // Ship id in FFA, team name in Teams mode; set when hostilities end.
   winner: string | null = null;
   // Death order (first element died first). Ghost scuttles count as deaths.
@@ -867,6 +921,7 @@ export class Sim {
       refit: null,
       minesLeft: C.STARTING_LOADOUT[archetype].includes("mine_layer") ? C.MINE_SUPPLY : 0,
       mineCooldownS: 0,
+      ore: 0,
       commsCooldownBroadcastS: 0,
       commsCooldownTightbeamS: 0,
       sigSpikeRail: 0,
@@ -1362,15 +1417,16 @@ export class Sim {
         // it at RUMOR_RESOLVE_RANGE_M en route (loot -> he docks and runs the
         // transfer; dry -> he calls it and the maneuver ends). Any
         // thrust/heading order aborts; landed items stay aboard.
-        const m = this.mission;
-        if (!m || !this.isMissionPlayer(ship.id)) return "Nothing to salvage out here, Captain.";
+        // 6b: legal in EVERY mode with wrecks on the board (drones excluded)
+        const sites = this.wrecks;
+        if (ship.isDrone || sites.length === 0) return "Nothing to salvage out here, Captain.";
         const isCandidate = (w: Wreck) => w.items.length > 0 || (!w.marked && !w.checked);
         const noun = (w: Wreck) => (w.marked || w.checked ? "Wreck" : "Rumor");
         let target: Wreck | undefined;
         const ref = String(cmd.params.target ?? "").trim().toUpperCase();
         const letter = ref.match(/([A-Z])\s*$/)?.[1];
         if (letter) {
-          target = m.wrecks.find((w) => w.letter === letter);
+          target = sites.find((w) => w.letter === letter);
           if (!target) return `No site lettered ${letter} on the board, Captain.`;
           if (!isCandidate(target)) {
             // a stripped WRECK vs a rumor that turned out to be nothing —
@@ -1385,7 +1441,7 @@ export class Sim {
             return `${noun(target)} ${letter} is too far out, Captain — get us inside fifteen klicks and I'll take her in.`;
           }
         } else {
-          const cand = m.wrecks
+          const cand = sites
             .filter(isCandidate)
             .map((w) => ({ w, d: dist(ship.x, ship.y, w.x, w.y) }))
             .sort((a, b) => a.d - b.d)[0];
@@ -2504,18 +2560,21 @@ export class Sim {
     // pack systems the surviving partner will patrol it, which is correct).
     if (this.mission && target.hunterAI) {
       this.mission.stats.huntersKilled += 1;
-      const cycle: ("sig" | "sensor" | "accel" | "hull")[] = ["sig", "sensor", "accel", "hull"];
+      // cc ruling 1: the bounty is MODULES now (the Anvil §2 placeholder
+      // said Patch 5 would do exactly this — no bespoke loot category).
+      // Deterministic cycle by kill count: no RNG in a death handler, and
+      // the tests stay stable. Worst → best: the second module is the
+      // reason to stay aboard a hold that's dragging you off the map.
+      const cycle: C.ModuleId[] = ["baffles", "deep_array", "drive_tune", "armor_plate", "mine_layer", "railgun"];
       const k = this.mission.stats.huntersKilled;
       // Anvil §3: the Hunter dies into a HULK — a drifting wreck carrying
       // exactly the velocity he had when he died (no static wreck, no
       // teleported loot). Anvil §2: the hold is THE BOUNTY — the richest
-      // loot in the system, a large multiple of the best generated hold
-      // (Patch-1 placeholder; Patch 5 replaces this with modules — no
-      // bespoke loot category). Worst → best: the second module is the
-      // reason to stay aboard a hold that's dragging you off the map.
+      // loot in the system.
       this.mission.wrecks.push({
         id: this.nextId++,
         letter: String.fromCharCode(65 + this.mission.wrecks.length), // next free letter
+        type: "hulk",
         x: target.x,
         y: target.y,
         // 1.1 §1a: the breach spends most of his momentum — direction
@@ -2528,30 +2587,43 @@ export class Sim {
           { kind: "pdc_ammo", amount: 60 },
           { kind: "decoys", amount: 4 },
           { kind: "missiles", amount: 4 },
-          { kind: "probes", amount: 4 },
-          { kind: "upgrade", amount: 1, upgrade: cycle[(k - 1) % 4] },
-          { kind: "upgrade", amount: 1, upgrade: cycle[k % 4] },
+          { kind: "ore", amount: 4 },
+          { kind: "module", amount: 1, module: cycle[(k - 1) % cycle.length] },
+          { kind: "module", amount: 1, module: cycle[k % cycle.length] },
         ],
       });
     }
-    // Patch 2 §4a: a dead CO-OP captain's ship becomes a hulk carrying
-    // their entire hold, at their death velocity, under every 1.1 hulk
-    // rule (momentum retention, rock collision, shroud current) — your
-    // friend's cargo is floating out there and you can go get it. Marked:
-    // the partner watched it happen, and the Hunter patrols marked wrecks
-    // (correct — the corpse becomes a trap). Solo death ends the run;
-    // no wreck for nobody.
-    if (this.mission && this.mission.playerIds.length > 1 && this.mission.playerIds.includes(target.id)) {
+    // Amendment §0/§2 (generalizes Patch 2 §4a): EVERY non-drone death, in
+    // EVERY mode, becomes a hulk carrying the whole deck — installed
+    // modules, hold, ore, consumables — at 0.4 death-v under all 1.1 hulk
+    // rules. Death drops everything; the leader is simultaneously the
+    // biggest target and the biggest prize, and that economy self-corrects
+    // with ZERO catch-up mechanics. Solo campaign stays the exception
+    // (the run ends; no wreck for nobody). Marked: a death is loud.
+    const soloCampaignDeath =
+      this.mission !== null &&
+      this.mission.playerIds.length === 1 &&
+      this.mission.playerIds.includes(target.id);
+    if (!target.isDrone && !target.hunterAI && !soloCampaignDeath) {
       const items: SalvageItem[] = [];
       if (target.pdcAmmoS >= 1) items.push({ kind: "pdc_ammo", amount: Math.round(target.pdcAmmoS) });
       if (target.decoys > 0) items.push({ kind: "decoys", amount: target.decoys });
       if (target.probesLeft > 0) items.push({ kind: "probes", amount: target.probesLeft });
       const msl = missilesAboard(target);
       if (msl > 0) items.push({ kind: "missiles", amount: msl });
+      if (target.ore > 0) items.push({ kind: "ore", amount: target.ore });
+      // the deck itself, worst-first by mass so the best card is the
+      // reason to stay: hold cargo first, then the installed systems
+      const deck = [
+        ...target.hold.map((it) => it.module),
+        ...target.installed,
+      ].sort((a, b) => C.MODULES[a].mass - C.MODULES[b].mass);
+      for (const mod of deck) items.push({ kind: "module", amount: 1, module: mod });
       if (items.length > 0) {
-        this.mission.wrecks.push({
+        this.wrecks.push({
           id: this.nextId++,
-          letter: String.fromCharCode(65 + this.mission.wrecks.length),
+          letter: String.fromCharCode(65 + this.wrecks.length),
+          type: "hulk",
           x: target.x,
           y: target.y,
           vx: target.vx * C.HULK_MOMENTUM_RETENTION,
@@ -3183,7 +3255,10 @@ export class Sim {
         this.stepGateClose(events); // Anvil §4 — the vise turns before the XO reads the solution
         this.updateGateXO(events);
         this.stepRumors(events);
-        this.stepSalvage(events);
+      }
+      // 6b: the FIELD machinery runs in every mode with wrecks aboard
+      if (this.wrecks.length > 0) this.stepSalvage(events);
+      if (this.mission) {
         this.stepAlongside(events); // Patch 2 §6 — crew stores transfer
         this.stepLoudness(events); // Patch 2 §3a — the bait-play read, spoken
       }
@@ -3228,8 +3303,8 @@ export class Sim {
     // flows inward, an unpowered body is dragged toward that flow, and the
     // corpse is walked back home arriving near-zero. Ships are unaffected
     // — engines fight currents (applyBounds keeps the EDGE_PULL model).
-    if (this.mission) {
-      for (const w of this.mission.wrecks) {
+    if (this.wrecks.length > 0) {
+      for (const w of this.wrecks) {
         // skip static sites AT HOME — but a wreck sitting outside the rim
         // stays in the current's hands even at exactly zero velocity (the
         // entrainment step can land on 0.0 dead; it must not freeze there)
@@ -4665,7 +4740,7 @@ export class Sim {
     if (!ship.maneuver) return;
     const mtype = ship.maneuver.type;
     ship.maneuver = null;
-    if (mtype === "salvage" && this.mission) delete this.mission.salvaging[ship.id];
+    if (mtype === "salvage") delete this.salvaging[ship.id];
     if (!ship.isDrone) {
       events.push({
         kind: "notice",
@@ -4835,7 +4910,7 @@ export class Sim {
         if (ship.propellant <= 0) {
           ship.maneuver = null;
           ship.thrust = 0;
-          if (this.mission) delete this.mission.salvaging[ship.id];
+          delete this.salvaging[ship.id];
           events.push({ kind: "notice", ship: ship.id, text: "Tanks dry — I can't finish the stop, Captain.", alert: true });
           return;
         }
@@ -4869,7 +4944,7 @@ export class Sim {
     if (ship.propellant <= 0) {
       ship.maneuver = null;
       ship.thrust = 0;
-      if (this.mission) delete this.mission.salvaging[ship.id];
+      delete this.salvaging[ship.id];
       events.push({
         kind: "notice",
         ship: ship.id,
@@ -5433,25 +5508,28 @@ export class Sim {
   // pauses it (the clock, not the loot, is what's at risk — landed items
   // are already aboard).
   private stepSalvage(events: SimEvent[]): void {
-    const m = this.mission!;
-    for (const player of this.missionPlayers()) {
+    // 6b: runs in EVERY mode with wrecks on the board. Campaign missions
+    // own their arrays (this.wrecks/this.salvaging delegate); multiplayer
+    // uses the Sim-level field. Salvagers: mission players in campaign,
+    // every human hull in multiplayer.
+    for (const player of this.salvagers()) {
       const man = player.maneuver;
       if (!man || man.type !== "salvage") {
-        delete m.salvaging[player.id];
+        delete this.salvaging[player.id];
         continue;
       }
-      const wreck = m.wrecks.find((w) => w.id === man.wreckId);
+      const wreck = this.wrecks.find((w) => w.id === man.wreckId);
       if (!wreck || wreck.items.length === 0) {
         player.maneuver = null;
-        delete m.salvaging[player.id];
+        delete this.salvaging[player.id];
         continue;
       }
       if (dist(player.x, player.y, wreck.x, wreck.y) > C.SALVAGE_DOCK_RANGE_M) {
         // out of dock range: an ACTIVE transfer breaks (we drifted off);
         // a not-yet-started one is just the XO still flying the approach
-        if (m.salvaging[player.id]) {
+        if (this.salvaging[player.id]) {
           player.maneuver = null;
-          delete m.salvaging[player.id];
+          delete this.salvaging[player.id];
           events.push({ kind: "notice", ship: player.id, text: "We've drifted off the wreck, Captain." });
         }
         continue;
@@ -5466,10 +5544,10 @@ export class Sim {
       )
         continue; // still matching velocity
       if (!wreck.checked) wreck.checked = true; // docking is the closest look there is
-      let sv = m.salvaging[player.id];
+      let sv = this.salvaging[player.id];
       if (!sv || sv.wreckId !== wreck.id) {
         sv = { wreckId: wreck.id, t: 0 };
-        m.salvaging[player.id] = sv;
+        this.salvaging[player.id] = sv;
         // the count sets the captain's expectations up front (playtest:
         // "I wasn't sure how long the process was going to take")
         events.push({
@@ -5484,12 +5562,12 @@ export class Sim {
       sv.t = 0;
       const item = wreck.items.shift()!; // worst first — the last item is the reason to stay
       this.applySalvageItem(player, item, events);
-      m.stats.salvaged += 1;
+      if (this.mission) this.mission.stats.salvaged += 1;
       if (wreck.items.length === 0) {
         player.maneuver = null;
-        delete m.salvaging[player.id];
+        delete this.salvaging[player.id];
         events.push({ kind: "notice", ship: player.id, text: "That's the last of it — wreck's stripped, Captain." });
-      } else if (wreck.items[wreck.items.length - 1].kind === "upgrade" && wreck.items.length === 1) {
+      } else if (wreck.items[wreck.items.length - 1].kind === "module" && wreck.items.length === 1) {
         // the §4.2 teaser: you are stationary, listening to a rumble grow,
         // deciding whether the last item is worth it
         events.push({ kind: "notice", ship: player.id, text: "There's something else in here, Captain — big. Stay put." });
@@ -5498,7 +5576,7 @@ export class Sim {
   }
 
   private applySalvageItem(ship: Ship, item: SalvageItem, events: SimEvent[]): void {
-    this.mission!.haul.push(item);
+    if (this.mission) this.mission.haul.push(item); // the campaign manifest
     const say = (text: string) => events.push({ kind: "notice", ship: ship.id, text });
     switch (item.kind) {
       case "propellant":
@@ -5535,25 +5613,26 @@ export class Sim {
         }
         ship.hull = Math.min(hullMaxOf(ship), ship.hull + item.amount);
         break;
-      case "upgrade": {
-        // §6: one permanent (per-run) stat module — applied to the ship
-        // NOW and exported with the run state at system clear
-        const u = item.upgrade ?? "sig";
-        if (u === "sig") ship.sigMult *= C.UPGRADE_SIG_MULT;
-        if (u === "sensor") ship.sensorMult *= C.UPGRADE_SENSOR_MULT;
-        if (u === "accel") ship.accelMult *= C.UPGRADE_ACCEL_MULT;
-        if (u === "hull") ship.hullMult *= C.UPGRADE_HULL_MULT;
-        this.mission!.stats.upgrades += 1;
-        this.mission!.upgradeCounts[u] += 1;
-        say(
-          u === "sig"
-            ? "Engine baffles, Captain — fitted. We run quieter now."
-            : u === "sensor"
-              ? "A sensor suite, Captain — fitted. We hear farther now."
-              : u === "accel"
-                ? "Drive parts, Captain — fitted. She burns harder now."
-                : "Armor plate, Captain — fitted. She can take more now."
-        );
+      case "module": {
+        // cc ruling 1: wrecks drop MODULES, never stat bumps. Amendment §4:
+        // the landing stop WAS the install — slot + headroom fits it
+        // directly; otherwise it's cargo in the hold. Fixed lines per
+        // module x outcome (bounded — the TTS economy law).
+        const id = item.module ?? "baffles";
+        const landed = this.landModule(ship, id);
+        if (this.mission) this.mission.stats.modules += 1;
+        if (landed === "installed") {
+          say(MODULE_FITTED_LINES[id]);
+        } else {
+          say(MODULE_STOWED_LINES[id]);
+        }
+        break;
+      }
+      case "ore": {
+        // §6 feedstock (repair/rearm/refine land with the refit verbs).
+        // Ore is MASS — hoarding it slows you down, and that's the bet.
+        ship.ore += item.amount;
+        say("Ore aboard, Captain — feedstock for the workshop, and every ton slows us.");
         break;
       }
     }
@@ -5786,6 +5865,29 @@ export class Sim {
     // campaign: the mission picture — the gate is a landmark the XO must
     // be able to talk about (playtest 2026-07-12: "I referenced the gate
     // and the XO thought I meant an enemy contact")
+    // 6b: the MULTIPLAYER field — same board, same verb, spoken the same
+    // way (all sites marked; the TYPE is the decision: "is that module
+    // worth going loud for?")
+    if (!this.mission && this.wrecks.length > 0) {
+      const live = this.wrecks.filter((w) => w.items.length > 0);
+      if (live.length > 0) {
+        lines.push(
+          `Salvage on the board: ${live
+            .map(
+              (w) =>
+                `${w.type && w.type !== "hulk" ? `${w.type} wreck` : w.type === "hulk" ? "hulk" : "wreck"} ${w.letter}: bearing ${fmtBearing(bearingTo(ship.x, ship.y, w.x, w.y))}, ${(dist(ship.x, ship.y, w.x, w.y) / 1000).toFixed(0)} km (${w.items.length} items)`
+            )
+            .join("; ")}. Within ${C.SALVAGE_APPROACH_RANGE_M / 1000} km the salvage verb (target = the letter) flies the whole approach and transfer. Salvaging means a FULL STOP — loud on approach, helpless alongside; treat it as bait for everyone listening.`
+        );
+      }
+      const sv = this.salvaging[id];
+      if (sv) {
+        const left = this.wrecks.find((w) => w.id === sv.wreckId)?.items.length ?? 0;
+        lines.push(
+          `SALVAGE TRANSFER RUNNING: next item in ${Math.max(0, C.SALVAGE_ITEM_S - sv.t)}s, ${left} left aboard the wreck. Any thrust or heading order breaks off (we keep what's landed).`
+        );
+      }
+    }
     if (this.isMissionPlayer(id)) {
       const m = this.mission!;
       const gBearing = fmtBearing(bearingTo(ship.x, ship.y, m.gate.x, m.gate.y));
@@ -5865,7 +5967,7 @@ export class Sim {
                 return `${C.MODULES[m].name} ${C.MODULES[m].power === 0 ? "(passive)" : on ? "(LIT, draw " + C.MODULES[m].power + ")" : "(cold)"}`;
               })
               .join(", ")
-      }. Hold: ${ship.hold.length === 0 ? "empty" : ship.hold.map((it) => C.MODULES[it.module].name).join(", ") + " (dead weight until installed)"}${countIn(ship.installed, "mine_layer") > 0 ? `. Mines: ${ship.minesLeft}` : ""}${ship.refit ? `. WORKSHOP: ${ship.refit.action}ing ${C.MODULES[ship.refit.module].name}, ${Math.max(0, C.MODULE_INSTALL_S - ship.refit.t)}s left (any thrust aborts)` : ""}.`
+      }. Hold: ${ship.hold.length === 0 ? "empty" : ship.hold.map((it) => C.MODULES[it.module].name).join(", ") + " (dead weight until installed)"}${ship.ore > 0 ? `. Ore aboard: ${ship.ore} units (${ship.ore} mass of feedstock)` : ""}${countIn(ship.installed, "mine_layer") > 0 ? `. Mines: ${ship.minesLeft}` : ""}${ship.refit ? `. WORKSHOP: ${ship.refit.action}ing ${C.MODULES[ship.refit.module].name}, ${Math.max(0, C.MODULE_INSTALL_S - ship.refit.t)}s left (any thrust aborts)` : ""}.`
     );
     const painted = this.paintedState(ship);
     lines.push(
@@ -6451,14 +6553,14 @@ export class Sim {
                 // there is no jettison and no mass (a ledger, not a bay).
                 hold: (() => {
                   const agg = new Map<string, number>();
-                  const upgrades: string[] = [];
+                  const modules: C.ModuleId[] = [];
                   for (const it of this.mission!.haul) {
-                    if (it.kind === "upgrade") upgrades.push(it.upgrade ?? "sig");
+                    if (it.kind === "module") modules.push(it.module ?? "baffles");
                     else agg.set(it.kind, (agg.get(it.kind) ?? 0) + it.amount);
                   }
                   return [
                     ...[...agg].map(([kind, n]) => ({ kind, n })),
-                    ...upgrades.map((u) => ({ kind: "upgrade", upgrade: u, n: 1 })),
+                    ...modules.map((mod) => ({ kind: "module", module: mod, n: 1 })),
                   ];
                 })(),
                 // this viewer's OWN transfer clock (per-captain in co-op)
@@ -6511,26 +6613,27 @@ export class Sim {
             }
           : {}),
       },
-      // campaign wrecks: landmarks, not contacts — the player knows where
-      // every site is (§4.4: MARKED sites have reliable known contents;
-      // RUMORED sites hide their haul until CHECKED by presence — `items`
-      // is a count once known, null for unresolved rumors). A dry hole
-      // stays on the map until visited: the rumor of a place is real even
-      // when the loot isn't.
-      ...(this.isMissionPlayer(id)
-        ? {
-            wrecks: this.mission!.wrecks
-              .filter((w) => w.items.length > 0 || (!w.marked && !w.checked))
-              .map((w) => ({
-                id: w.id,
-                letter: w.letter,
-                x: w.x,
-                y: w.y,
-                marked: w.marked,
-                items: w.marked || w.checked ? w.items.length : null,
-              })),
-          }
-        : {}),
+      // wrecks: landmarks, not contacts — the player knows where every
+      // site is (§4.4: MARKED sites have reliable known contents; RUMORED
+      // sites hide their haul until CHECKED by presence — `items` is a
+      // count once known, null for unresolved rumors). A dry hole stays on
+      // the map until visited: the rumor of a place is real even when the
+      // loot isn't. 6b: EVERY mode now — the multiplayer map has wrecks
+      // (objectives, Schelling points, looting-is-bait). Loadout §5: the
+      // TYPE rides the wire for marked/checked sites at ANY range, from
+      // t=0 — "is that module worth going loud for?" is the whole flight's
+      // question. Unresolved rumors keep their type to themselves.
+      wrecks: this.wrecks
+        .filter((w) => w.items.length > 0 || (!w.marked && !w.checked))
+        .map((w) => ({
+          id: w.id,
+          letter: w.letter,
+          x: w.x,
+          y: w.y,
+          marked: w.marked,
+          items: w.marked || w.checked ? w.items.length : null,
+          ...(w.type && (w.marked || w.checked) ? { type: w.type } : {}),
+        })),
       contacts,
       // v5 §8 transponders: full state, always (own equipment class).
       // Patch 2 §3: + propellant and SIGNATURE — sig is the critical field
@@ -6707,6 +6810,18 @@ export class Sim {
       mines: this.mines.map((mn) => ({
         id: mn.id, x: mn.x, y: mn.y, armed: mn.armS <= 0, owner: mn.owner, own: mn.owner === "A",
       })),
+      // 6b: the field, fully typed — rumors included (omniscient referee)
+      wrecks: this.wrecks
+        .filter((w) => w.items.length > 0 || (!w.marked && !w.checked))
+        .map((w) => ({
+          id: w.id,
+          letter: w.letter,
+          x: w.x,
+          y: w.y,
+          marked: w.marked,
+          items: w.items.length,
+          ...(w.type ? { type: w.type } : {}),
+        })),
       fx: this.fx,
     };
   }

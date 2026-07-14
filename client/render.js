@@ -1096,10 +1096,14 @@ function drawWrecks() {
     // its count (or vanishes, if it was a dry hole — the server stops
     // sending it)
     ctx.font = "9px 'Share Tech Mono', monospace";
+    // Loadout §5: the TYPE is readable from across the system — "is that
+    // module worth going loud for?" is the whole flight's question. A
+    // rumor keeps its "?" until presence resolves it (Patch 1 rules).
+    const noun = w.type === "hulk" ? "hulk" : w.type ? `${w.type} wreck` : "wreck";
     const tag = w.marked
-      ? `wreck ${w.letter} ·${w.items}`
+      ? `${noun} ${w.letter} ·${w.items}`
       : w.items !== null
-        ? `rumor ${w.letter} ·${w.items}`
+        ? `${w.type ? `${w.type} ` : ""}rumor ${w.letter} ·${w.items}`
         : `rumor ${w.letter} ·?`;
     labelText(inRange ? `${tag} — in range` : tag, sx + 8, sy + 3, color, inRange ? 1 : 0.75);
   }

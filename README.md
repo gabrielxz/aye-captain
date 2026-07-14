@@ -106,7 +106,18 @@ be going somewhere — not both.
   railgun must be lit to fire — a cold rail lights itself on the fire
   order and stays humming until powered down. A lit mine layer drops
   station-keeping proximity mines (IFF-safe, near-silent, found at knife
-  range) — the chase becomes the trap.
+  range) — the chase becomes the trap; PDCs clear them only on FREE, and
+  loudly. Modules come off **typed wrecks** on every map — multiplayer
+  included: military/survey/smuggler/freighter and a rare derelict, the
+  type readable from across the system, salvaged with a full stop
+  (looting is bait). A landed module installs on the spot if a slot and
+  reactor headroom are free, else it rides the hold as cargo; freighters
+  drop ore (workshop feedstock, raw mass meanwhile). **Death drops
+  everything**: any destroyed ship becomes a lootable hulk carrying its
+  whole deck at 0.4 death velocity — the leader is the biggest prize,
+  and that economy polices itself with zero catch-up mechanics. In the
+  campaign, the deck (not stat bumps — those are gone) is the run: it
+  persists across systems in your run state.
 - **Contacts have names**: your XO designates hostile tracks in acquisition
   order — "Contact Alpha", "Contact Bravo" (decoys get letters too; you
   can't tell). At ID range a track resolves to the ship's permanent

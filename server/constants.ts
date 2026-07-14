@@ -82,7 +82,8 @@ export type ModuleId =
   | "railgun"
   | "mine_layer"
   | "armor_plate"
-  | "probe_rack";
+  | "probe_rack"
+  | "drive_tune";
 export interface ModuleSpec {
   name: string; // display + XO vocabulary
   mass: number;
@@ -98,6 +99,9 @@ export const MODULES: Record<ModuleId, ModuleSpec> = {
   mine_layer: { name: "mine layer", mass: 3, power: 1 }, // drop mines while powered — the chase becomes the trap
   armor_plate: { name: "armor plate", mass: 5, power: 0 }, // +hull, pure mass — proves the cost
   probe_rack: { name: "probe rack", mass: 2, power: 0 }, // +probes, passive
+  // cc ruling 1: the accel stat-bump's priced replacement (the migration
+  // table pulls Drive Tune forward from the full catalog)
+  drive_tune: { name: "drive tune", mass: 1, power: 2 }, // +15% thrust force while lit
 };
 // Amendment §3: hardcoded archetype capabilities become starting loadouts.
 // Corvette: no railgun — exactly as today. Frigate/Cruiser: railgun aboard.
@@ -120,6 +124,7 @@ export const POWER_TO_SIG = 8;
 export const BAFFLES_SIG_MULT = 0.75; // −25% TOTAL signature while powered
 export const DEEP_ARRAY_SENSOR_MULT = 1.6; // +60% sensor range while powered
 export const ARMOR_PLATE_HULL = 40; // +hull per installed plate (passive)
+export const DRIVE_TUNE_THRUST_MULT = 1.15; // per lit drive tune
 // ⚠️ DEVIATION from the base doc's "+4 probes": the frigate STARTS with a
 // rack, and the amendment's non-regression law pins its spawn probes at
 // the book's 2 — base-minus-effect derivation forces the rack's grant to
@@ -130,6 +135,8 @@ export const RAIL_SLUGS_LOOTED = 20; // magazine granted by a looted railgun (fr
 // stop (same threshold as salvage) and takes real time; any thrust
 // command aborts and loses that module's progress.
 export const MODULE_INSTALL_S = 60;
+// §6 ore: feedstock, not currency — no shop, ever. One unit = one mass.
+export const ORE_UNIT_MASS = 1;
 // §4 mines (mine layer): a dropped mine station-keeps where it's laid
 // (cold-gas trim — a drifting mine would just follow its layer). Sensor
 // rules apply to it like all ordnance (invariant 9); prox fuse carries
@@ -732,14 +739,11 @@ export const RUMOR_RESOLVE_RANGE_M = 5000;
 // The XO flies the whole terminal approach: name a site inside this and
 // "come alongside wreck B" is one command. THE one ring drawn per site.
 export const SALVAGE_APPROACH_RANGE_M = 15000;
-// Progression is a multiplier table over constants that already exist (§6)
-// — no tech tree. −signature is deliberately the strongest lever in the
-// game (it directly degrades the Hunter's advantage; the economy teaches
-// the player what the game is about).
-export const UPGRADE_SIG_MULT = 0.92; // per module: player sigMult *= this
-export const UPGRADE_SENSOR_MULT = 1.08;
-export const UPGRADE_ACCEL_MULT = 1.08;
-export const UPGRADE_HULL_MULT = 1.12;
+// Progression (cc ruling 1, 2026-07-14): THE STAT BUMPS ARE DEAD — a free
+// upgrade lane would poison the loadout's one law ("everything you run
+// makes noise"). Horizontal progression = MODULES, found on wrecks and
+// priced in mass + draw. Vertical progression = refine, Mk I → Mk II,
+// bought with ore (§6, next leg). No third, free axis — do not re-add.
 
 // --- Stage 2: the ladder (§3). A TABLE, not a formula — each system adds
 // exactly ONE new problem, discrete and learnable ("system five is when
