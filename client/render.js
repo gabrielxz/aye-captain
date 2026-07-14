@@ -1,6 +1,7 @@
 // canvas draw loop w/ interpolation, camera (zoom/pan/follow), SVG ship
-// sprites, parallax starfield, range rings, overview inset, particles
+// sprites, parallax starfield, voice/ears rings, overview inset, particles
 import { state } from "./main.js";
+import { ringState } from "./rings-model.js";
 
 const canvas = document.getElementById("map");
 const ctx = canvas.getContext("2d");
@@ -198,9 +199,9 @@ document.addEventListener("keydown", (e) => {
   } else if (k === "v") {
     vectorLatched = !vectorLatched; // local toggle, no XO round-trip
   } else if (k === "b") {
-    // bearing compass on the 50 km ring (player request 2026-07-12).
-    // B, not Alt: bare Alt focuses the browser menu bar and Alt-combos
-    // are OS shortcuts.
+    // bearing compass (player request 2026-07-12; screen-space since
+    // Patch 3.5). B, not Alt: bare Alt focuses the browser menu bar and
+    // Alt-combos are OS shortcuts.
     compassOn = !compassOn;
     localStorage.setItem("compass", compassOn ? "1" : "0");
   }
@@ -652,42 +653,96 @@ function drawGrid() {
   ctx.stroke();
 }
 
-// Single range ring around own ship at 50 km — the map's only ruler, and
-// (post v4.3 sensor rebase) roughly where a dark ship gets spotted. Kept
-// labeled and kept AS AN ARRAY so a future playtest can re-add or delete
-// rings in one line (v4.3 §4). The 10 and 100 km rings read as mystery
-// circles in the playtest and are gone.
-const RANGE_RINGS_M = [50000];
-// Bearing compass (toggle: B) — the 50 km ring becomes a protractor:
-// degree ticks + labels, and the current RUMBLE bearings pinned to it so
-// crossing bearings stops being mental math. Pure presentation: every
-// number drawn here is already the player's information.
-let compassOn = localStorage.getItem("compass") === "1";
+// Patch 3.5: the 50 km ring is GONE from the main view — every new player
+// read it as a sensor range, and they were right to (the addendum: when
+// every user makes the same mistake, the interface is telling you what it
+// should have been). Its ruler job moved to the inset (drawInset); its
+// protractor job moved to the screen-space compass below. In its place,
+// the two rings that ARE the game:
+//   VOICE — soft filled coral disc: where the book's sensor hears US.
+//           Breathes with throttle — the motion is the tutorial.
+//   EARS  — dashed teal outline: where WE hear the book's contact.
+// Both are ESTIMATES against reference constants (server-derived,
+// you.rings) — soft gradient edges on purpose; they must LOOK like
+// estimates. States from rings-model.js (pure, fog-safe by signature).
+const RING_STYLES = {
+  quiet: { disc: "240, 135, 106", rim: 0.28, fill: 0.05 }, // coral, at ease
+  crossover: { disc: "252, 129, 129", rim: 0.45, fill: 0.09 }, // hotter: they hear us first
+  contact: { disc: "255, 99, 71", rim: 0.7, fill: 0.13 }, // a known contact is inside our voice
+};
+// client-side smoothing so the disc BREATHES between 4 Hz snapshots
+let voiceDrawnM = null;
+let earsDrawnM = null;
 
-function drawRangeRings(you) {
+function drawSignatureRings(you, dts) {
+  const rs = ringState(state.lastSnap?.you, state.lastSnap?.contacts);
+  if (!rs) {
+    voiceDrawnM = earsDrawnM = null;
+    return;
+  }
+  const k = Math.min(1, dts * 4);
+  voiceDrawnM = voiceDrawnM === null ? rs.voiceM : voiceDrawnM + (rs.voiceM - voiceDrawnM) * k;
+  earsDrawnM = earsDrawnM === null ? rs.earsM : earsDrawnM + (rs.earsM - earsDrawnM) * k;
+
+  const [sx, sy] = worldToScreen(you.x, you.y);
   const span = Math.max(canvas.clientWidth, canvas.clientHeight);
-  for (const r of RANGE_RINGS_M) {
-    const rpx = r * camera.zoom;
-    let alpha = 1;
-    if (rpx < 60) alpha = (rpx - 25) / 35;
-    else if (rpx > span * 0.75) alpha = 1 - (rpx - span * 0.75) / (span * 0.5);
-    alpha = Math.max(0, Math.min(1, alpha));
-    if (alpha <= 0.03) continue;
-    drawRing(you.x, you.y, r, COLORS.rings, 1, [2, 6], alpha * 0.4);
-    const [sx, sy] = worldToScreen(you.x, you.y);
-    ctx.fillStyle = COLORS.rings;
-    ctx.globalAlpha = alpha * 0.8;
-    ctx.font = "10px monospace";
+
+  // VOICE: a radial-gradient disc — no hard edge anywhere (estimate!)
+  const vpx = voiceDrawnM * camera.zoom;
+  const style = RING_STYLES[rs.state];
+  if (vpx > 8 && vpx < span * 2.5) {
+    const grad = ctx.createRadialGradient(sx, sy, Math.max(0, vpx * 0.55), sx, sy, vpx * 1.08);
+    grad.addColorStop(0, `rgba(${style.disc}, ${style.fill})`);
+    grad.addColorStop(0.82, `rgba(${style.disc}, ${style.fill + style.rim * 0.25})`);
+    grad.addColorStop(0.93, `rgba(${style.disc}, ${style.rim * 0.5})`);
+    grad.addColorStop(1, `rgba(${style.disc}, 0)`);
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(sx, sy, vpx * 1.08, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 0.5;
+    ctx.fillStyle = `rgba(${style.disc}, 0.9)`;
+    ctx.font = "9px monospace";
     ctx.textAlign = "center";
-    ctx.fillText(`${r / 1000} km`, sx, sy - rpx - 4);
+    if (vpx < span * 0.9) ctx.fillText("VOICE", sx, sy + vpx - 6);
     ctx.textAlign = "left";
     ctx.globalAlpha = 1;
-    if (compassOn) drawCompass(sx, sy, rpx, alpha);
+  }
+
+  // EARS: dashed teal outline, softened by a faint double stroke
+  const epx = earsDrawnM * camera.zoom;
+  if (epx > 8 && epx < span * 2.5) {
+    drawRing(you.x, you.y, earsDrawnM, COLORS.own, 1.25, [6, 8], 0.4);
+    drawRing(you.x, you.y, earsDrawnM * 1.012, COLORS.own, 2.5, [6, 8], 0.12);
+    drawRing(you.x, you.y, earsDrawnM * 0.988, COLORS.own, 2.5, [6, 8], 0.12);
+    if (epx < span * 0.9) {
+      ctx.globalAlpha = 0.5;
+      ctx.fillStyle = COLORS.own;
+      ctx.font = "9px monospace";
+      ctx.textAlign = "center";
+      ctx.fillText("EARS", sx, sy - epx + 12);
+      ctx.textAlign = "left";
+      ctx.globalAlpha = 1;
+    }
   }
 }
 
-function drawCompass(sx, sy, rpx, ringAlpha) {
-  if (rpx < 100) return; // too small to read — the ring fade handles the rest
+// Bearing compass (toggle: B) — Patch 3.5: a fixed-SCREEN-radius element,
+// not a world-space ring. Always visible at any zoom (a world ring sails
+// off the edge zoomed in), and TICKED so it can never be confused with a
+// range ring — nobody mistakes a protractor for a ruler. Rumble markers
+// ride it: a bearing-only contact at an arbitrary fixed radius is HONEST
+// ("we know the direction and nothing else"); the old 50 km ring said
+// "it's 50 km away", which was false. Pure presentation: every number
+// drawn here is already the player's information.
+const COMPASS_SCREEN_FRAC = 0.36; // of the short viewport axis
+let compassOn = localStorage.getItem("compass") === "1";
+
+function drawCompass(you) {
+  if (!compassOn || !you) return;
+  const [sx, sy] = worldToScreen(you.x, you.y);
+  const rpx = Math.min(canvas.clientWidth, canvas.clientHeight) * COMPASS_SCREEN_FRAC;
+  const ringAlpha = 0.9;
   ctx.save();
   ctx.strokeStyle = COLORS.rings;
   ctx.fillStyle = COLORS.rings;
@@ -871,7 +926,7 @@ function draw() {
   drawGate(now); // campaign: the one thing you always know (world-space, always visible)
   drawTerrain();
   drawWrecks();
-  if (you) drawRangeRings(you);
+  if (you) drawSignatureRings(you, dts);
 
   drawParticles();
   drawFx();
@@ -897,6 +952,7 @@ function draw() {
   drawDustShroud();
   drawExitFx(now);
   if (shaking) ctx.restore();
+  if (!state.lastSnap?.spectator) drawCompass(you);
   drawCursorReadout(you);
   drawInset(you);
 }
@@ -1078,7 +1134,7 @@ function drawDustShroud() {
 // blind fire, contact callouts, and dust-cloud speculation speakable.
 // Always on while the pointer is over the map. (v4.3: range dropped —
 // bearing is the speakable currency; range-to-empty-space invited false
-// precision. The 50 km ring is the distance ruler.)
+// precision. The inset's concentric rings are the distance ruler.)
 function drawCursorReadout(you) {
   if (!hover || !you || camera.zoom === 0) return;
   const wx = camera.x + (hover.x - canvas.clientWidth / 2) / camera.zoom;
@@ -1373,6 +1429,27 @@ function drawInset(you) {
   ctx.globalAlpha = 0.9;
   ctx.stroke();
   ctx.globalAlpha = 1;
+
+  // Patch 3.5 §5: the ruler lives HERE now. The inset is a scope, and a
+  // scope is where a scale belongs — multiple concentric rings read
+  // unambiguously as a ruler; a single ring in the main view never did.
+  if (you) {
+    const [ox, oy] = toInset(you.x, you.y);
+    ctx.strokeStyle = COLORS.rings;
+    for (let r = 50000; r <= 150000; r += 50000) {
+      ctx.globalAlpha = r === 100000 ? 0.35 : 0.2;
+      ctx.beginPath();
+      ctx.arc(ox, oy, r * s, 0, Math.PI * 2);
+      ctx.setLineDash([2, 4]);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 0.6;
+    ctx.fillStyle = COLORS.rings;
+    ctx.font = "8px monospace";
+    ctx.fillText("100 km", ox + 100000 * s * 0.72, oy - 100000 * s * 0.72);
+    ctx.globalAlpha = 1;
+  }
 
   // campaign gate: a rim marker on the overview
   if (state.gate) {

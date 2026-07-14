@@ -224,6 +224,10 @@ export interface Ship {
   // return), which is fog-correct — rejecting it would unmask the decoy.
   lockDesignation: string | null;
   prevPainted: PaintedState; // enemy's lock on me last tick (edge-triggered notices)
+  // Patch 3.5: voice/ears crossover state last tick (edge-triggered XO
+  // line). null until the first sensor pass — spawning already-prey (a
+  // cruiser always is) draws the tinted ring, not a line.
+  prevPrey: boolean | null;
   sigSpikeLaunch: number; // seconds of +SIG_SPIKE_LAUNCH remaining after firing
   // v5 §5 railgun (frigate/cruiser; corvette carries none)
   railSlugs: number;
@@ -767,6 +771,7 @@ export class Sim {
       commsCooldownTightbeamS: 0,
       sigSpikeRail: 0,
       prevPainted: "none",
+      prevPrey: null,
       sigSpikeLaunch: 0,
       pingCooldownS: 0,
       pingRevealS: 0,
@@ -844,6 +849,22 @@ export class Sim {
   detectionRange(signature: number, viewer?: Ship): number {
     // campaign sensorMult: the viewer's suite quality (1 in multiplayer)
     return (viewer ? statsOf(viewer).sensorBase * viewer.sensorMult : C.SENSOR_BASE_M) * (signature / 100);
+  }
+
+  // Patch 3.5 rings — BOTH ARE ESTIMATES AGAINST THE BOOK, BY DESIGN
+  // (addendum §3): each reads only this ship's own stats plus a reference
+  // constant. An accurate voice ring would leak the enemy's sensor grade;
+  // an accurate ears ring would leak every contact's signature. Pinned in
+  // tests/rings.test.ts.
+  // VOICE: the range at which a reference sensor (the book's SENSOR_BASE_M)
+  // would detect US — breathes with our own signature.
+  voiceRangeM(ship: Ship): number {
+    return C.SENSOR_BASE_M * (this.signatureOf(ship) / 100);
+  }
+  // EARS: the range at which WE would detect a reference contact (the
+  // book's SIG_BASE drifting hull) — our own suite, nobody else's stats.
+  earsRangeM(ship: Ship): number {
+    return this.detectionRange(C.SIG_BASE, ship);
   }
 
   // Contact tier this viewer earns on the enemy ship right now. Every
@@ -3070,6 +3091,7 @@ export class Sim {
     for (const ship of this.ships.values()) {
       if (this.departed(ship.id)) continue;
       this.announcePainted(ship, events);
+      this.announceCrossover(ship, events);
     }
   }
 
@@ -3402,6 +3424,27 @@ export class Sim {
     } else if (now === "none") {
       events.push({ kind: "notice", ship: ship.id, text: "Enemy lock is off us." });
     }
+  }
+
+  // Patch 3.5 §2: the crossover is the danger state, and the XO says it
+  // ONCE, edge-triggered, on the transition — never repeated while the
+  // state holds. The line states the consequence, not a metaphor (spec).
+  // First pass initializes silently: a ship that spawns already-prey (the
+  // cruiser's ears never catch its voice) gets the tinted ring, not a
+  // spoken alarm at the starting gun.
+  private announceCrossover(ship: Ship, events: SimEvent[]): void {
+    if (ship.isDrone) return;
+    const prey = this.voiceRangeM(ship) > this.earsRangeM(ship);
+    const was = ship.prevPrey;
+    ship.prevPrey = prey;
+    if (was === null || prey === was) return;
+    events.push({
+      kind: "notice",
+      ship: ship.id,
+      text: prey
+        ? "They'll hear us before we hear them, Captain."
+        : "We hear them first again, Captain.",
+    });
   }
 
   private lockPos(lock: NonNullable<Missile["lock"]>): { x: number; y: number } | null {
@@ -5932,6 +5975,13 @@ export class Sim {
         inDust: this.inDust(ship),
         collisionWarning: ship.collisionWarnS === null ? null : Math.round(ship.collisionWarnS),
         signature: this.signatureOf(ship), // own signature: how loud we are
+        // Patch 3.5: the two rings, in meters — own-side estimates against
+        // the book (voiceRangeM/earsRangeM read ONLY this ship's stats +
+        // reference constants; the leak-free derivation is pinned)
+        rings: {
+          voiceM: Math.round(this.voiceRangeM(ship)),
+          earsM: Math.round(this.earsRangeM(ship)),
+        },
         standingOrders: ship.standingOrders.map((o) => ({
           label: o.label,
           repeat: o.repeat,

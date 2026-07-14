@@ -453,6 +453,7 @@ export class Match {
     match.sendStart(match.seats[0]);
     match.start();
     match.sendTranscript("A", "xo", match.systemWelcome(), { priority: "chatter" });
+    match.sendRingsPrimer("A");
     if (!llmAvailable()) {
       match.sendTranscript(
         "A",
@@ -462,6 +463,15 @@ export class Match {
       );
     }
     return match;
+  }
+
+  // Patch 3.5 §3: the rings are estimates against the book — said once,
+  // on first draw (= the first welcome; the rings are always on). The
+  // Hunter's better-than-book ears stay a lesson learned the hard way.
+  private sendRingsPrimer(id: string): void {
+    this.sendTranscript(id, "xo", "That's the book, Captain. He may not have read it.", {
+      priority: "chatter",
+    });
   }
 
   private systemWelcome(): string {
@@ -589,6 +599,7 @@ export class Match {
     match.sendTranscript("A", "xo", "Practice range is hot, Captain. Drone's out there somewhere.", {
       priority: "chatter",
     });
+    match.sendRingsPrimer("A");
     if (!llmAvailable()) {
       match.sendTranscript(
         "A",
@@ -765,6 +776,7 @@ export class Match {
         : "Enemy ship is out there somewhere. Good hunting, Captain.";
     for (const seat of this.seats) {
       this.sendTranscript(seat.id, "sys", welcome, { priority: "chatter" });
+      this.sendRingsPrimer(seat.id);
     }
   }
 

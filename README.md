@@ -207,8 +207,16 @@ be going somewhere — not both.
   before-that-rock number). The bracket honors your standing maneuver
   discipline — a silent stop is a much longer stop — and the label names
   the posture it assumed. The cursor shows the bearing from your ship
-  (your plotting table for callouts and blind fire); the single dashed
-  ring is a 50 km ruler. Ask for the **drift marker** ("show me our
+  (your plotting table for callouts and blind fire); two rings ride your
+  ship — the breathing coral **VOICE** disc (how far a by-the-book sensor
+  hears you; it swells with throttle) and the dashed teal **EARS** ring
+  (how far you hear a by-the-book contact). Voice outside ears means
+  they hear you first — the XO calls the crossover once, and the disc
+  runs hot when a known contact is inside it. Both are estimates against
+  the reference book, never the real enemy's stats. The bearing compass
+  (B) is a fixed screen-size protractor carrying rumble bearings; the
+  inset minimap carries concentric 50 km rings — the ruler. Ask for the
+  **drift marker** ("show me our
   drift") and a chevron rides your hull pointing where you're *going* —
   your hull points where you're *aimed*, and the gap between them is what
   kills people. No hotkey; it's asked for, like everything on this boat.

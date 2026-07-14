@@ -1,5 +1,29 @@
 # TODO — next steps
 
+## Patch 3.5 "Two Rings" (ADDENDUM-PATCH-3-TWO-RINGS-v2.md) — BUILT 2026-07-14
+
+The 50 km ring is gone from the main view (every new player misread it
+as a sensor boundary — and they were right to). In its place: the VOICE
+disc (soft filled coral, breathes with signature — reference SENSOR_BASE
+hearing us) and the EARS ring (dashed teal — our suite hearing a
+reference SIG_BASE hull). Both are ESTIMATES against the book, never any
+real enemy's stats (🔴 pinned in tests/rings.test.ts, with the
+no-proximity-alarm-through-fog pin — ringState in client/rings-model.js
+is a pure function of you + fogged contacts, the music-brain law). XO
+crossover lines are edge-triggered stock lines; "That's the book,
+Captain. He may not have read it." goes out once per match, all modes.
+The B compass is now a fixed-SCREEN-radius ticked protractor carrying
+the rumble chevrons (bearing-only contacts no longer sit on a lying
+range ring); the ruler moved to the inset (concentric 50 km rings).
+Frigate identity note: its voice EQUALS its ears at zero throttle
+(SIG_BASE/SENSOR_BASE are its stats) — any thrust makes it prey.
+
+- [ ] Playtest BY EYE: disc fill/rim alphas (RING_STYLES in render.js),
+  the crossover tint, whether the full-screen wash when deep inside your
+  own voice reads as information or noise.
+- [ ] Watch: does the ears ring tempt captains to treat it as a hard
+  detection promise? It's the book, not the enemy.
+
 ## Side panel redesign (Claude Design "Side Panel" synthesis) — BUILT 2026-07-13
 
 The flat HUD grid replaced by the designed panel: identity row, teammate
