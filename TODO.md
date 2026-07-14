@@ -30,7 +30,18 @@ third); rings pushed to prod (DEPLOYED); PDCs clear mines only when FREE
 and loudly (BUILT 3be8a1a); rail auto-light speaks (BUILT); rack +2
 accepted.
 
-IN FLIGHT — the §5 + 6b leg (worked-out design, execute in order):
+DONE 2026-07-14 (d035cb3 + 3be8a1a on patch-4-loadout; suite 1,364
+green; browser-verified: typed wreck labels + approach rings render on a
+non-campaign map, salvage verb answers in practice with the honest
+range rejection; module landing / death hulks / persistence pinned in
+tests/loadout.test.ts §14-18). Leg judgment calls: MP fields are ALL
+MARKED (rumor semantics — private leads, resolve-by-presence — stay
+campaign; MP wrecks are public Schelling points); death hulks are
+PUBLIC (marked) in every mode, following the Hunter/co-op precedent;
+practice mode gets the field too (the safest place to learn the
+workshop); freighter ore lands as carried mass with its uses (§6 refit
+verbs) next leg — this playtest it's deliberately a mass-vs-future bet.
+The executed design, for reference:
 1. Drive Tune module (constants + accelOf ×1.15^lit + schema enum).
 2. Field lift: Sim gets fieldWrecks/fieldSalvaging with get wrecks()/get
    salvaging() delegating to mission when present (campaign paths + tests
@@ -73,10 +84,17 @@ IN FLIGHT — the §5 + 6b leg (worked-out design, execute in order):
    salvage e2e, MP death-hulk-carries-deck pin, sanitize round-trip,
    🔴 re-run the calibration pin — starting loadout + empty hold stays
    bit-identical (the Unification §3 law, do not lose it).
-THEN the two-mode playtest (watch 1v1 snowballing — the lever is
-POWER_TO_SIG, never a handicap). After playtest: §6 ore verbs
-(repair/rearm/refine Mk II), §8 legibility (sprite from loadout, plume
-from signature, hum from draw), §7 panel fill, rest of the catalog.
+NEXT: THE TWO-MODE PLAYTEST GATES EVERYTHING (amendment §9: a 1v1 AND a
+6-player FFA; watch 1v1 for snowballing — the lever is POWER_TO_SIG,
+never a handicap; watch the §4 five modules for "does the deck question
+land"). After the playtest: §6 ore verbs (repair/rearm/refine Mk I→II),
+§8 legibility (sprite from loadout, plume from signature, hum from
+draw), §7 panel fill (reactor bar, module list, sig decomposition —
+you.loadout is already on the wire for it), rest of the catalog.
+Small known gaps, deliberate: MP salvage clock not on the panel (the
+transcript narrates; mission.salvaging is campaign wire), slug-farming
+via uninstall/reinstall (two full stops for 20 slugs; §6 rearm
+supersedes), PDC-vs-mine uses the missile kill prob (tune by ear).
 
 ## Patch 3.5 "Two Rings" (ADDENDUM-PATCH-3-TWO-RINGS-v2.md) — BUILT 2026-07-14
 
