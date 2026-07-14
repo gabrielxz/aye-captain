@@ -84,7 +84,7 @@
     #room-panel { display: flex; flex-direction: column; align-items: center; gap: 10px; }
     #practice-panel { flex-direction: column; align-items: center; gap: 6px; }
     #campaign-panel { flex-direction: column; align-items: center; gap: 6px; max-width: 560px; }
-    body.campaign #music-mix { display: inline !important; }
+    body.campaign #music-mix { display: inline-flex !important; align-items: center; gap: 4px; }
     #room-panel .room-code { font-size: 22px; letter-spacing: 6px; color: var(--accent); }
     #room-roster { display: flex; flex-direction: column; gap: 3px; min-width: 240px; }
     #room-roster .seat { display: flex; justify-content: space-between; gap: 16px; padding: 3px 8px; border: 1px solid #223; }
@@ -107,18 +107,22 @@
       border-left: 1px solid var(--line); background: var(--panel);
     }
 
-    /* v5.1.1: the 380px sidebar can't fit the hint AND the mix controls on
-       one line — the hint gets its own full-width row, controls sit below */
-    #topbar {
-      display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px;
-      padding: 6px 10px;
-      border-bottom: 1px solid var(--line); color: var(--dim); font-size: 11px;
+    /* ---------- side panel (the "Side Panel" design synthesis: one panel,
+       two states — lamps light in place, the hero swells, nothing reflows.
+       All values painted by panel.js from the wire snapshot.) ---------- */
+    :root { --dim2: #4a5d70; --lamp-line: #16212c; --sub-line: #131c26; }
+    #footbar {
+      border-top: 1px solid var(--line); color: var(--dim); font-size: 10px;
+      padding: 6px 10px 8px;
     }
-    #topbar input[type="range"] {
-      width: 90px; accent-color: var(--accent); height: 2px; flex: 1 1 60px; min-width: 40px;
+    #footbar .p-foot-controls {
+      display: flex; align-items: center; gap: 4px 8px; margin-top: 5px;
+    }
+    #footbar input[type="range"] {
+      width: 90px; accent-color: var(--accent); height: 2px; flex: 1 1 40px; min-width: 34px;
     }
     #controls-hint {
-      flex: 1 0 100%; letter-spacing: 0.5px;
+      color: var(--dim2); letter-spacing: 0.5px;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .verbosity-btn {
@@ -127,31 +131,146 @@
       letter-spacing: 1px; white-space: nowrap; flex-shrink: 0;
     }
     .verbosity-btn:hover { border-color: var(--accent); color: var(--accent); }
+    #btn-menu { border-color: #3a2626; color: #a85c5c; margin-left: auto; }
+    #btn-menu:hover { border-color: var(--danger); color: var(--danger); }
 
-    #hud {
-      border-bottom: 1px solid var(--line); padding: 8px 10px;
-      display: grid; grid-template-columns: 1fr 1fr; gap: 3px 14px;
-      color: var(--dim); line-height: 1.5;
+    #p-body {
+      overflow-y: auto; flex: 0 1 auto;
+      scrollbar-width: thin; scrollbar-color: var(--line) transparent;
     }
-    #hud .v { color: var(--fg); }
-    #hud .v.good { color: var(--accent); }
-    #hud .v.warn { color: var(--warn); }
-    #hud .v.alert { color: var(--danger); animation: hud-blink 0.9s step-start infinite; }
-    #hud .full { grid-column: 1 / -1; }
-    @keyframes hud-blink { 50% { opacity: 0.4; } }
-    #hud .bar {
-      display: inline-block; vertical-align: middle; width: 64px; height: 7px;
-      background: rgba(255,255,255,0.08); border: 1px solid var(--line);
+    .psec { padding: 8px 12px; }
+    .psec + .psec, #p-allies + .psec { border-top: 1px solid var(--sub-line); }
+    .pheader {
+      font-size: 8.5px; letter-spacing: 2px; color: var(--dim2); margin-bottom: 6px;
     }
-    #hud .bar i {
+    .plabel { font-size: 9px; letter-spacing: 2px; color: var(--dim); margin-bottom: 2px; }
+    .psub { font-size: 11px; color: var(--dim); margin-top: 6px; }
+    .pv-good { color: var(--accent); }
+    .pv-warn { color: var(--warn); }
+    .pv-alert { color: var(--danger); }
+    .blink { animation: p-blink 0.9s step-start infinite; }
+    @keyframes p-blink { 50% { opacity: 0.4; } }
+
+    #p-identity {
+      display: flex; justify-content: space-between; align-items: baseline;
+      border-bottom: 1px solid var(--line); padding-top: 7px; padding-bottom: 6px;
+    }
+    #p-callsign { color: var(--accent); letter-spacing: 1px; }
+    #p-arch { color: var(--dim); }
+    #p-context { font-size: 10.5px; color: var(--dim); }
+
+    /* teammate strip: transponder data only — never their sensor picture */
+    #p-allies .ally {
+      display: flex; align-items: center; gap: 9px; padding: 5px 12px;
+      border-bottom: 1px solid var(--sub-line); background: #0a1017; font-size: 11px;
+    }
+    #p-allies .ally .cs { color: #7ab0e0; letter-spacing: 1px; }
+    #p-allies .ally .range { color: var(--dim); margin-left: auto; }
+
+    .p-hero { display: flex; gap: 12px; padding-top: 10px; padding-bottom: 11px; }
+    .p-hero-l { flex: 1.5; }
+    .p-hero-r { flex: 1; border-left: 1px solid var(--line); padding-left: 12px; }
+    .pbigrow { display: flex; align-items: baseline; gap: 5px; }
+    .pbig {
+      font-size: 34px; line-height: 0.85; font-weight: 600; color: var(--fg);
+      font-variant-numeric: tabular-nums;
+    }
+    .punit { font-size: 11px; color: var(--dim); }
+    .pbarbg { height: 4px; background: var(--sub-line); margin-top: 8px; }
+    .pbarbg i {
       display: block; height: 100%; background: var(--accent);
       transition: width 0.9s linear, background-color 0.5s;
     }
-    #hud .bar i.warn { background: var(--warn); }
-    #hud .bar i.alert { background: var(--danger); }
+    .pbarbg i.pv-warn { background: var(--warn); }
+    .pbarbg i.pv-alert { background: var(--danger); }
+
+    .p-vitals { display: flex; gap: 12px; align-items: center; }
+    .p-dial {
+      width: 84px; height: 84px; border-radius: 50%; flex: none;
+      background: conic-gradient(var(--accent) 0deg 360deg, var(--sub-line) 0);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .p-dial-in {
+      width: 62px; height: 62px; border-radius: 50%; background: var(--panel);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+    }
+    .p-dial-in .n { font-size: 20px; font-weight: 600; color: var(--fg); font-variant-numeric: tabular-nums; }
+    .p-dial-mode { font-size: 8px; letter-spacing: 1px; color: var(--dim); }
+    .p-vitals-col { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+    .p-sig { font-size: 14px; letter-spacing: 1px; }
+    #p-mission-wrap { border-top: 1px solid var(--sub-line); padding-top: 7px; }
+    #p-mission { font-size: 13px; }
+    #p-mission.alert { font-size: 15px; font-weight: 600; letter-spacing: 1px; }
+    #p-mission-sub div { font-size: 11px; margin-top: 2px; color: var(--dim); }
+
+    .p-lamps {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 5px;
+      font-size: 9.5px; letter-spacing: 0.6px;
+    }
+    .p-lamps .lamp {
+      padding: 5px 8px; border: 1px solid var(--lamp-line); color: #33465a;
+      display: flex; justify-content: space-between; gap: 4px;
+    }
+    .p-lamps .lamp.good { border-color: #2c5c56; background: #0a1614; color: var(--accent); }
+    .p-lamps .lamp.warn { border-color: #7a5a2a; background: #171208; color: var(--warn); }
+    .p-lamps .lamp.alert { border-color: #7a4a3a; background: #180f0c; color: var(--danger); }
+
+    .p-contacts { display: flex; flex-wrap: wrap; gap: 3px 12px; font-size: 11px; color: var(--dim); }
+
+    .p-posture-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .p-posture-row .plabel { width: 62px; margin: 0; }
+    .pseg { display: flex; flex: 1; gap: 3px; }
+    .pseg span {
+      flex: 1; text-align: center; padding: 3px 0; font-size: 10px;
+      border: 1px solid var(--lamp-line); color: #33465a; letter-spacing: 0.5px;
+    }
+    .pseg span.on { border-color: #2c5c56; background: #0a1614; color: var(--accent); }
+    .pseg span.on.pv-alert { border-color: #7a4a3a; background: #180f0c; color: var(--danger); }
+    #p-posture-sec .psub { margin-top: 0; }
+
+    .p-arm-cards { display: flex; gap: 8px; margin-bottom: 7px; }
+    .p-arm-card { flex: 1; border: 1px solid var(--lamp-line); padding: 5px 8px; min-width: 0; }
+    .p-arm-head { display: flex; align-items: center; gap: 5px; margin-bottom: 5px; }
+    .p-arm-head .ico { font-size: 13px; color: var(--accent); }
+    .p-arm-head .nm { font-size: 8.5px; letter-spacing: 1.5px; color: var(--dim); }
+    .p-arm-head b { font-size: 16px; font-weight: 600; color: var(--fg); margin-left: auto; }
+    .p-chips { display: flex; gap: 4px; }
+    .p-chip {
+      flex: 1; text-align: center; padding: 2px 0; font-size: 9.5px;
+      border: 1px solid var(--lamp-line); color: #33465a; letter-spacing: 0.5px;
+    }
+    .p-chip.pv-good { border-color: #2c5c56; }
+    .p-chip.pv-warn { border-color: #7a5a2a; }
+    .p-chip.pv-alert { border-color: #7a4a3a; }
+    .p-arm-misc { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 10.5px; color: var(--dim); }
+    .p-arm-misc b { font-weight: 400; color: var(--fg); }
+
+    #p-reactor { padding-top: 6px; padding-bottom: 6px; }
+    #p-reactor .pheader {
+      margin-bottom: 0; display: flex; justify-content: space-between; gap: 8px;
+    }
+    #p-reactor .pheader span { color: #33465a; letter-spacing: 0.5px; }
+    #p-hold { font-size: 11.5px; color: var(--fg); }
+    #p-hold .none { color: var(--dim2); }
+
+    #p-orders .order { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--fg); margin-top: 3px; }
+    #p-orders .order:first-child { margin-top: 0; }
+    #p-orders .order .idx { color: var(--accent); font-weight: 600; }
+    #p-orders .order .lbl { flex: 1; }
+    #p-orders .order .state { color: var(--dim2); font-size: 10px; }
+    #p-orders .order button {
+      background: none; border: none; color: var(--dim); font: inherit;
+      cursor: pointer; padding: 0 2px;
+    }
+    #p-orders .order button:hover { color: var(--danger); }
+    #p-orders .none { font-size: 11px; color: var(--dim2); }
+
+    #p-spec .srow { display: flex; justify-content: space-between; font-size: 12px; margin-top: 4px; }
 
     #transcript {
-      flex: 1; overflow-y: auto; padding: 10px; line-height: 1.5;
+      flex: 1 1 60px; min-height: 60px;
+      border-top: 1px solid var(--line);
+      overflow-y: auto; padding: 8px 12px; line-height: 1.45; font-size: 12px;
       scrollbar-width: thin; scrollbar-color: var(--line) transparent;
     }
     #transcript .entry { margin-bottom: 4px; word-wrap: break-word; }
@@ -355,19 +474,91 @@
       </div>
     </div>
     <div id="side">
-      <div id="topbar">
-        <span id="controls-hint">ENTER type &middot; SPACE talk &middot; WHEEL zoom &middot; DRAG/WASD pan &middot; F follow &middot; M map &middot; V vector &middot; B compass</span>
-        <span>SFX</span>
-        <input type="range" id="vol-sfx" min="0" max="1" step="0.05" style="width:64px" />
-        <span>VOX</span>
-        <input type="range" id="vol-voice" min="0" max="1" step="0.05" style="width:64px" />
-        <!-- §7.7: the score's own slider — campaign only (body.campaign) -->
-        <span id="music-mix" style="display:none"><span>MUS</span>
-        <input type="range" id="vol-music" min="0" max="1" step="0.05" style="width:64px" /></span>
-        <button id="verbosity" class="verbosity-btn" title="XO verbosity — FULL: everything &middot; TERSE: warnings and news only &middot; SILENT: warnings only">XO: FULL</button>
-        <button id="btn-menu" class="verbosity-btn" style="display:none" title="leave to the main menu">EXIT</button>
+      <div id="p-body">
+        <!-- captain panel: painted by panel.js from each snapshot -->
+        <div id="p-captain">
+          <div class="psec" id="p-identity">
+            <span><span id="p-callsign">&mdash;</span><span id="p-arch"></span></span>
+            <span id="p-context"></span>
+          </div>
+          <div id="p-allies"></div>
+          <div class="psec p-hero">
+            <div class="p-hero-l">
+              <div class="plabel">SPEED</div>
+              <div class="pbigrow"><span class="pbig" id="p-speed">0</span><span class="punit">m/s</span></div>
+              <div class="psub" id="p-herosub">HDG 000 &middot; THR 0%</div>
+            </div>
+            <div class="p-hero-r">
+              <div class="plabel">HULL</div>
+              <div class="pbig" id="p-hull">&mdash;</div>
+              <div class="pbarbg"><i id="p-hullbar"></i></div>
+            </div>
+          </div>
+          <div class="psec p-vitals">
+            <div class="p-dial" id="p-dial">
+              <div class="p-dial-in"><span class="n" id="p-prop">&mdash;</span><span class="p-dial-mode" id="p-prop-mode">PROP</span></div>
+            </div>
+            <div class="p-vitals-col">
+              <div>
+                <div class="plabel">SIGNATURE</div>
+                <div class="p-sig" id="p-sig">&mdash;</div>
+              </div>
+              <div id="p-mission-wrap" style="display:none">
+                <div class="plabel">MISSION</div>
+                <div id="p-mission">&mdash;</div>
+                <div id="p-mission-sub"></div>
+              </div>
+            </div>
+          </div>
+          <div class="psec">
+            <div class="pheader">STATUS</div>
+            <div class="p-lamps" id="p-lamps"></div>
+          </div>
+          <div class="psec">
+            <div class="pheader">CONTACTS</div>
+            <div class="p-contacts" id="p-contacts">&mdash;</div>
+          </div>
+          <div class="psec" id="p-posture-sec">
+            <div class="pheader">POSTURE</div>
+            <div class="p-posture-row">
+              <span class="plabel">MANEUVER</span>
+              <div class="pseg" id="p-discipline">
+                <span data-d="silent">SILENT</span><span data-d="standard">STANDARD</span><span data-d="flank">FLANK</span>
+              </div>
+            </div>
+            <div class="psub">PDC <b id="p-pdc-posture">FREE</b></div>
+          </div>
+          <div class="psec">
+            <div class="pheader">ARMAMENT</div>
+            <div class="p-arm-cards">
+              <div class="p-arm-card">
+                <div class="p-arm-head"><span class="ico">&#10148;</span><span class="nm">MISSILES</span><b id="p-msl">0</b></div>
+                <div class="p-chips" id="p-tubes"></div>
+              </div>
+              <div class="p-arm-card">
+                <div class="p-arm-head"><span class="ico">&#10230;</span><span class="nm">RAILGUN</span><b id="p-rail-n">&mdash;</b></div>
+                <div class="p-chips"><span class="p-chip" id="p-rail">&mdash;</span></div>
+              </div>
+            </div>
+            <div class="p-arm-misc" id="p-arm-misc"></div>
+          </div>
+          <!-- reserved for the loadout patch (design: room for the reactor +
+               module list; kept to one quiet line — no fake gauges) -->
+          <div class="psec" id="p-reactor" style="display:none">
+            <div class="pheader"><span style="color:var(--dim2)">REACTOR &middot; INSTALLED</span><span>module list &mdash; coming with loadout</span></div>
+          </div>
+          <div class="psec" id="p-hold-sec" style="display:none">
+            <div class="pheader">HOLD &middot; BROUGHT ABOARD THIS SYSTEM</div>
+            <div id="p-hold"><span class="none">nothing yet</span></div>
+          </div>
+          <div class="psec">
+            <div class="pheader">STANDING ORDERS</div>
+            <div id="p-orders"><span class="none">none</span></div>
+          </div>
+        </div>
+        <!-- referee spectators get the hull list instead -->
+        <div class="psec" id="p-spec" style="display:none"></div>
       </div>
-      <div id="hud"></div>
       <div id="transcript"></div>
       <!-- v5.1.1: EXIT asks before it acts (an in-game modal — native
            confirm() dialogs block the page) -->
@@ -387,6 +578,20 @@
         <input id="cmd" autocomplete="off" spellcheck="false"
                placeholder="orders, captain? — ENTER to type, hold SPACE to talk" />
         <span id="mic">&#9679; REC</span>
+      </div>
+      <div id="footbar">
+        <div id="controls-hint">ENTER type &middot; SPACE talk &middot; WHEEL zoom &middot; DRAG/WASD pan &middot; F follow &middot; M map &middot; V vector &middot; B compass</div>
+        <div class="p-foot-controls">
+          <span>SFX</span>
+          <input type="range" id="vol-sfx" min="0" max="1" step="0.05" />
+          <span>VOX</span>
+          <input type="range" id="vol-voice" min="0" max="1" step="0.05" />
+          <!-- §7.7: the score's own slider — campaign only (body.campaign) -->
+          <span id="music-mix" style="display:none"><span>MUS</span>
+          <input type="range" id="vol-music" min="0" max="1" step="0.05" style="width:64px" /></span>
+          <button id="verbosity" class="verbosity-btn" title="XO verbosity — FULL: everything &middot; TERSE: warnings and news only &middot; SILENT: warnings only">XO: FULL</button>
+          <button id="btn-menu" class="verbosity-btn" style="display:none" title="leave to the main menu">EXIT</button>
+        </div>
       </div>
     </div>
   </div>

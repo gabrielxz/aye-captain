@@ -1,6 +1,7 @@
 // ws handling + client state store
 import { startRenderLoop, bigBoomAt, showVector, setOverlay, resetOverlays, kickShake, camera, gateExitFx } from "./render.js";
-import { initUI, addTranscript, updateHUD, showLobbyStatus, enterGame, showBanner, showReveal, showBannerLines, hideBanner, showRematchTally, setMenuVisible, updateWatching, setSpectator, showRoomLobby, hideRoomLobby, setCampaignBanner } from "./ui.js";
+import { initUI, addTranscript, showLobbyStatus, enterGame, showBanner, showReveal, showBannerLines, hideBanner, showRematchTally, setMenuVisible, updateWatching, setSpectator, showRoomLobby, hideRoomLobby, setCampaignBanner } from "./ui.js";
+import { updatePanel } from "./panel.js";
 import * as audio from "./audio.js";
 import { musicView, computeMusic } from "./music-brain.js";
 
@@ -176,7 +177,7 @@ function handleMessage(msg) {
         }
       }
       soundFromSnapshot(msg);
-      updateHUDFromSnapshot(msg);
+      updatePanel(msg);
       // campaign adaptive score: brain (pure, fog-tested) -> driver.
       // 🔴 the ONLY input is this wire snapshot — never sim truth (§7.1)
       if (state.campaign && !state.gameOver) {
@@ -409,10 +410,12 @@ function soundFromSnapshot(snap) {
   // hearing: the loudest rumble drives the low ambience (0 = silence)
   audio.setRumble(Math.max(0, ...(snap.rumbles ?? []).map((r) => r.loud ?? 0)));
 
-  // nearest visible inbound missile drives the proximity ticker
+  // nearest visible inbound missile drives the proximity ticker — a
+  // teammate's bird is friendly paint, no alarm (Patch 2: ally ordnance
+  // rides the snapshot with `ally: true`)
   let nearest = null;
   for (const m of snap.missiles ?? []) {
-    if (m.own) continue;
+    if (m.own || m.ally) continue;
     const d = Math.hypot(m.x - you.x, m.y - you.y);
     if (nearest === null || d < nearest) nearest = d;
   }
@@ -427,10 +430,11 @@ function soundFromSnapshot(snap) {
       if (was === "reloading" && t.state === "ready") audio.sfxReload();
     });
     // a new enemy missile on scope — and if we're locked, that launch is
-    // probably AT US: the lock alarm snaps back to full onset (§2.1)
+    // probably AT US: the lock alarm snaps back to full onset (§2.1).
+    // Ally birds are excluded (friendly paint, no alarm).
     const prevIds = prevAudio.enemyMissiles;
     for (const m of snap.missiles ?? []) {
-      if (!m.own && !prevIds.has(m.id)) {
+      if (!m.own && !m.ally && !prevIds.has(m.id)) {
         audio.sfxLaunch(false);
         if (you.painted === "locked") audio.reassertWarning();
       }
@@ -459,219 +463,11 @@ function soundFromSnapshot(snap) {
   prevAudio = {
     tubes: (you.tubes ?? []).map((t) => ({ state: t.state })),
     railSlugs: you.rail ? you.rail.slugs : null,
-    enemyMissiles: new Set((snap.missiles ?? []).filter((m) => !m.own).map((m) => m.id)),
+    enemyMissiles: new Set((snap.missiles ?? []).filter((m) => !m.own && !m.ally).map((m) => m.id)),
     decoys: you.decoys ?? 0,
     hull: you.hull,
     collisionWarning: you.collisionWarning ?? null,
   };
-}
-
-const TUBE_LABEL = { ready: "RDY", reloading: null, empty: "—" };
-function updateHUDFromSnapshot(snap) {
-  if (snap.spectator) {
-    // referee panel: just the two hulls (everything else is on the map)
-    updateHUD(
-      (snap.ships ?? []).map((s) => ({
-        // spectators are omniscient — names ride along (v5.1 §5.1)
-        label: `${(s.callsign ?? s.id).toUpperCase()}${snap.names?.[s.id] ? ` (${snap.names[s.id]})` : ""} HULL`,
-        value: `${s.hull}/${s.hullMax}${s.drone ? " (drone)" : ""}`,
-        cls: s.hull <= s.hullMax * 0.35 ? "alert" : s.hull <= s.hullMax * 0.65 ? "warn" : "",
-      }))
-    );
-    return;
-  }
-  const you = snap.you;
-  if (!you) return;
-  const tanksDry = (you.propellant ?? 0) <= 0;
-  const tubes = (you.tubes ?? [])
-    .map((t, i) => `${i + 1}:${TUBE_LABEL[t.state] ?? `${t.t}s`}`)
-    .join(" ");
-  const lock = you.lock?.has
-    ? "LOCKED"
-    : you.lock?.progress > 0
-      ? `ACQ ${Math.round(you.lock.progress * 100)}%`
-      : "no lock";
-  const painted = you.painted ?? "none";
-  const prop = Math.round(you.propellant ?? 0);
-  // v5 §3: contacts carry designation labels; each tier names what it buys
-  // (the tier vocabulary anchor, playtest 2026-07-11)
-  const TIER_WORD = { 1: "FAINT", 2: "TRACK", 3: "ID" };
-  const contacts = snap.contacts ?? [];
-  const ghosts = snap.ghosts ?? (snap.ghost ? [snap.ghost] : []);
-  const contactsLine =
-    contacts.length === 0 && ghosts.length === 0
-      ? "—"
-      : [
-          ...contacts.map((c) => `${c.label ?? "?"}·${TIER_WORD[c.tier] ?? "?"}`),
-          ...ghosts.map((g) => `${g.label ?? "ghost"}·lost`),
-        ].join("  ");
-  const idContact = contacts.find((c) => c.tier === 3 && c.hull !== undefined) ?? null;
-  const enemyHull = idContact ? `${idContact.hull}/${idContact.hullMax ?? 100}` : "—";
-  updateHUD([
-    { label: "SHIP", value: `${you.callsign ?? state.role ?? "—"}${you.archetype ? ` · ${you.archetype}` : ""}`, cls: "good" },
-    { label: "HULL", value: `${you.hull}`, cls: you.hull <= 35 ? "alert" : you.hull <= 65 ? "warn" : "" },
-    { label: "EN HULL", value: enemyHull, cls: idContact && idContact.hull <= (idContact.hullMax ?? 100) / 2 ? "good" : "" },
-    { label: "CONTACTS", value: contactsLine, cls: contacts.some((c) => c.tier >= 2) ? "good" : contacts.length ? "warn" : "", full: true },
-    // Patch 2 §3: the teammate strip — SIG is the critical field (it says
-    // who the Hunter is coming for; ▲ marks whoever is louder right now).
-    // Campaign co-op only; placement is temporary (§3b — Patch 3 is the
-    // panel redesign). Never their contacts: the strip is transponder data.
-    ...(you.mission
-      ? (snap.allies ?? []).map((t) => {
-          const km = Math.hypot(t.x - you.x, t.y - you.y) / 1000;
-          const brg = Math.round((Math.atan2(t.x - you.x, t.y - you.y) * 180) / Math.PI + 360) % 360;
-          const louder = (t.sig ?? 0) > (you.signature ?? 0);
-          return {
-            label: (t.callsign ?? t.id).toUpperCase(),
-            value: `hull ${Math.round((t.hull / (t.hullMax || 100)) * 100)}% · SIG ${t.sig ?? "—"}${louder ? "▲" : ""} · prop ${t.propellant ?? "—"} · ${km.toFixed(0)} km brg ${String(brg).padStart(3, "0")}`,
-            cls: t.hull <= (t.hullMax || 100) * 0.35 ? "alert" : louder ? "warn" : "good",
-            full: true,
-          };
-        })
-      : []),
-    // campaign: the mission clock + the gate approach solution + the
-    // transfer. Server-owned numbers, PING-LIT-style rendering — no
-    // client timers.
-    ...(you.mission
-      ? [
-          {
-            label: "SYS",
-            value: `${you.mission.system}/8 · ${you.mission.systemName ?? ""}`,
-          },
-          {
-            label: "HUNTER",
-            value: you.mission.hunterActive
-              ? "◤ IN SYSTEM ◥"
-              : you.mission.spawnInS > 0
-                ? `${Math.floor(you.mission.spawnInS / 60)}:${String(you.mission.spawnInS % 60).padStart(2, "0")}`
-                : "gone quiet",
-            cls: you.mission.hunterActive ? "alert" : you.mission.spawnInS > 0 ? "warn" : "good",
-          },
-          ...(() => {
-            // SALVAGE row: transfer progress while docked; an in-range
-            // hint when a lootable wreck's dock ring is around us
-            // (playtest: the actable moment must be visible)
-            const s = you.mission.salvaging;
-            if (s) {
-              return [{ label: "SALVAGE", value: `next in ${s.nextInS}s · ${s.itemsLeft} left`, cls: "good" }];
-            }
-            const rangeM = state.config?.salvageApproachRangeM ?? 15000;
-            const near = (snap.wrecks ?? [])
-              .filter((w) => w.items !== 0 && Math.hypot(w.x - you.x, w.y - you.y) <= rangeM)
-              .sort((a, b) => Math.hypot(a.x - you.x, a.y - you.y) - Math.hypot(b.x - you.x, b.y - you.y))[0];
-            return near
-              ? [{ label: "SALVAGE", value: `in range — "salvage ${near.letter}"`, cls: "good" }]
-              : [];
-          })(),
-          {
-            label: "GATE",
-            value: you.gate
-              ? you.gate.good
-                ? `SOLUTION GOOD · ${Math.floor(you.gate.ttg / 60)}:${String(you.gate.ttg % 60).padStart(2, "0")}`
-                : `ttg ${Math.floor(you.gate.ttg / 60)}:${String(you.gate.ttg % 60).padStart(2, "0")} · miss ${(you.gate.missM / 1000).toFixed(1)} km ${you.gate.side.toUpperCase()}`
-              : "no solution",
-            cls: you.gate ? (you.gate.good ? "good" : "alert") : "",
-            full: true,
-          },
-          // Anvil §4c / 1.1 §3b: the vise, on an instrument — two DISTINCT
-          // states so "counting down to closing" and "closing now" never
-          // blur: STABLE is calm and says when the narrowing starts;
-          // CLOSING is the alarm with the live aperture. The GATE row
-          // above shows the solution going bad as it shrinks.
-          ...(you.mission.gateClosing
-            ? [
-                (() => {
-                  const gc = you.mission.gateClosing;
-                  const mmss = `${Math.floor(gc.leftS / 60)}:${String(gc.leftS % 60).padStart(2, "0")}`;
-                  return gc.phase === "stable"
-                    ? {
-                        label: "GATE STABLE",
-                        value: `closing in ${mmss}`,
-                        cls: "warn",
-                        full: true,
-                      }
-                    : {
-                        label: "GATE CLOSING",
-                        value: `${mmss} · aperture ${gc.aperturePct}%`,
-                        cls: "alert",
-                        full: true,
-                      };
-                })(),
-              ]
-            : []),
-        ]
-      : []),
-    { label: "SIG", value: `${Math.round(you.signature ?? 0)}`, cls: (you.signature ?? 0) > 100 ? "alert" : (you.signature ?? 0) > 50 ? "warn" : "good" },
-    { label: "THRUST", value: `${Math.round(you.thrust)}%${tanksDry && you.thrust > 0 ? " (DRY)" : ""}`, cls: tanksDry && you.thrust > 0 ? "alert" : "" },
-    { label: "SPD", value: `${you.speed} m/s` },
-    { label: "HDG", value: `${String(Math.round(you.facing) % 360).padStart(3, "0")}` },
-    // ⟳ = propellant regen harvesting, ✕ = regen gated off (outside zone or
-    // throttle > 20%) — the at-a-glance answer to "why isn't fuel coming back"
-    { label: `PROP${prop >= 100 ? "" : you.regen ? " ⟳" : " ✕"}`, value: prop, bar: true, cls: prop <= 10 ? "alert" : prop <= 25 ? "warn" : "" },
-    { label: "TUBES", value: tubes || "—" },
-    { label: "MSL", value: `${you.missiles}` },
-    { label: "DECOY", value: `${you.decoys}` },
-    {
-      label: "PDC",
-      value: `${(you.pdc?.posture ?? "free").toUpperCase()} ${you.pdc?.ammoS ?? 0}s`,
-      cls: (you.pdc?.ammoS ?? 0) <= 6 ? "alert" : (you.pdc?.ammoS ?? 0) <= 15 ? "warn" : you.pdc?.posture === "free" ? "good" : "",
-    },
-    {
-      label: "RAIL",
-      // armed classes only (corvettes show a dash)
-      value: you.rail
-        ? you.rail.slugs <= 0
-          ? "OUT"
-          : you.rail.cooldownS > 0
-            ? `${you.rail.cooldownS}s · ${you.rail.slugs}`
-            : `RDY · ${you.rail.slugs}`
-        : "—",
-      cls: you.rail ? (you.rail.slugs <= 0 ? "alert" : you.rail.cooldownS > 0 ? "warn" : "good") : "",
-    },
-    {
-      label: "PROBES",
-      value: `${you.probes ?? 0}${(snap.probes ?? []).some((p) => p.own) ? ` · ${(snap.probes ?? []).filter((p) => p.own).length} out` : ""}`,
-      cls: (snap.probes ?? []).some((p) => p.own) ? "good" : "",
-    },
-    {
-      label: "PING",
-      // LIT = the reveal window: everyone on the map reads us at ID tier.
-      // A countdown, not a voice line — dread for exactly as long as earned.
-      value:
-        (you.ping?.revealS ?? 0) > 0
-          ? `◤ LIT ${you.ping.revealS}s ◥`
-          : you.ping?.ready
-            ? "READY"
-            : `${you.ping?.cooldownS ?? 0}s`,
-      cls: (you.ping?.revealS ?? 0) > 0 ? "alert" : you.ping?.ready ? "good" : "",
-    },
-    {
-      label: "ZONE",
-      value: you.inDust ? "IN DUST (blind)" : you.insideZone ? "inside" : "OUTSIDE",
-      cls: you.inDust ? "warn" : you.insideZone ? "" : "warn",
-    },
-    {
-      label: "COLL",
-      value: you.collisionWarning !== null && you.collisionWarning !== undefined ? `impact ${you.collisionWarning}s` : "—",
-      cls: you.collisionWarning === null || you.collisionWarning === undefined ? "" : you.collisionWarning <= 10 ? "alert" : "warn",
-    },
-    { label: "LOCK", value: lock, cls: you.lock?.has ? "good" : "" },
-    {
-      label: "WARN",
-      value: painted === "locked" ? "◤ ENEMY LOCK ◥" : painted === "acquiring" ? "being painted" : "—",
-      cls: painted === "locked" ? "alert" : painted === "acquiring" ? "warn" : "",
-    },
-    {
-      label: "ORDERS",
-      value:
-        (you.standingOrders ?? []).length > 0
-          ? you.standingOrders
-              .map((o) => `${o.label}${o.repeat ? "*" : ""}${o.armed ? "" : " (cooling)"}`)
-              .join(", ")
-          : "none",
-      full: true,
-    },
-  ]);
 }
 
 export function send(msg) {

@@ -5951,6 +5951,24 @@ export class Sim {
                   ? 0
                   : Math.max(0, this.mission!.hunterSpawnS - this.tickCount),
                 hunterActive: this.mission!.hunterIds.some((h) => this.ships.has(h)),
+                // the HOLD ledger — what this system has paid so far, live
+                // (the panel's HOLD section; same aggregation as the run
+                // map's manifest). Own-side data: salvaged loot is the
+                // crew's own knowledge, rumored contents stay hidden until
+                // landed. NOTE: these are applied consumables, not cargo —
+                // there is no jettison and no mass (a ledger, not a bay).
+                hold: (() => {
+                  const agg = new Map<string, number>();
+                  const upgrades: string[] = [];
+                  for (const it of this.mission!.haul) {
+                    if (it.kind === "upgrade") upgrades.push(it.upgrade ?? "sig");
+                    else agg.set(it.kind, (agg.get(it.kind) ?? 0) + it.amount);
+                  }
+                  return [
+                    ...[...agg].map(([kind, n]) => ({ kind, n })),
+                    ...upgrades.map((u) => ({ kind: "upgrade", upgrade: u, n: 1 })),
+                  ];
+                })(),
                 // this viewer's OWN transfer clock (per-captain in co-op)
                 salvaging: (() => {
                   const sv = this.mission!.salvaging[id];

@@ -38,3 +38,4 @@ import "./hunter.test.js";
 import "./campaign.test.js";
 import "./coop.test.js";
 import "./music.test.js";
+import "./panel.test.js";

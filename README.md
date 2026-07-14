@@ -104,8 +104,9 @@ be going somewhere — not both.
   visible ~234 km out; a dark drifter ~54 km (and unlockable until ~32).
   Contacts have **tiers**: FAINT (a smudge — approximate position, no
   vector), TRACK (true position + velocity, **lockable**), ID (full
-  readout). The HUD's CONTACT row names what the current tier buys
-  ("TRACK · lockable") — it's the same vocabulary the XO's tier calls use.
+  readout). The panel's CONTACTS row carries each track's designation and
+  tier word (at ID, the callsign and a hull readout) — the same vocabulary
+  the XO's tier calls use.
   Rocks and dust block line of sight — inside a dust cloud you're blind
   and unseen.
 - **Hearing**: beyond sensor range every drive **rumbles** — a bearing-only

@@ -1,5 +1,34 @@
 # TODO — next steps
 
+## Side panel redesign (Claude Design "Side Panel" synthesis) — BUILT 2026-07-13
+
+The flat HUD grid replaced by the designed panel: identity row, teammate
+strip (absorbs the Patch 2 §3b "temporary placement" item — teams mode
+gets it free), speed/hull hero, propellant dial + signature vocabulary
+(QUIET/LOUD/SCREAMING display bands at the old color thresholds — words
+never gate anything), campaign MISSION block (hunter clock, gate
+solution, closing phases, salvage clock, wreck-in-range hint), the FIXED
+ten-lamp annunciator (lamps light in place, nothing reflows — pinned),
+CONTACTS row (tier vocabulary kept, v4.7.2), posture display, armament
+cards, HOLD ledger (new `mission.hold` wire field — the only wire
+addition), standing orders with a wired × (cancel_label via the raw-JSON
+pipeline), footer with sliders/verbosity/EXIT. View-model is PURE
+(client/panel-model.js, tests/panel.test.ts — 40 assertions incl. decoy
+indistinguishability at the panel and ally-bird exclusion from MSL
+INBOUND). Drive-by fix: ally missiles no longer trigger the enemy-launch
+sting/lock reassert (main.js — sim.ts always promised "friendly paint,
+no alarm"). Deviations from the design, deliberate: JETTISON omitted (no
+cargo model exists — hold items are applied consumables; HOLD renders
+the ledger), reactor placeholder shrunk to one line (no fake power
+bars), THRUST restored to the hero sub-line, CONTACTS row restored,
+posture control display-only (a click would bypass the XO's
+price-quoting doctrine — decide before wiring).
+
+- [ ] Playtest with the co-op flight: does the lamp grid read at a
+  glance? Is the teammate strip's two-line wrap at 380px acceptable?
+- [ ] If captains start flying to "keep it QUIET" as if the sig words
+  were mechanics, consider dropping the words (invariant-13-adjacent).
+
 ## CAMPAIGN PATCH 2 "Two Ships" (HANDOFF-CAMPAIGN-COOP.md) — DEPLOYED 2026-07-13
 
 Merged from `campaign-coop`, all sections, 1,186 assertions green (incl.
