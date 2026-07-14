@@ -1096,10 +1096,14 @@ function drawWrecks() {
     // its count (or vanishes, if it was a dry hole — the server stops
     // sending it)
     ctx.font = "9px 'Share Tech Mono', monospace";
+    // Loadout §5: the TYPE is readable from across the system — "is that
+    // module worth going loud for?" is the whole flight's question. A
+    // rumor keeps its "?" until presence resolves it (Patch 1 rules).
+    const noun = w.type === "hulk" ? "hulk" : w.type ? `${w.type} wreck` : "wreck";
     const tag = w.marked
-      ? `wreck ${w.letter} ·${w.items}`
+      ? `${noun} ${w.letter} ·${w.items}`
       : w.items !== null
-        ? `rumor ${w.letter} ·${w.items}`
+        ? `${w.type ? `${w.type} ` : ""}rumor ${w.letter} ·${w.items}`
         : `rumor ${w.letter} ·?`;
     labelText(inRange ? `${tag} — in range` : tag, sx + 8, sy + 3, color, inRange ? 1 : 0.75);
   }
@@ -1570,6 +1574,38 @@ function drawOrdnance() {
       ctx.font = "9px monospace";
       ctx.fillText(`P${pr.idx ?? "?"}`, px + 10, py - 8);
     }
+  }
+
+  // Loadout §4 mines: a small spiked circle. Own field always (with a
+  // slow arming pulse until live); allied fields read friendly-blue;
+  // an ENEMY mine only ever appears at knife range — when it does, it
+  // deserves to be loud on the map.
+  for (const mn of state.lastSnap.mines ?? []) {
+    const [mx, my] = worldToScreen(mn.x, mn.y);
+    const tint = mn.own ? COLORS.own : mn.ally ? COLORS.ally : COLORS.enemy;
+    ctx.save();
+    ctx.translate(mx, my);
+    ctx.strokeStyle = tint;
+    ctx.lineWidth = 1.4;
+    const armed = mn.own ? mn.armed : true;
+    ctx.globalAlpha = armed ? 0.9 : 0.45 + 0.3 * Math.sin(performance.now() / 250);
+    ctx.beginPath();
+    ctx.arc(0, 0, 3.5, 0, Math.PI * 2);
+    ctx.stroke();
+    for (let i = 0; i < 6; i++) {
+      const a = (i * Math.PI) / 3;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a) * 3.5, Math.sin(a) * 3.5);
+      ctx.lineTo(Math.cos(a) * 6, Math.sin(a) * 6);
+      ctx.stroke();
+    }
+    if (!mn.own && !mn.ally) {
+      ctx.fillStyle = tint;
+      ctx.font = "9px monospace";
+      ctx.fillText("MINE", 8, 3);
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
   }
 
   // v5 §5 rail slugs: a hot hypervelocity streak along the velocity vector

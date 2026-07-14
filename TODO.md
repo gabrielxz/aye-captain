@@ -1,5 +1,101 @@
 # TODO — next steps
 
+## Patches 4+5 "The Loadout" — steps 1-6 BUILT 2026-07-14 (branch `patch-4-loadout`)
+
+Mass (force/mass through accelOf/turnRateOf; ARCHETYPES stays THE BOOK,
+internals derived — starting-loadout hulls bit-identical, whole suite
+green unmodified), reactor (reject, never shed), installed≠powered
+(power instant+free, DRAW IS SIGNATURE), workshop rule (full stop, 60 s,
+thrust/drift aborts — tick-enforced so standing orders can't dodge it),
+the five modules (baffles ×0.75 total while lit; deep array ×1.6 sensors
+while lit — the EARS ring grows; armor +40 hull passive; railgun
+auto-lights on fire and STAYS lit; mine layer → station-keeping IFF
+mines, sig 8), landModule salvage-installs, verbs in schema/translator,
+you.loadout ledger, Doctrine VII docs. 61 pins in tests/loadout.test.ts.
+Step-4 gate FLOWN: power the rail while parked → disc swells past ears +
+crossover line. The moment lands.
+
+Judgment calls to review: starting modules spawn COLD (only calibration
+consistent with bit-identical signature); probe rack grants +2, not the
+doc's +4 (frigate book 2 pins it); looted rail arrives with 20 slugs
+(fire-out/uninstall/reinstall can farm slugs — §6 rearm economy will
+supersede); PDCs do NOT engage mines (unspecced, deferred).
+
+cc-rulings-loadout-next-leg.md (2026-07-14) settled: stat bumps DIE
+(delete upgradeCounts + UPGRADE_* + "upgrade" items; wrecks drop MODULES
+and ORE; migration sig→baffles, sensor→deep array, accel→DRIVE TUNE (new
+module, 1 mass / 2 power, ×1.15 thrust while lit), hull→armor; two axes:
+horizontal = modules found, vertical = refine Mk I→II with ore — no free
+third); rings pushed to prod (DEPLOYED); PDCs clear mines only when FREE
+and loudly (BUILT 3be8a1a); rail auto-light speaks (BUILT); rack +2
+accepted.
+
+DONE 2026-07-14 (d035cb3 + 3be8a1a on patch-4-loadout; suite 1,364
+green; browser-verified: typed wreck labels + approach rings render on a
+non-campaign map, salvage verb answers in practice with the honest
+range rejection; module landing / death hulks / persistence pinned in
+tests/loadout.test.ts §14-18). Leg judgment calls: MP fields are ALL
+MARKED (rumor semantics — private leads, resolve-by-presence — stay
+campaign; MP wrecks are public Schelling points); death hulks are
+PUBLIC (marked) in every mode, following the Hunter/co-op precedent;
+practice mode gets the field too (the safest place to learn the
+workshop); freighter ore lands as carried mass with its uses (§6 refit
+verbs) next leg — this playtest it's deliberately a mass-vs-future bet.
+The executed design, for reference:
+1. Drive Tune module (constants + accelOf ×1.15^lit + schema enum).
+2. Field lift: Sim gets fieldWrecks/fieldSalvaging with get wrecks()/get
+   salvaging() delegating to mission when present (campaign paths + tests
+   stay bit-identical); salvage verb gate becomes "wrecks exist && not a
+   drone"; stepSalvage/stepRumors run when wrecks exist (haul/stats
+   pushes stay mission-guarded; stepRumors playerIds → non-drone humans
+   in MP); hulk motion loop reads this.wrecks; top-level `wrecks` on
+   every snapshot (client reads it from either place).
+3. §5 types: Wreck.type military/survey/smuggler/freighter/derelict/
+   hulk. Pools (five+tune): military rail/armor/mine_layer + pdc/msl;
+   survey deep_array/probe_rack + probes; smuggler baffles/drive_tune +
+   decoys; freighter ORE ×lots + consumables; derelict rare (8%): 2
+   modules + ore. Marked sites expose type on the wire FROM t=0 at any
+   range; rumors hide type until checked (Patch 1 rules).
+4. SalvageItem kinds += module{module}/ore, DELETE upgrade. Landing:
+   module → landModule (installed: per-module stock fitted lines, reuse
+   the four existing "fitted" lines + three new; held: "stowed" stock
+   variants); ore → ship.ore += n (NEW ship field, mass = ORE_UNIT_MASS
+   each in massOf, on you.loadout.ore; USES land with §6 refit next leg
+   — this playtest it's a mass-vs-future bet, deliberate).
+5. Death hulks ALL modes (generalize the Patch 2 §4a block): every
+   non-drone death except SOLO-campaign spawns a marked hulk (type
+   "hulk") at 0.4 death-v carrying installed+hold modules as module
+   items + ore + consumables. MP: the leader is the prize (amendment
+   §2). Letters continue the site sequence.
+6. Persistence: CampaignRun.upgrades → CampaignRun.loadout {installed[],
+   hold[], ore} (sanitize: valid ModuleIds only, caps; old saves lose
+   bumps — acceptable, note in check-in); buildCampaignSim applies it
+   (mults stay 1; carried.hull clamps to hullMaxOf-with-plates);
+   CoopCarry mults → installed/hold/ore; totals.upgrades →
+   totals.modules (sanitize accepts either key); mission.stats.upgrades
+   → stats.modules; mission.hold ledger renders module/ore kinds.
+7. MP generation: rooms get generateWrecks(seed) at launch (practice
+   too); schema/translator salvage text loses "CAMPAIGN ONLY"; state
+   summary lists sites for MP ships as it does for mission players.
+8. Client: drawWrecks reads top-level wrecks; marked wrecks draw their
+   TYPE word (the whole "worth going loud for?" decision); run-map
+   manifest renders module/ore items; localStorage run shape v2.
+9. Tests: typed-pool pins, type-on-wire-from-t0 + rumor-hidden pins, MP
+   salvage e2e, MP death-hulk-carries-deck pin, sanitize round-trip,
+   🔴 re-run the calibration pin — starting loadout + empty hold stays
+   bit-identical (the Unification §3 law, do not lose it).
+NEXT: THE TWO-MODE PLAYTEST GATES EVERYTHING (amendment §9: a 1v1 AND a
+6-player FFA; watch 1v1 for snowballing — the lever is POWER_TO_SIG,
+never a handicap; watch the §4 five modules for "does the deck question
+land"). After the playtest: §6 ore verbs (repair/rearm/refine Mk I→II),
+§8 legibility (sprite from loadout, plume from signature, hum from
+draw), §7 panel fill (reactor bar, module list, sig decomposition —
+you.loadout is already on the wire for it), rest of the catalog.
+Small known gaps, deliberate: MP salvage clock not on the panel (the
+transcript narrates; mission.salvaging is campaign wire), slug-farming
+via uninstall/reinstall (two full stops for 20 slugs; §6 rearm
+supersedes), PDC-vs-mine uses the missile kill prob (tune by ear).
+
 ## Patch 3.5 "Two Rings" (ADDENDUM-PATCH-3-TWO-RINGS-v2.md) — BUILT 2026-07-14
 
 The 50 km ring is gone from the main view (every new player misread it

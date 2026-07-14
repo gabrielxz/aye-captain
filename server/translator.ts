@@ -48,7 +48,8 @@ function buildSystemPrompt(): string {
 - Being painted: when the ENEMY is acquiring/holding a lock on us, we know (and can react via the being_painted metric).
 - Decoys: ${C.DECOY_SUPPLY} carried, hot signature for ${C.DECOY_LIFETIME_S}s, attracts missile seekers.
 - Compass headings: 0 = north, 90 = east, clockwise. port = left = counterclockwise, starboard = right = clockwise.
-- Max ${C.STANDING_ORDER_MAX} standing orders.`,
+- Max ${C.STANDING_ORDER_MAX} standing orders.
+- THE LOADOUT: the ship carries MODULES — installed ones are the deck (mass, always), POWERED ones are the hand (reactor draw, and DRAW IS SIGNATURE: +${C.POWER_TO_SIG} noise per point). Reactor capacity is hard: over it, something must go cold first (the server rejects, never sheds). power on/off is instant and free at any speed; install/uninstall need a FULL STOP and ~${C.MODULE_INSTALL_S}s of helplessness (any thrust aborts, progress lost). Modules: baffles (−25% total signature while lit), deep_array (+60% sensor range while lit), railgun (must be lit to fire — firing a cold one lights it automatically), mine_layer (lit to drop mines), armor_plate (+hull, passive), probe_rack (+probes, passive), drive_tune (+15% thrust while lit). Modules and ore come off wrecks — salvage them like any site. CURRENT SHIP STATE lists what's installed, lit, and in the hold — trust it.`,
 
     `## Rules\n${rules.map((r) => `- ${r}`).join("\n")}`,
 
@@ -77,6 +78,8 @@ const SYSTEM_PROMPT = buildSystemPrompt();
 // ---------- validation ----------
 
 const TARGETS = ["enemy_ship", "nearest_missile", "nearest_decoy", "nearest_contact", "nearest_rumble"];
+// The Loadout: the module vocabulary (LINKED: == keys of C.MODULES)
+const MODULE_IDS = Object.keys(C.MODULES);
 // v5 §3: free-form contact refs — a designation letter or callsign as it
 // appears in the contact table ("Bravo", "Contact Alpha", "Kestrel").
 // Resolution (and rejection of unknown names) happens in the sim.
@@ -296,6 +299,21 @@ export function validateCommand(raw: unknown, nested = false): Command | null {
         clean.give = give;
       }
       return out(clean);
+    }
+    case "power": {
+      // The Loadout §3a: instant, free, capacity-checked server-side
+      if (!MODULE_IDS.includes(p.module as string)) return null;
+      if (p.state !== "on" && p.state !== "off") return null;
+      return out({ module: p.module, state: p.state });
+    }
+    case "install":
+    case "uninstall": {
+      // §3b the workshop rule — stop checks live in the sim
+      if (!MODULE_IDS.includes(p.module as string)) return null;
+      return out({ module: p.module });
+    }
+    case "drop_mine": {
+      return out({});
     }
     case "set_maneuver_discipline": {
       // 1.1 §2a: the standing autopilot-throttle posture

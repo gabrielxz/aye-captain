@@ -5,9 +5,11 @@ import {
   Sim,
   headingVec,
   norm360,
+  hullMaxOf,
   type Command,
   type ShipId,
   type SimEvent,
+  type WreckType,
 } from "./sim.js";
 import { llmAvailable, translateUtterance, phraseQueryAnswer } from "./translator.js";
 import { logUtterance } from "./datalog.js";
@@ -22,11 +24,15 @@ import { missilesAboard, type Wreck, type SalvageItem } from "./sim.js";
 // below exists to keep numbers finite, not to keep players honest.
 export interface CampaignRun {
   system: number; // the system ABOUT TO BE PLAYED (1..CAMPAIGN_SYSTEMS)
-  upgrades: { sig: number; sensor: number; accel: number; hull: number }; // module counts
+  // cc ruling 1: the stat-bump counts are DEAD. The run carries the DECK —
+  // installed modules, hold cargo, ore feedstock. null = fresh run,
+  // starting loadout. (Old saves with `upgrades` lose their bumps; the
+  // system/pools survive — flagged at the ruling.)
+  loadout: { installed: C.ModuleId[]; hold: C.ModuleId[]; ore: number } | null;
   // attrition pools PERSIST across jumps (§6 — "stop resetting the resource
   // pools" is the campaign economy); null = fresh run, full loadout
   pools: { propellant: number; missiles: number; decoys: number; pdcAmmoS: number; hull: number } | null;
-  totals: { huntersKilled: number; salvaged: number; pingsFired: number; upgrades: number; timeS: number };
+  totals: { huntersKilled: number; salvaged: number; pingsFired: number; modules: number; timeS: number };
 }
 
 export type RoomMode = "ffa" | "teams";
@@ -38,10 +44,11 @@ export type Team = "red" | "blue";
 // consumables attrit, propellant refills per jump (1.1 §6). A dead
 // captain gets NO entry: fresh base ship, empty hold (§4).
 interface CoopCarry {
-  sigMult: number;
-  sensorMult: number;
-  accelMult: number;
-  hullMult: number;
+  // cc ruling 1: the deck travels, not multipliers (those are Hunter
+  // difficulty knobs now)
+  installed: C.ModuleId[];
+  hold: C.ModuleId[];
+  ore: number;
   missiles: number;
   decoys: number;
   pdcAmmoS: number;
@@ -168,6 +175,9 @@ export class Match {
         : practice
           ? Match.buildPracticeSim(seed, practiceArch, practiceDroneArch)
           : new Sim(seed);
+    // 6b: the first practice sim gets its field here (rematch reseeds in
+    // beginMatch; rooms wait for launch — no wrecks in an empty lobby sim)
+    if (practice) this.sim.seedField(Match.generateWrecks(seed, this.sim, true));
   }
 
   // Patch 2 "Two Ships": is this the co-op campaign shape (room-code lobby,
@@ -205,9 +215,9 @@ export class Match {
   static freshRun(): CampaignRun {
     return {
       system: 1,
-      upgrades: { sig: 0, sensor: 0, accel: 0, hull: 0 },
+      loadout: null,
       pools: null,
-      totals: { huntersKilled: 0, salvaged: 0, pingsFired: 0, upgrades: 0, timeS: 0 },
+      totals: { huntersKilled: 0, salvaged: 0, pingsFired: 0, modules: 0, timeS: 0 },
     };
   }
 
@@ -220,8 +230,17 @@ export class Match {
       typeof v === "number" && Number.isFinite(v) ? Math.max(lo, Math.min(hi, Math.round(v))) : dflt;
     const run = Match.freshRun();
     run.system = num(r.system, 1, C.CAMPAIGN_SYSTEMS, 1);
-    for (const k of ["sig", "sensor", "accel", "hull"] as const) {
-      run.upgrades[k] = num(r.upgrades?.[k], 0, 32, 0);
+    // the deck: valid module ids only, hard caps (finiteness, not honesty)
+    if (typeof r.loadout === "object" && r.loadout !== null) {
+      const ids = (v: unknown, cap: number): C.ModuleId[] =>
+        Array.isArray(v)
+          ? (v.filter((x) => typeof x === "string" && x in C.MODULES) as C.ModuleId[]).slice(0, cap)
+          : [];
+      run.loadout = {
+        installed: ids(r.loadout.installed, 12),
+        hold: ids(r.loadout.hold, 32),
+        ore: num(r.loadout.ore, 0, 999, 0),
+      };
     }
     if (typeof r.pools === "object" && r.pools !== null) {
       run.pools = {
@@ -232,8 +251,10 @@ export class Match {
         hull: num(r.pools.hull, 1, 1000, 1),
       };
     }
-    for (const k of ["huntersKilled", "salvaged", "pingsFired", "upgrades", "timeS"] as const) {
-      run.totals[k] = num(r.totals?.[k], 0, 1e6, 0);
+    for (const k of ["huntersKilled", "salvaged", "pingsFired", "modules", "timeS"] as const) {
+      // accept the old `upgrades` key for modules (pre-ruling saves)
+      const raw = k === "modules" ? (r.totals?.modules ?? r.totals?.upgrades) : r.totals?.[k];
+      run.totals[k] = num(raw, 0, 1e6, 0);
     }
     return run;
   }
@@ -241,8 +262,66 @@ export class Match {
   // Salvage sites (§4): MARKED sites are reliable and watched; RUMORED
   // sites are the player's leads — possibly empty, richest in the dust
   // (where you go blind to get rich, and so does he).
-  private static generateWrecks(seed: string, sim: Sim): Wreck[] {
+  // Loadout §5: sites are TYPED, and the type is what makes transit a
+  // decision — a military wreck PROBABLY has weapons; the pools are
+  // stochastic within type. 6b: multiplayer uses the SAME generator with
+  // allMarked (rumor semantics — private leads, resolve-by-presence —
+  // are campaign machinery; MP wrecks are Schelling points, all public).
+  private static rollWreckLoot(
+    rand: () => number,
+    type: WreckType
+  ): SalvageItem[] {
+    const pick = <T,>(arr: T[]): T => arr[Math.floor(rand() * arr.length)];
+    switch (type) {
+      case "military":
+        return [
+          { kind: "pdc_ammo", amount: 20 },
+          { kind: "missiles", amount: 2 },
+          { kind: "module", amount: 1, module: pick(["railgun", "armor_plate", "mine_layer"]) },
+        ];
+      case "survey":
+        return [
+          { kind: "probes", amount: 2 },
+          { kind: "hull", amount: 15 },
+          { kind: "module", amount: 1, module: pick(["deep_array", "probe_rack"]) },
+        ];
+      case "smuggler":
+        return [
+          { kind: "decoys", amount: 2 },
+          { kind: "ore", amount: 2 },
+          { kind: "module", amount: 1, module: pick(["baffles", "drive_tune"]) },
+        ];
+      case "freighter":
+        // ore, and a great deal of it — plus consumables. No module: the
+        // freighter is the mass-vs-value bet in its purest form.
+        return [
+          { kind: "pdc_ammo", amount: 20 },
+          { kind: "ore", amount: 3 },
+          { kind: "ore", amount: 4 },
+          { kind: "missiles", amount: 2 },
+        ];
+      case "derelict":
+        // rare — two modules and the ore to refine one (§6, next leg)
+        return [
+          { kind: "ore", amount: 4 },
+          { kind: "module", amount: 1, module: pick(["baffles", "deep_array", "drive_tune", "probe_rack"]) },
+          { kind: "module", amount: 1, module: pick(["railgun", "mine_layer", "armor_plate"]) },
+        ];
+      default:
+        return [];
+    }
+  }
+
+  private static generateWrecks(seed: string, sim: Sim, allMarked = false): Wreck[] {
     const rand = mulberry32(hashSeed(`${seed}:wrecks`));
+    const rollType = (): WreckType => {
+      const r = rand();
+      if (r < 0.08) return "derelict"; // rare, and worth crossing a system for
+      if (r < 0.35) return "military";
+      if (r < 0.6) return "survey";
+      if (r < 0.8) return "smuggler";
+      return "freighter";
+    };
     const wrecks: Wreck[] = [];
     let id = 1;
     const place = (biasDust: boolean): { x: number; y: number } => {
@@ -266,44 +345,36 @@ export class Match {
       }
       return { x: 0, y: 0 };
     };
-    for (let i = 0; i < C.SALVAGE_MARKED_SITES; i++) {
+    const rumorCount = allMarked ? 0 : C.SALVAGE_RUMORED_SITES;
+    const markedCount = C.SALVAGE_MARKED_SITES + (allMarked ? C.SALVAGE_RUMORED_SITES : 0);
+    for (let i = 0; i < markedCount; i++) {
       const p = place(false);
+      const type = rollType();
       wrecks.push({
         id: id++,
         letter: String.fromCharCode(65 + wrecks.length), // "A", "B", ... in creation order
+        type,
         ...p,
         marked: true,
         checked: false,
-        items: [
-          { kind: "pdc_ammo", amount: 20 },
-          { kind: i % 2 === 0 ? "missiles" : "decoys", amount: 2 },
-          { kind: "probes", amount: 1 },
-        ] as SalvageItem[],
+        items: Match.rollWreckLoot(rand, type),
       });
     }
-    const cycle: ("sig" | "sensor" | "accel" | "hull")[] = ["sig", "accel", "sensor", "hull"];
-    for (let i = 0; i < C.SALVAGE_RUMORED_SITES; i++) {
+    for (let i = 0; i < rumorCount; i++) {
       const p = place(true);
       const inDust = insideDust(p.x, p.y, sim.terrain);
       // a rumor can be a dry hole — but never in the dust (the deep risk
       // always pays; that's the §4.4 economy)
       const empty = !inDust && rand() < 0.35;
+      const type = rollType();
       wrecks.push({
         id: id++,
         letter: String.fromCharCode(65 + wrecks.length),
+        type, // hidden until checked (the snapshot enforces it)
         ...p,
         marked: false,
         checked: false,
-        items: empty
-          ? []
-          : ([
-              { kind: "hull", amount: 15 },
-              { kind: "missiles", amount: 2 },
-              { kind: "probes", amount: 1 },
-              ...(inDust || rand() < 0.4
-                ? [{ kind: "upgrade", amount: 1, upgrade: cycle[(id + i) % 4] }]
-                : []),
-            ] as SalvageItem[]),
+        items: empty ? [] : Match.rollWreckLoot(rand, type),
       });
     }
     return wrecks;
@@ -346,10 +417,11 @@ export class Match {
         // fitted to THIS hull, so the mults travel directly). A captain
         // with no carry entry died last system: fresh base ship, empty
         // hold — losing the cargo is the cost (§4).
-        ship.sigMult = carried.sigMult;
-        ship.sensorMult = carried.sensorMult;
-        ship.accelMult = carried.accelMult;
-        ship.hullMult = carried.hullMult;
+        // cc ruling 1: the DECK travels — installed, hold, ore. Mults stay
+        // 1 (they're Hunter knobs now). Hull clamps to the plated max.
+        ship.installed = [...carried.installed];
+        ship.hold = carried.hold.map((mod) => ({ module: mod }));
+        ship.ore = carried.ore;
         ship.decoys = carried.decoys;
         ship.pdcAmmoS = carried.pdcAmmoS;
         const loaded = Math.min(carried.missiles, stats.tubes);
@@ -358,14 +430,18 @@ export class Match {
           t.reload = 0;
         });
         ship.reserve = Math.max(0, carried.missiles - loaded);
-        ship.hull = Math.min(Math.round(stats.hull * carried.hullMult), carried.hull);
+        ship.hull = Math.min(hullMaxOf(ship), carried.hull);
       } else if (seats.length === 1) {
         // solo §6 progression: a multiplier table over constants that
         // already exist, restored from the client-owned run state
-        ship.sigMult = Math.pow(C.UPGRADE_SIG_MULT, run.upgrades.sig);
-        ship.sensorMult = Math.pow(C.UPGRADE_SENSOR_MULT, run.upgrades.sensor);
-        ship.accelMult = Math.pow(C.UPGRADE_ACCEL_MULT, run.upgrades.accel);
-        ship.hullMult = Math.pow(C.UPGRADE_HULL_MULT, run.upgrades.hull);
+        // cc ruling 1: the run carries a DECK, not multipliers — restored
+        // from the client-owned run state (sanitized ids only). A fresh
+        // run (loadout null) keeps the addShip starting loadout.
+        if (run.loadout) {
+          ship.installed = [...run.loadout.installed];
+          ship.hold = run.loadout.hold.map((mod) => ({ module: mod }));
+          ship.ore = run.loadout.ore;
+        }
         // pools persist across jumps (§6) — arrive as you left. EXCEPT
         // propellant (1.1 §6): it refills to 100% on transition — it's the
         // one resource that already regenerates in flight, and starting a
@@ -381,7 +457,7 @@ export class Match {
             t.reload = 0;
           });
           ship.reserve = Math.max(0, run.pools.missiles - loaded);
-          ship.hull = Math.min(Math.round(stats.hull * ship.hullMult), run.pools.hull);
+          ship.hull = Math.min(hullMaxOf(ship), run.pools.hull);
         }
       }
     });
@@ -421,10 +497,9 @@ export class Match {
       wrecks: Match.generateWrecks(seed, sim),
       salvaging: {},
       cleared: false,
-      stats: { huntersKilled: 0, salvaged: 0, pingsFired: 0, upgrades: 0 },
+      stats: { huntersKilled: 0, salvaged: 0, pingsFired: 0, modules: 0 },
       haul: [],
       decoyTaught: false,
-      upgradeCounts: { sig: 0, sensor: 0, accel: 0, hull: 0 },
       solGood: {},
       solCooldownS: {},
       gateCloseS: null,
@@ -490,12 +565,14 @@ export class Match {
     const durationS = this.sim.tickCount / C.TICK_RATE_HZ;
     return {
       system: nextSystem,
-      upgrades: {
-        sig: this.run.upgrades.sig + m.upgradeCounts.sig,
-        sensor: this.run.upgrades.sensor + m.upgradeCounts.sensor,
-        accel: this.run.upgrades.accel + m.upgradeCounts.accel,
-        hull: this.run.upgrades.hull + m.upgradeCounts.hull,
-      },
+      // the deck as it stands at the crossing — read straight off the hull
+      loadout: ship
+        ? {
+            installed: [...ship.installed],
+            hold: ship.hold.map((it) => it.module),
+            ore: ship.ore,
+          }
+        : this.run.loadout,
       pools: ship
         ? {
             propellant: Math.round(ship.propellant),
@@ -509,7 +586,7 @@ export class Match {
         huntersKilled: this.run.totals.huntersKilled + m.stats.huntersKilled,
         salvaged: this.run.totals.salvaged + m.stats.salvaged,
         pingsFired: this.run.totals.pingsFired + m.stats.pingsFired,
-        upgrades: this.run.totals.upgrades + m.stats.upgrades,
+        modules: this.run.totals.modules + m.stats.modules,
         timeS: this.run.totals.timeS + durationS,
       },
     };
@@ -526,7 +603,7 @@ export class Match {
       huntersKilled: this.run.totals.huntersKilled + (m?.stats.huntersKilled ?? 0),
       salvaged: this.run.totals.salvaged + (m?.stats.salvaged ?? 0),
       pingsFired: this.run.totals.pingsFired + (m?.stats.pingsFired ?? 0),
-      upgrades: this.run.totals.upgrades + (m?.stats.upgrades ?? 0),
+      modules: this.run.totals.modules + (m?.stats.modules ?? 0),
       timeS: Math.round(this.run.totals.timeS + durationS),
       hullRemaining: ship ? Math.round(ship.hull) : 0,
     };
@@ -545,18 +622,15 @@ export class Match {
       decoys: "decoys",
       probes: "sensor probes",
       hull: "hull repair",
+      ore: "ore",
     };
-    const moduleNames = {
-      sig: "ENGINE BAFFLES — we run quieter",
-      sensor: "SENSOR SUITE — we hear farther",
-      accel: "DRIVE PARTS — we burn harder",
-      hull: "ARMOR PLATE — we take more",
-    } as const;
     const agg = new Map<string, number>();
     const lines: string[] = [];
     for (const it of m.haul) {
-      if (it.kind === "upgrade") {
-        lines.push(`\u25c6 ${moduleNames[it.upgrade ?? "sig"]}`);
+      if (it.kind === "module") {
+        lines.push(`\u25c6 ${C.MODULES[it.module ?? "baffles"].name.toUpperCase()}`);
+      } else if (it.kind === "ore") {
+        agg.set("ore", (agg.get("ore") ?? 0) + it.amount);
       } else {
         agg.set(it.kind, (agg.get(it.kind) ?? 0) + it.amount);
       }
@@ -735,9 +809,18 @@ export class Match {
       // v5 bug (found in v5.1 §7.3): practice rematch used spawnShips(),
       // which spawns SEATS — captain alone, no drone, an empty range
       this.sim = Match.buildPracticeSim(seed, this.practiceArch, this.practiceDroneArch);
+      // the practice range gets the field too — nowhere better to learn
+      // the workshop rule than with a drone instead of a Hunter
+      this.sim.seedField(Match.generateWrecks(seed, this.sim, true));
     } else {
       this.sim = new Sim(seed);
       this.spawnShips();
+      // Amendment §1: the multiplayer map is no longer a featureless
+      // arena — same wreck generator as the campaign, same typed pools,
+      // ALL MARKED (rumor semantics are campaign machinery; MP wrecks are
+      // objectives and Schelling points, public from t=0). Salvage is
+      // bait: a full stop, loud on approach, predictable.
+      this.sim.seedField(Match.generateWrecks(seed, this.sim, true));
     }
     this.launched = true;
     this.kills = [];
@@ -1271,10 +1354,9 @@ export class Match {
           const s = this.sim.ships.get(seat.id);
           if (!s) continue; // dead this system: returns fresh, empty hold (§4)
           this.coopCarry.set(seat.id, {
-            sigMult: s.sigMult,
-            sensorMult: s.sensorMult,
-            accelMult: s.accelMult,
-            hullMult: s.hullMult,
+            installed: [...s.installed],
+            hold: s.hold.map((it) => it.module),
+            ore: s.ore,
             missiles: missilesAboard(s),
             decoys: s.decoys,
             pdcAmmoS: Math.round(s.pdcAmmoS),

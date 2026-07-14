@@ -170,8 +170,19 @@ const HOLD_NAME = {
   decoys: "decoys",
   probes: "probes",
   hull: "hull repair",
+  ore: "ore",
 };
-const MODULE_NAME = { sig: "baffles", sensor: "sensor suite", accel: "drive parts", hull: "armor plate" };
+// cc ruling 1: the haul carries REAL module ids now (the stat-bump
+// vocabulary is dead) — display names mirror server MODULES
+const MODULE_NAME = {
+  baffles: "baffles",
+  deep_array: "deep array",
+  drive_tune: "drive tune",
+  armor_plate: "armor plate",
+  railgun: "railgun",
+  mine_layer: "mine layer",
+  probe_rack: "probe rack",
+};
 
 // opts: {practice?, team?, salvageRangeM?}
 export function buildPanel(snap, opts = {}) {
@@ -300,8 +311,8 @@ export function buildPanel(snap, opts = {}) {
     // design-review notes)
     hold: you.mission
       ? (you.mission.hold ?? []).map((it) =>
-          it.kind === "upgrade"
-            ? `◆ ${MODULE_NAME[it.upgrade] ?? it.upgrade}`
+          it.kind === "module"
+            ? `◆ ${MODULE_NAME[it.module] ?? it.module}`
             : `${HOLD_NAME[it.kind] ?? it.kind} +${it.n}`
         )
       : null,

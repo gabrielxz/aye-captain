@@ -126,7 +126,7 @@ const snapOf = (you: any, extra: Record<string, unknown> = {}): any => ({
       baseYou({
         mission: {
           system: 1, systemName: "The Drifter", spawnInS: 0, hunterActive: true,
-          hold: [{ kind: "missiles", n: 2 }, { kind: "upgrade", upgrade: "sensor", n: 1 }],
+          hold: [{ kind: "missiles", n: 2 }, { kind: "module", module: "deep_array", n: 1 }],
           salvaging: { nextInS: 12, itemsLeft: 3 },
           gateClosing: { phase: "closing", leftS: 134, aperturePct: 61, apertureW: 2196 },
         },
@@ -138,7 +138,7 @@ const snapOf = (you: any, extra: Record<string, unknown> = {}): any => ({
   assert(hot.mission!.sub.some((s: any) => s.text === "GATE CLOSING 2:14 · aperture 61%"), "closing gate carries countdown + live aperture");
   assert(hot.mission!.sub.some((s: any) => /salvage · next in 12s · 3 left/.test(s.text)), "the transfer clock stays visible");
   assert(hot.mission!.sub.some((s: any) => /miss 5.2 km PORT/.test(s.text)), "a bad solution says how bad and which side");
-  assert(hot.hold!.join("|") === "missiles +2|◆ sensor suite", "HOLD ledger: aggregated consumables, named modules");
+  assert(hot.hold!.join("|") === "missiles +2|◆ deep array", "HOLD ledger: aggregated consumables, named modules");
 }
 
 // ---- 6. non-campaign: campaign furniture is absent, grid unchanged ----
@@ -195,14 +195,13 @@ const snapOf = (you: any, extra: Record<string, unknown> = {}): any => ({
     wrecks: [],
     salvaging: {},
     cleared: false,
-    stats: { huntersKilled: 0, salvaged: 0, pingsFired: 0, upgrades: 0 },
+    stats: { huntersKilled: 0, salvaged: 0, pingsFired: 0, modules: 0 },
     haul: [
       { kind: "missiles", amount: 2 },
       { kind: "missiles", amount: 1 },
-      { kind: "upgrade", amount: 1, upgrade: "sensor" },
+      { kind: "module", amount: 1, module: "deep_array" },
     ],
     decoyTaught: false,
-    upgradeCounts: { sig: 0, sensor: 0, accel: 0, hull: 0 },
     solGood: {},
     solCooldownS: {},
   } satisfies Mission;
@@ -210,10 +209,10 @@ const snapOf = (you: any, extra: Record<string, unknown> = {}): any => ({
   const hold = snap.you.mission.hold;
   assert(Array.isArray(hold) && hold.length === 2, "mission.hold aggregates the haul");
   assert(hold[0].kind === "missiles" && hold[0].n === 3, "consumables sum by kind");
-  assert(hold[1].kind === "upgrade" && hold[1].upgrade === "sensor", "modules keep their identity");
+  assert(hold[1].kind === "module" && hold[1].module === "deep_array", "modules keep their identity");
   // and the view-model formats it
   const pm = buildPanel(snap)!;
-  assert(pm.hold!.join("|") === "missiles +3|◆ sensor suite", "panel HOLD line reads the ledger");
+  assert(pm.hold!.join("|") === "missiles +3|◆ deep array", "panel HOLD line reads the ledger");
 }
 
 console.log("panel.test done");

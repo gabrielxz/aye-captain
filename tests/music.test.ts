@@ -28,10 +28,9 @@ const missionSim = (): Sim => {
     wrecks: [],
     salvaging: {},
     cleared: false,
-    stats: { huntersKilled: 0, salvaged: 0, pingsFired: 0, upgrades: 0 },
+    stats: { huntersKilled: 0, salvaged: 0, pingsFired: 0, modules: 0 },
     haul: [],
     decoyTaught: false,
-    upgradeCounts: { sig: 0, sensor: 0, accel: 0, hull: 0 },
     solGood: {},
     solCooldownS: {},
   } satisfies Mission;
