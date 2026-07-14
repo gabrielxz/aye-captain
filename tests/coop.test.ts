@@ -414,9 +414,26 @@ const fakeWs = () => {
     s.vy = uy * 3000;
     for (let i = 0; i < 30 && !(sim.mission!.through ?? []).includes(id); i++) (match as any).physicsStep();
   };
+  const crossEvents: SimEvent[] = [];
+  const origStep = (match as any).physicsStep.bind(match);
+  (match as any).physicsStep = () => {
+    const evs: SimEvent[] = [];
+    sim.step(evs);
+    crossEvents.push(...evs);
+    for (const e of evs) (match as any).routeEvent(e);
+  };
   cross("A");
+  (match as any).physicsStep = origStep;
   assert((sim.mission!.through ?? []).includes("A"), "A is through");
   assert(!sim.mission!.cleared, "the system does NOT advance — the partner is still in it");
+  // playtest 2026-07-13: the crossing spoke the "we've left the shroud"
+  // ALARM instead of the through line (solo suppressed it via `cleared`
+  // landing same-substep; a waiting partner delays cleared). Pinned: the
+  // through-captain hears "We're through" and never the zone-exit alarm.
+  assert(crossEvents.some((e) => e.kind === "notice" && (e as any).ship === "A" && /We're through/.test((e as any).text)),
+    "the crossing speaks the through line");
+  assert(!crossEvents.some((e) => e.kind === "notice" && (e as any).ship === "A" && /left the shroud/.test((e as any).text)),
+    "…and NEVER the left-the-shroud alarm (the co-op crossing bug)");
   assert(!wsA.sent.some((m) => m.type === "system_clear"), "no run map yet");
   assert(wsA.sent.some((m) => m.type === "start" && m.role === "spectator" && m.coop === true),
     "the through captain flips to coach mode");

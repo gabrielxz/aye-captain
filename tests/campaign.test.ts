@@ -1014,4 +1014,30 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
   );
 }
 
+// (c) a MOVING hulk is reachable from rest — the XO matches its drift
+// (which looks like flying away from the prize), then closes, then docks.
+// The command also SAYS so now (playtest 2026-07-13: "it tried, but I
+// think it couldn't because it was moving" — it could; it just looked
+// wrong and was never told otherwise).
+{
+  const sim = missionSim();
+  sim.mission!.wrecks.push({
+    id: 1, letter: "A", x: 8000, y: 0, vx: 300, vy: 0, // under way at 300 m/s
+    marked: true, checked: false, items: [{ kind: "pdc_ammo", amount: 10 }],
+  });
+  const a = sim.ships.get("A")!;
+  a.x = 0;
+  a.y = 0;
+  sim.enqueue("A", [{ verb: "salvage", params: { target: "A" } } as any]);
+  const first = sim.tick();
+  assert(first.some((e) => e.kind === "notice" && /match her drift first/.test((e as any).text)),
+    "the XO warns the approach starts with a velocity match ('may look wrong before it looks right')");
+  let dockedAt = -1;
+  for (let t = 0; t < 360 && dockedAt < 0; t++) {
+    sim.tick();
+    if (sim.mission!.stats.salvaged > 0) dockedAt = t;
+  }
+  assert(dockedAt >= 0, `a 300 m/s hulk IS reachable from rest — docked and looted at t=${dockedAt}s`);
+}
+
 console.log("done: campaign");

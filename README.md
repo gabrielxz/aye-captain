@@ -184,7 +184,9 @@ be going somewhere — not both.
 - **Propellant is delta-v**: a full tank is 100 s of hard burn — enough to
   reach flank speed and kill it once. It regenerates only inside the region
   with throttle ≤ 20% (the HUD's PROP row shows ⟳ while harvesting, ✕ when
-  the gate is closed). Dry tanks = you drift. Turning is free.
+  the gate is closed). Dry tanks = you drift — and the engines auto-safe
+  to zero so harvesting starts on its own; order thrust back up once
+  there's something to burn. Turning is free.
 - **Terrain**: 30 asteroids plus a centerpiece moonlet (solid — collision
   warnings sound 20 s out, hitting one above ~50 m/s hurts, ~1.5 km/s is
   lethal) and 3 dust clouds (sensor shadows). Same field on rematch, or ask

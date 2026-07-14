@@ -50,8 +50,11 @@ const assert = (cond: boolean, msg: string) => {
   assert(a2.propellant === 50, "zero regen outside the zone, ever");
 }
 
-// 3. tanks dry: output forced to 0, setting remembered, coasting + turning work,
-// signature goes dim, refuel resumes thrust
+// 3. tanks dry: the throttle AUTO-SAFES to zero (playtest 2026-07-13 — the
+// old "setting remembered" rule left a dry ship with a high setting getting
+// no output AND no regen, a stuck state; REVERSED by design), coasting +
+// turning work, signature goes dim, and re-ordering thrust after regen
+// resumes output.
 {
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 0);
@@ -59,22 +62,23 @@ const assert = (cond: boolean, msg: string) => {
   a.propellant = 1.5;
   sim.enqueue("A", [{ verb: "set_thrust", params: { percent: 100 } }]);
   sim.tick(); // burns 1.0
-  sim.tick(); // burns to 0 (0.5 left -> 0, clamped)
+  sim.tick(); // burns to 0 (0.5 left -> 0, clamped) -> auto-safe fires
   sim.tick();
-  assert(a.propellant === 0, "tank empty");
-  assert(a.thrust === 100, "throttle setting remembered");
-  assert(effectiveThrust(a) === 0, "no thrust output when dry");
+  assert(a.thrust === 0, "dry tanks auto-safe the setting to zero (no more stuck state)");
+  assert(a.propellant < 1, "tank ran dry (regen trickle already restarting)");
+  assert(effectiveThrust(a) === 0, "no thrust output at zero setting");
   assert(sim.signatureOf(a) === C.SIG_BASE, "dry ship signature drops to base (dim)");
   const [vx, vy] = [a.vx, a.vy];
   sim.enqueue("A", [{ verb: "set_heading", params: { mode: "absolute", degrees: 90 } }]);
   sim.tick();
   assert(a.vx === vx && a.vy === vy, "coasts under Newton while dry");
   assert(a.facing > 0, "turning still works while dry");
-  // refuel via regen: drop throttle setting under the ceiling
-  sim.enqueue("A", [{ verb: "set_thrust", params: { percent: 10 } }]);
+  // regen is already running (setting auto-safed under the ceiling)
   for (let i = 0; i < 4; i++) sim.tick();
-  assert(a.propellant > 0, "ramscoop refuels at low throttle inside zone");
-  assert(effectiveThrust(a) === 10, "thrust output resumes once fuel regenerates");
+  assert(a.propellant > 0, "harvest refills on its own after the auto-safe");
+  sim.enqueue("A", [{ verb: "set_thrust", params: { percent: 10 } }]);
+  sim.tick();
+  assert(effectiveThrust(a) === 10, "thrust output resumes when the captain re-orders it");
 }
 
 // 4. warnings at 50/25/10/0, edge-triggered, re-armed on recovery
@@ -138,5 +142,43 @@ const assert = (cond: boolean, msg: string) => {
   a.thrust = 0;
   a.x = C.REGION_RADIUS_M + 10000; // beyond the shroud: gate closed at any throttle
   assert((sim.snapshotFor("A") as any).you.regen === false, "regen flag false outside the zone");
+}
+
+// Playtest fix 2026-07-13: BONE-DRY AUTO-SAFES THE THROTTLE. A dry ship
+// with the setting still high got no output AND no regen (the setting
+// gates regen) — a stuck state unless the crew knew to say "throttle
+// down". Dry now zeroes the setting (belaying a timed burn), the XO says
+// so, and harvest resumes on its own.
+{
+  const sim = new Sim();
+  const a = sim.addShip("A", 0, 0, 0); // inside zone
+  sim.addShip("B", 0, 40000, 180, true);
+  a.propellant = 1.5;
+  a.thrust = 80;
+  const all: any[] = [];
+  for (let t = 0; t < 5; t++) all.push(...sim.tick());
+  assert(a.thrust === 0, "dry tanks auto-safe the throttle to zero");
+  assert(all.some((e) => e.kind === "notice" && /Throttle to zero/.test(e.text)), "…and the XO says so");
+  const atDry = a.propellant;
+  sim.tick();
+  assert(a.propellant > atDry, "…and regen resumes on its own — the stuck state is gone");
+
+  // a running timed burn is belayed by dry tanks (its whole job is thrust)
+  const sim2 = new Sim();
+  const b = sim2.addShip("A", 0, 0, 0);
+  sim2.addShip("B", 0, 40000, 180, true);
+  b.propellant = 1.5;
+  sim2.enqueue("A", [{ verb: "maneuver", params: { type: "burn", seconds: 60, percent: 100 } }]);
+  for (let t = 0; t < 5; t++) sim2.tick();
+  assert(b.maneuver === null && b.thrust === 0, "dry tanks belay a timed burn too");
+
+  // the law is INTACT with fuel aboard: a high setting still blocks regen
+  const sim3 = new Sim();
+  const c = sim3.addShip("A", 0, 0, 0);
+  sim3.addShip("B", 0, 40000, 180, true);
+  c.propellant = 50;
+  c.thrust = 80;
+  sim3.tick();
+  assert(c.thrust === 80 && c.propellant < 50, "with fuel aboard the setting stands and regen stays gated (invariant 8)");
 }
 console.log("done");

@@ -268,7 +268,11 @@ Note: on this machine's rootless Docker, `-p` port publishing doesn't route
    back to last-known position with a one-time XO notice. The full_stop
    maneuver is unchanged (defined end state).
 8. Propellant regen gates on the throttle SETTING (not output); signature
-   uses EFFECTIVE thrust; drones are exempt from propellant.
+   uses EFFECTIVE thrust; drones are exempt from propellant. BONE-DRY
+   AUTO-SAFES the setting to 0 (belaying a timed burn) so a dry ship
+   always starts harvesting — the old "setting remembered while dry"
+   rule was a stuck state (no output AND no regen) and was REVERSED by
+   playtest 2026-07-13; with fuel aboard the setting stands.
 9. Detection: range = SENSOR_BASE_M x signature/100, always LOS-gated
    (rocks + dust). Outside the region = signature-max (tier ID at any
    range). Ordnance uses the same math via its own signature. Missile

@@ -1264,6 +1264,17 @@ export class Sim {
           ship: ship.id,
           text: `Coming alongside ${noun(target).toLowerCase()} ${target.letter}, Captain.`,
         });
+        // a hulk under way: the first leg is a velocity MATCH, which can
+        // look like flying away from the prize — say so (playtest
+        // 2026-07-13: "it tried, but I think it couldn't because it was
+        // moving") — fixed line, TTS-cacheable
+        if (Math.hypot(target.vx ?? 0, target.vy ?? 0) > C.SALVAGE_STOP_SPEED_MPS) {
+          events.push({
+            kind: "notice",
+            ship: ship.id,
+            text: "She's under way, Captain — I'll match her drift first, then close. It may look wrong before it looks right.",
+          });
+        }
         // 1.1 §2d: SILENT/FLANK approaches get the price spoken aloud
         this.quoteManeuverPrice(
           ship,
@@ -2932,6 +2943,14 @@ export class Sim {
       // must be set first or the shroud line doubles the exit call.
       if (this.isMissionPlayer(ship.id)) {
         this.checkGateCrossing(ship, preX, preY, events);
+        // §5: the crossing may have just marked us departed — a ship
+        // that's THROUGH must never reach the zone-exit machinery, or the
+        // co-op through-captain gets the "we've left the shroud" alarm
+        // barging over "We're through" (solo was saved by `cleared`
+        // landing on the same substep; a waiting partner delays it).
+        // Skipping also keeps the frozen ship's crossing state exact —
+        // no edge-pull nibbling at a hull that already left.
+        if (this.departed(ship.id)) continue;
       }
       this.applyBounds(ship, events, dt);
     }
@@ -4494,6 +4513,27 @@ export class Sim {
       };
       const [text, alert] = lines[tier];
       events.push({ kind: "notice", ship: ship.id, text, alert });
+      // Playtest 2026-07-13: bone-dry with the throttle SETTING still high
+      // is a trap — no output AND no regen (the invariant-8 gate reads the
+      // setting), and a crew that doesn't know to say "throttle down" is
+      // stuck forever. Dry AUTO-SAFES the engines: setting to zero (a
+      // running timed burn is belayed — its whole job is thrust), harvest
+      // resumes on the next substep, and the captain re-orders thrust when
+      // there's something to burn. The setting-gates-regen law is intact
+      // for every ship with fuel in the tanks.
+      if (tier === 0) {
+        if (ship.maneuver?.type === "burn") ship.maneuver = null;
+        if (ship.thrust > 0) {
+          ship.thrust = 0;
+          if (!ship.isDrone) {
+            events.push({
+              kind: "notice",
+              ship: ship.id,
+              text: "Throttle to zero — we'll regenerate what we can while we coast, Captain.",
+            });
+          }
+        }
+      }
     }
     ship.propellantTier = tier;
   }
