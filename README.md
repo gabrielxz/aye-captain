@@ -93,6 +93,20 @@ be going somewhere — not both.
   160 hull, 3 tubes, deep magazines, and a signature that cannot hide.
   Enemy archetypes are ID-tier information: below ID every contact is a
   neutral wedge on the map.
+- **The loadout**: your ship is a deck of modules. Installed = mass,
+  always (accel, turn, and braking follow force/mass; the hold has no
+  limit — mass IS the limit). Powered = reactor draw, and **draw is
+  signature** — light the deep array and your voice ring swells. The
+  reactor is hard-capped; over it the XO refuses ("something has to go
+  cold"). Power is instant at any speed ("light up the array"); changing
+  the deck itself — install/uninstall — is the **workshop rule**: a full
+  stop, ~a minute, helpless, and any thrust scrubs the job. Hulls spawn
+  with their book kit cold (Corvette: baffles −25% total sig while lit;
+  Frigate: railgun + probe rack; Cruiser: railgun + armor plate). The
+  railgun must be lit to fire — a cold rail lights itself on the fire
+  order and stays humming until powered down. A lit mine layer drops
+  station-keeping proximity mines (IFF-safe, near-silent, found at knife
+  range) — the chase becomes the trap.
 - **Contacts have names**: your XO designates hostile tracks in acquisition
   order — "Contact Alpha", "Contact Bravo" (decoys get letters too; you
   can't tell). At ID range a track resolves to the ship's permanent

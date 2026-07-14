@@ -63,6 +63,121 @@ export const ARCHETYPES: Record<ArchetypeName, ArchetypeStats> = {
   cruiser:  { hull: 160, accel: 40, turn: 14, sigBase: 45, sensorBase: 160000, tubes: 3, magazine: 9, tubeReload: 30, decoys: 4, pdcAmmoS: 90, railguns: 1, railSlugs: 30, probes: 1 },
 };
 
+// ===== Patches 4+5 "The Loadout" (HANDOFF-PATCH-4-5-LOADOUT.md, as amended
+// by AMENDMENT-THE-UNIFICATION.md — the amendment WINS) =====================
+//
+// THE LAW: everything you run makes noise. Power draw IS signature (§0).
+// THE CALIBRATION (amendment §3): the ARCHETYPES table above is THE BOOK —
+// the observable stats of an archetype CARRYING ITS STARTING LOADOUT with
+// an empty hold. It does not change. The internals below (thrustForce,
+// turnTorque, base hull/probes) are DERIVED from the book so that a
+// starting-loadout ship is bit-identical to today at every throttle.
+// Looting degrades from there: getting stronger costs speed and silence,
+// in every mode. NO rubber-banding on top — the economy self-corrects
+// (amendment §2; the lever, if 1v1 snowballs, is POWER_TO_SIG).
+
+export type ModuleId =
+  | "baffles"
+  | "deep_array"
+  | "railgun"
+  | "mine_layer"
+  | "armor_plate"
+  | "probe_rack";
+export interface ModuleSpec {
+  name: string; // display + XO vocabulary
+  mass: number;
+  power: number; // reactor draw while powered; 0 = PASSIVE (works installed)
+}
+// §4: the FIVE first (plus probe_rack — it's in the frigate's starting
+// loadout per the amendment table). The rest of the catalog ships only
+// after these prove out in the playtest. Do not add them early.
+export const MODULES: Record<ModuleId, ModuleSpec> = {
+  baffles: { name: "engine baffles", mass: 2, power: 1 }, // −25% total sig while powered
+  deep_array: { name: "deep array", mass: 1, power: 4 }, // +60% sensor range while powered — seeing costs being seen
+  railgun: { name: "railgun", mass: 4, power: 2 }, // must be POWERED to fire (fire auto-lights it)
+  mine_layer: { name: "mine layer", mass: 3, power: 1 }, // drop mines while powered — the chase becomes the trap
+  armor_plate: { name: "armor plate", mass: 5, power: 0 }, // +hull, pure mass — proves the cost
+  probe_rack: { name: "probe rack", mass: 2, power: 0 }, // +probes, passive
+};
+// Amendment §3: hardcoded archetype capabilities become starting loadouts.
+// Corvette: no railgun — exactly as today. Frigate/Cruiser: railgun aboard.
+export const STARTING_LOADOUT: Record<ArchetypeName, ModuleId[]> = {
+  corvette: ["baffles"],
+  frigate: ["railgun", "probe_rack"],
+  cruiser: ["railgun", "armor_plate"],
+};
+// §2 archetype table: slots + reactor (the reactor is the archetype's
+// soul: the corvette is a tight deck, the cruiser a greedy one), plus
+// baseMass (the bare hull — LOW/MID/HIGH; units are module-masses).
+export const ARCH_SLOTS: Record<ArchetypeName, number> = { corvette: 4, frigate: 6, cruiser: 8 };
+export const ARCH_REACTOR: Record<ArchetypeName, number> = { corvette: 6, frigate: 9, cruiser: 12 };
+export const ARCH_BASE_MASS: Record<ArchetypeName, number> = { corvette: 30, frigate: 60, cruiser: 100 };
+// §2: one number, two consequences — a powered module spends the reactor
+// AND makes you loud. TUNE: a fully-lit cruiser (12 draw = +96) should be
+// roughly as loud as a corvette at full burn (120).
+export const POWER_TO_SIG = 8;
+// §4 module effects (the five)
+export const BAFFLES_SIG_MULT = 0.75; // −25% TOTAL signature while powered
+export const DEEP_ARRAY_SENSOR_MULT = 1.6; // +60% sensor range while powered
+export const ARMOR_PLATE_HULL = 40; // +hull per installed plate (passive)
+// ⚠️ DEVIATION from the base doc's "+4 probes": the frigate STARTS with a
+// rack, and the amendment's non-regression law pins its spawn probes at
+// the book's 2 — base-minus-effect derivation forces the rack's grant to
+// 2 (book 2 − rack 4 would need −2 base probes). Flagged in the check-in.
+export const PROBE_RACK_PROBES = 2;
+export const RAIL_SLUGS_LOOTED = 20; // magazine granted by a looted railgun (frigate book: 20)
+// §3b THE WORKSHOP RULE: anything that modifies the ship requires a full
+// stop (same threshold as salvage) and takes real time; any thrust
+// command aborts and loses that module's progress.
+export const MODULE_INSTALL_S = 60;
+// §4 mines (mine layer): a dropped mine station-keeps where it's laid
+// (cold-gas trim — a drifting mine would just follow its layer). Sensor
+// rules apply to it like all ordnance (invariant 9); prox fuse carries
+// the layer's team stamp (invariant 16: fuses are GUIDED systems).
+export const MINE_SUPPLY = 6; // per mine layer module, no reloads
+export const MINE_SIGNATURE = 8; // near-silent: seen only up close
+export const MINE_PROX_RADIUS_M = 800;
+export const MINE_DAMAGE = 35;
+export const MINE_ARM_S = 5; // won't fuse on the layer sailing away
+export const MINE_DROP_COOLDOWN_S = 3;
+
+// Derived calibration internals — never hand-edit these.
+const startingMass = (a: ArchetypeName) =>
+  STARTING_LOADOUT[a].reduce((s, m) => s + MODULES[m].mass, 0);
+// calibMass = what the book's stats were measured with (amendment §3)
+export const ARCH_CALIB_MASS: Record<ArchetypeName, number> = {
+  corvette: ARCH_BASE_MASS.corvette + startingMass("corvette"),
+  frigate: ARCH_BASE_MASS.frigate + startingMass("frigate"),
+  cruiser: ARCH_BASE_MASS.cruiser + startingMass("cruiser"),
+};
+// thrustForce = accel_book × calibMass; turnTorque = turn_book × calibMass
+// (§1: accel = force/mass, turn = torque/mass — braking distance follows)
+export const ARCH_THRUST_FORCE: Record<ArchetypeName, number> = {
+  corvette: ARCHETYPES.corvette.accel * ARCH_CALIB_MASS.corvette,
+  frigate: ARCHETYPES.frigate.accel * ARCH_CALIB_MASS.frigate,
+  cruiser: ARCHETYPES.cruiser.accel * ARCH_CALIB_MASS.cruiser,
+};
+export const ARCH_TURN_TORQUE: Record<ArchetypeName, number> = {
+  corvette: ARCHETYPES.corvette.turn * ARCH_CALIB_MASS.corvette,
+  frigate: ARCHETYPES.frigate.turn * ARCH_CALIB_MASS.frigate,
+  cruiser: ARCHETYPES.cruiser.turn * ARCH_CALIB_MASS.cruiser,
+};
+// base hull/probes = book minus the starting loadout's passive grants
+// (the cruiser's 160 already includes its plate; the frigate's 2 probes
+// already include its rack)
+const startingCount = (a: ArchetypeName, m: ModuleId) =>
+  STARTING_LOADOUT[a].filter((x) => x === m).length;
+export const ARCH_BASE_HULL: Record<ArchetypeName, number> = {
+  corvette: ARCHETYPES.corvette.hull - startingCount("corvette", "armor_plate") * ARMOR_PLATE_HULL,
+  frigate: ARCHETYPES.frigate.hull - startingCount("frigate", "armor_plate") * ARMOR_PLATE_HULL,
+  cruiser: ARCHETYPES.cruiser.hull - startingCount("cruiser", "armor_plate") * ARMOR_PLATE_HULL,
+};
+export const ARCH_BASE_PROBES: Record<ArchetypeName, number> = {
+  corvette: ARCHETYPES.corvette.probes - startingCount("corvette", "probe_rack") * PROBE_RACK_PROBES,
+  frigate: ARCHETYPES.frigate.probes - startingCount("frigate", "probe_rack") * PROBE_RACK_PROBES,
+  cruiser: ARCHETYPES.cruiser.probes - startingCount("cruiser", "probe_rack") * PROBE_RACK_PROBES,
+};
+
 // Signature & detection: DETECTION IS THE GAME. Drive plumes are visible
 // across enormous distances; going dark is the only stealth.
 // ship signature = SIG_BASE + EFFECTIVE thrust% (30..130), plus spikes.

@@ -1572,6 +1572,38 @@ function drawOrdnance() {
     }
   }
 
+  // Loadout §4 mines: a small spiked circle. Own field always (with a
+  // slow arming pulse until live); allied fields read friendly-blue;
+  // an ENEMY mine only ever appears at knife range — when it does, it
+  // deserves to be loud on the map.
+  for (const mn of state.lastSnap.mines ?? []) {
+    const [mx, my] = worldToScreen(mn.x, mn.y);
+    const tint = mn.own ? COLORS.own : mn.ally ? COLORS.ally : COLORS.enemy;
+    ctx.save();
+    ctx.translate(mx, my);
+    ctx.strokeStyle = tint;
+    ctx.lineWidth = 1.4;
+    const armed = mn.own ? mn.armed : true;
+    ctx.globalAlpha = armed ? 0.9 : 0.45 + 0.3 * Math.sin(performance.now() / 250);
+    ctx.beginPath();
+    ctx.arc(0, 0, 3.5, 0, Math.PI * 2);
+    ctx.stroke();
+    for (let i = 0; i < 6; i++) {
+      const a = (i * Math.PI) / 3;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a) * 3.5, Math.sin(a) * 3.5);
+      ctx.lineTo(Math.cos(a) * 6, Math.sin(a) * 6);
+      ctx.stroke();
+    }
+    if (!mn.own && !mn.ally) {
+      ctx.fillStyle = tint;
+      ctx.font = "9px monospace";
+      ctx.fillText("MINE", 8, 3);
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+
   // v5 §5 rail slugs: a hot hypervelocity streak along the velocity vector
   for (const sl of state.lastSnap.slugs ?? []) {
     const ent = interpolateById("slugs", sl.id) ?? sl;
