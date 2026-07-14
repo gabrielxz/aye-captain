@@ -1604,11 +1604,12 @@ export class Sim {
         if (countIn(ship.powered, "railgun") === 0) {
           const err = this.powerUp(ship, "railgun");
           if (err) return err; // no headroom: the fire is refused, nothing lit
+          // cc ruling 4: the auto-light's standing cost deserves a VOICE —
+          // fired only here, never on a manual power-on (that was asked for)
           events.push({
             kind: "notice",
             ship: ship.id,
-            text: "Railgun's lit, Captain — she stays on the board until we power her down.",
-            silent: true,
+            text: "Railgun hot, Captain — and we'll stay loud until it's cold.",
           });
         }
         const mode = cmd.params.mode === "bearing" ? "bearing" : "solution";
@@ -2317,6 +2318,36 @@ export class Sim {
       if (Math.random() < C.PDC_KILL_PROB_PER_S * dt) {
         deadProbes.add(pr.id);
         this.fx.push({ type: "boom", x: pr.x, y: pr.y });
+      }
+    }
+
+    // (a3) mines (cc ruling 3 — THIS IS THE MECHANIC, not a footnote):
+    // a FREE mount clears the field, but PDC fire is LOUD (the sig spike
+    // below) — the chaser chooses between eating the mine and telling the
+    // whole map where they are. Sensor-slaved like everything else: a mine
+    // at sig 8 is only even visible at knife range. The Hunter's mounts
+    // run the same code — he is NOT exempt from the dilemma.
+    for (const mn of this.mines) {
+      if (mn.armS === Infinity) continue; // spent this substep
+      if (this.sameSide(ship.id, ship.team, mn.owner, mn.team)) continue;
+      const range = dist(ship.x, ship.y, mn.x, mn.y);
+      if (range > C.PDC_RANGE_M) continue;
+      if (range > this.detectionRange(C.MINE_SIGNATURE, ship)) continue;
+      if (!this.losClear(ship.x, ship.y, mn.x, mn.y)) continue;
+      firing = true;
+      this.fx.push({ type: "pdc", owner: ship.id, x1: ship.x, y1: ship.y, x2: mn.x, y2: mn.y });
+      if (Math.random() < C.PDC_KILL_PROB_PER_S * dt) {
+        mn.armS = Infinity; // reaped by stepMines' filter
+        this.fx.push({ type: "boom", x: mn.x, y: mn.y });
+        events.push({ kind: "notice", ship: ship.id, text: "PDC splash — mine cleared." });
+        const layer = this.ships.get(mn.owner);
+        if (layer && this.canObserve(layer, mn.x, mn.y)) {
+          events.push({
+            kind: "notice",
+            ship: mn.owner,
+            text: "They're shooting our mines, Captain — hear those guns.",
+          });
+        }
       }
     }
 

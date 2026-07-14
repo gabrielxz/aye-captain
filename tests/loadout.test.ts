@@ -191,6 +191,51 @@ const apply = (sim: Sim, ship: any, cmd: any): string | null =>
   assert((sim as any).mines.length === 0, "and the mine is spent");
 }
 
+// 11b. cc ruling 3: PDCs clear mines — but only FREE, and firing is loud.
+// The chaser chooses: eat the mine, or tell the map where they are.
+{
+  const sim = new Sim();
+  const layer = sim.addShip("L", 0, 0, 0, false, "blue");
+  const chaser = sim.addShip("X", 0, 6000, 180, false, "red");
+  layer.pdcPosture = "hold";
+  (sim as any).mines.push({ id: 1, owner: "L", team: "blue", x: 0, y: 3000, armS: 0 });
+  // HOLD: the field survives and the mount stays silent
+  chaser.pdcPosture = "hold";
+  for (let i = 0; i < 5; i++) sim.tick();
+  assert((sim as any).mines.length === 1, "PDC HOLD: the mine stays (silence has a price)");
+  assert(chaser.sigSpikePdc === 0, "and the chaser stays quiet");
+  // FREE: the field dies, but the guns scream on the signature
+  chaser.pdcPosture = "free";
+  let cleared = false;
+  for (let i = 0; i < 60 && !cleared; i++) {
+    sim.tick();
+    cleared = (sim as any).mines.length === 0;
+  }
+  assert(cleared, "PDC FREE clears the mine");
+  assert(chaser.sigSpikePdc > 0, "🔴 and clearing it is LOUD — the mine is an information weapon");
+}
+
+// 11c. cc ruling 4: the auto-light speaks its standing cost — once, and
+// only on the AUTO light (a manual power-on was asked for; no lecture)
+{
+  const sim = new Sim();
+  const f = sim.addShip("A", 0, 0, 0);
+  const evs: any[] = [];
+  (sim as any).applyCommand(f, { verb: "fire_railgun", params: { mode: "bearing", bearing_degrees: 0 } }, evs);
+  assert(
+    evs.some((e: any) => e.kind === "notice" && /Railgun hot, Captain — and we'll stay loud/.test(e.text) && !e.silent),
+    "auto-light: the price is SAID (news, spoken)"
+  );
+  const f2 = sim.addShip("B", 0, 100000, 0);
+  const evs2: any[] = [];
+  (sim as any).applyCommand(f2, { verb: "power", params: { module: "railgun", state: "on" } }, evs2);
+  (sim as any).applyCommand(f2, { verb: "fire_railgun", params: { mode: "bearing", bearing_degrees: 0 } }, evs2);
+  assert(
+    !evs2.some((e: any) => e.kind === "notice" && /Railgun hot/.test(e.text)),
+    "manual power-on then fire: no lecture — the captain chose it"
+  );
+}
+
 // 12. fog: the loadout rides ONLY the owner's snapshot
 {
   const sim = new Sim();

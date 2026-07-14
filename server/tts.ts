@@ -168,6 +168,8 @@ const STOCK_LINES = [
   // (full text stays in the transcript) — see ACK_SPEAK_LINES in constants
   ...C.ACK_SPEAK_LINES,
   C.QUERY_ANSWER_SPEAK,
+  // The Loadout: the railgun auto-light's price, said out loud (cc ruling 4)
+  "Railgun hot, Captain — and we'll stay loud until it's cold.",
   // Patch 3.5: the two rings — crossover edge lines + the once-per-match
   // estimate disclaimer (all fixed by spec; the addendum forbids metaphor)
   "They'll hear us before we hear them, Captain.",
