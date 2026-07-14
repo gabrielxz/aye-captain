@@ -1,5 +1,41 @@
 # TODO — next steps
 
+## Patches 4+5 "The Loadout" — steps 1-6 BUILT 2026-07-14 (branch `patch-4-loadout`)
+
+Mass (force/mass through accelOf/turnRateOf; ARCHETYPES stays THE BOOK,
+internals derived — starting-loadout hulls bit-identical, whole suite
+green unmodified), reactor (reject, never shed), installed≠powered
+(power instant+free, DRAW IS SIGNATURE), workshop rule (full stop, 60 s,
+thrust/drift aborts — tick-enforced so standing orders can't dodge it),
+the five modules (baffles ×0.75 total while lit; deep array ×1.6 sensors
+while lit — the EARS ring grows; armor +40 hull passive; railgun
+auto-lights on fire and STAYS lit; mine layer → station-keeping IFF
+mines, sig 8), landModule salvage-installs, verbs in schema/translator,
+you.loadout ledger, Doctrine VII docs. 61 pins in tests/loadout.test.ts.
+Step-4 gate FLOWN: power the rail while parked → disc swells past ears +
+crossover line. The moment lands.
+
+Judgment calls to review: starting modules spawn COLD (only calibration
+consistent with bit-identical signature); probe rack grants +2, not the
+doc's +4 (frigate book 2 pins it); looted rail arrives with 20 slugs
+(fire-out/uninstall/reinstall can farm slugs — §6 rearm economy will
+supersede); PDCs do NOT engage mines (unspecced, deferred).
+
+NEXT (before the playtest, per amended build order): §5 wreck types with
+module pools shrunk to the five (Military: railgun/armor/mine layer;
+Survey: deep array/probe rack; Smuggler: baffles; Freighter:
+consumables; type visible from t=0) + 6b bring multiplayer over (wrecks
+on the MP map, salvage verb in MP, death hulks in ALL modes carrying
+loadout+hold at 0.4 momentum). THEN the two-mode playtest (watch 1v1
+snowballing — the lever is POWER_TO_SIG, never a handicap). After
+playtest: §6 ore/refit/Mk II, §8 legibility (sprite from loadout, plume
+from signature, hum from draw), §7 panel fill, rest of the catalog.
+
+OPEN QUESTION (blocks the campaign leg): do modules REPLACE the campaign
+§6 upgradeCounts stat-bumps, and how does the loadout persist in run
+state (invariant 21 localStorage + coopCarry)? The doc implies
+replacement — Gabriel's call.
+
 ## Patch 3.5 "Two Rings" (ADDENDUM-PATCH-3-TWO-RINGS-v2.md) — BUILT 2026-07-14
 
 The 50 km ring is gone from the main view (every new player misread it
