@@ -674,6 +674,33 @@ export interface Mission {
 
 // ---------- angle helpers ----------
 
+// How a mount splits its finite rate across what it can see. PURE, and
+// exported, because the allocation IS the mechanic and the dice are not — a
+// probabilistic end-to-end test would be flaky (repo law: randomness in sim =
+// flaky tests), so this is what gets pinned exhaustively.
+//
+// The mounts hold `channels` targets at full rate. Past that they time-slice:
+// each of the n targets in a class gets take/n of the rate, so TOTAL kill
+// throughput is capped. Classes are served worst-first — missiles, then mines,
+// then probes — and each gets only what the ones above it left, so a minefield
+// cannot dilute anti-missile fire. One target in a class the mounts can cover
+// returns exactly 1: the single-missile case is untouched by design.
+export function pdcShares(
+  channels: number,
+  missiles: number,
+  mines: number,
+  probes: number
+): { missile: number; mine: number; probe: number } {
+  let budget = channels;
+  const shareOf = (n: number): number => {
+    if (n <= 0) return 0;
+    const take = Math.min(budget, n);
+    budget -= take;
+    return take / n;
+  };
+  return { missile: shareOf(missiles), mine: shareOf(mines), probe: shareOf(probes) };
+}
+
 export function norm360(d: number): number {
   return ((d % 360) + 360) % 360;
 }
@@ -2381,20 +2408,67 @@ export class Sim {
     if (ship.pdcPosture !== "free" || ship.pdcAmmoS <= 0 || this.winner) return;
     let firing = false;
 
-    // (a) inbound missiles. SENSOR-SLAVED: the mount shares the ship's
-    // sensor picture — it can only engage ordnance the ship currently
-    // detects (signature detection range + LOS). A ballistic torpedo
-    // arriving from sensor shadow may never be engaged. Intended.
-    for (const m of this.missiles) {
-      // v5 §8 IFF: the mounts ignore friendly ordnance
-      if (this.sameSide(ship.id, ship.team, m.owner, m.team) || deadMissiles.has(m.id)) continue;
-      const range = dist(ship.x, ship.y, m.x, m.y);
-      if (range > C.PDC_RANGE_M) continue;
-      if (range > this.detectionRange(this.missileSignature(m), ship)) continue;
-      if (!this.losClear(ship.x, ship.y, m.x, m.y)) continue;
+    // Can this mount engage that object at all? SENSOR-SLAVED: it shares the
+    // ship's sensor picture and can only engage ordnance the ship currently
+    // detects (signature detection range + LOS). A ballistic torpedo arriving
+    // from sensor shadow may never be engaged. Intended.
+    const engageable = (x: number, y: number, sig: number): boolean => {
+      const range = dist(ship.x, ship.y, x, y);
+      return (
+        range <= C.PDC_RANGE_M &&
+        range <= this.detectionRange(sig, ship) &&
+        this.losClear(ship.x, ship.y, x, y)
+      );
+    };
+    // v5 §8 IFF: the mounts ignore friendly ordnance.
+    const eligibleMissiles = this.missiles.filter(
+      (m) =>
+        !this.sameSide(ship.id, ship.team, m.owner, m.team) &&
+        !deadMissiles.has(m.id) &&
+        engageable(m.x, m.y, this.missileSignature(m))
+    );
+    const eligibleProbes = this.probes.filter(
+      (pr) =>
+        !this.sameSide(ship.id, ship.team, pr.owner, pr.team) &&
+        !deadProbes.has(pr.id) &&
+        engageable(pr.x, pr.y, C.PROBE_SIGNATURE)
+    );
+    const eligibleMines = this.mines.filter(
+      (mn) =>
+        mn.armS !== Infinity && // spent this substep
+        !this.sameSide(ship.id, ship.team, mn.owner, mn.team) &&
+        engageable(mn.x, mn.y, C.MINE_SIGNATURE)
+    );
+
+    // THROUGHPUT, not channels. The mounts hold pdcChannels targets at full
+    // rate; past that they time-slice, so total kill throughput is capped and
+    // one mount can no longer defend against unlimited objects at full rate
+    // each (audit §2.7 — the half of its PDC finding that survived checking).
+    //
+    // Deliberately NOT the hard channel cap the audit proposed: with 1 channel
+    // and 2 missiles that model never engages the second one at all, so it
+    // always lives — a cliff, and a gamey one. Dividing the rate is what a
+    // real mount does (it slews between targets) and it degrades smoothly.
+    // With a single target the fraction is 1 and NOTHING about the
+    // single-missile case moves — ~57% across the envelope, which
+    // tests/pdc.test.ts documents as the spec's intent.
+    //
+    // Guns go to what kills you soonest: missiles, then mines, then probes. A
+    // class gets only what the ones above it left, so a minefield can no
+    // longer dilute your anti-missile defense — but with nothing inbound, a
+    // FREE mount still clears mines exactly as before (and just as loudly).
+    const { missile: missileShare, mine: mineShare, probe: probeShare } = pdcShares(
+      statsOf(ship).pdcChannels,
+      eligibleMissiles.length,
+      eligibleMines.length,
+      eligibleProbes.length
+    );
+
+    // (a) inbound missiles.
+    for (const m of eligibleMissiles) {
       firing = true;
       this.fx.push({ type: "pdc", owner: ship.id, x1: ship.x, y1: ship.y, x2: m.x, y2: m.y });
-      if (Math.random() < C.PDC_KILL_PROB_PER_S * dt) {
+      if (Math.random() < C.PDC_KILL_PROB_PER_S * dt * missileShare) {
         deadMissiles.add(m.id);
         this.fx.push({ type: "boom", x: m.x, y: m.y });
         events.push({ kind: "notice", ship: ship.id, text: "PDC splash — missile destroyed." });
@@ -2409,15 +2483,10 @@ export class Sim {
     // (a2) enemy probes (v5 §6): fair game for the mount, same rules —
     // sensor-slaved (probe sig ${C.PROBE_SIGNATURE} is visible far beyond
     // PDC range, so in practice: in envelope = engaged)
-    for (const pr of this.probes) {
-      if (this.sameSide(ship.id, ship.team, pr.owner, pr.team) || deadProbes.has(pr.id)) continue;
-      const range = dist(ship.x, ship.y, pr.x, pr.y);
-      if (range > C.PDC_RANGE_M) continue;
-      if (range > this.detectionRange(C.PROBE_SIGNATURE, ship)) continue;
-      if (!this.losClear(ship.x, ship.y, pr.x, pr.y)) continue;
+    for (const pr of eligibleProbes) {
       firing = true;
       this.fx.push({ type: "pdc", owner: ship.id, x1: ship.x, y1: ship.y, x2: pr.x, y2: pr.y });
-      if (Math.random() < C.PDC_KILL_PROB_PER_S * dt) {
+      if (Math.random() < C.PDC_KILL_PROB_PER_S * dt * probeShare) {
         deadProbes.add(pr.id);
         this.fx.push({ type: "boom", x: pr.x, y: pr.y });
       }
@@ -2429,16 +2498,10 @@ export class Sim {
     // whole map where they are. Sensor-slaved like everything else: a mine
     // at sig 8 is only even visible at knife range. The Hunter's mounts
     // run the same code — he is NOT exempt from the dilemma.
-    for (const mn of this.mines) {
-      if (mn.armS === Infinity) continue; // spent this substep
-      if (this.sameSide(ship.id, ship.team, mn.owner, mn.team)) continue;
-      const range = dist(ship.x, ship.y, mn.x, mn.y);
-      if (range > C.PDC_RANGE_M) continue;
-      if (range > this.detectionRange(C.MINE_SIGNATURE, ship)) continue;
-      if (!this.losClear(ship.x, ship.y, mn.x, mn.y)) continue;
+    for (const mn of eligibleMines) {
       firing = true;
       this.fx.push({ type: "pdc", owner: ship.id, x1: ship.x, y1: ship.y, x2: mn.x, y2: mn.y });
-      if (Math.random() < C.PDC_KILL_PROB_PER_S * dt) {
+      if (Math.random() < C.PDC_KILL_PROB_PER_S * dt * mineShare) {
         mn.armS = Infinity; // reaped by stepMines' filter
         this.fx.push({ type: "boom", x: mn.x, y: mn.y });
         events.push({ kind: "notice", ship: ship.id, text: "PDC splash — mine cleared." });

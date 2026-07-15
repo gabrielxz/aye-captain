@@ -60,11 +60,18 @@ export interface ArchetypeStats {
   railguns: 0 | 1;
   railSlugs: number;
   probes: number;
+  // Simultaneous targets the mounts hold at FULL rate. Past this they
+  // time-slice: total kill throughput is capped, so saturation is a real
+  // answer to point defense (audit §2.7 — one mount used to engage unlimited
+  // objects at full rate each, for the same ammo per second). Not a hard
+  // channel cliff: with one target the fraction is 1 and nothing about the
+  // single-missile case (~57% across the envelope, the spec's intent) moves.
+  pdcChannels: number;
 }
 export const ARCHETYPES: Record<ArchetypeName, ArchetypeStats> = {
-  corvette: { hull: 60, accel: 85, turn: 39.2, sigBase: 20, sensorBase: 210000, tubes: 1, magazine: 4, tubeReload: 20, decoys: 6, pdcAmmoS: 40, railguns: 0, railSlugs: 0, probes: 4 }, // turn 28 → 39.2: Anvil §5, +40% exactly (the wanted turn-rate pass, corvette leg)
-  frigate:  { hull: 100, accel: 60, turn: 20, sigBase: 30, sensorBase: 180000, tubes: 2, magazine: 6, tubeReload: 30, decoys: 4, pdcAmmoS: 60, railguns: 1, railSlugs: 20, probes: 2 },
-  cruiser:  { hull: 160, accel: 40, turn: 14, sigBase: 45, sensorBase: 160000, tubes: 3, magazine: 9, tubeReload: 30, decoys: 4, pdcAmmoS: 90, railguns: 1, railSlugs: 30, probes: 1 },
+  corvette: { hull: 60, accel: 85, turn: 39.2, sigBase: 20, sensorBase: 210000, tubes: 1, magazine: 4, tubeReload: 20, decoys: 6, pdcAmmoS: 40, railguns: 0, railSlugs: 0, probes: 4, pdcChannels: 1 }, // turn 28 → 39.2: Anvil §5, +40% exactly (the wanted turn-rate pass, corvette leg)
+  frigate:  { hull: 100, accel: 60, turn: 20, sigBase: 30, sensorBase: 180000, tubes: 2, magazine: 6, tubeReload: 30, decoys: 4, pdcAmmoS: 60, railguns: 1, railSlugs: 20, probes: 2, pdcChannels: 2 },
+  cruiser:  { hull: 160, accel: 40, turn: 14, sigBase: 45, sensorBase: 160000, tubes: 3, magazine: 9, tubeReload: 30, decoys: 4, pdcAmmoS: 90, railguns: 1, railSlugs: 30, probes: 1, pdcChannels: 3 },
 };
 
 // ===== Patches 4+5 "The Loadout" (HANDOFF-PATCH-4-5-LOADOUT.md, as amended
