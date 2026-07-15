@@ -728,8 +728,16 @@ export const GATE_XO_COOLDOWN_S = 10; // min gap between gate-solution XO calls 
 // deliberately down from the old 100 — slower and quieter is the point.
 // Timed burns are exempt: the captain named a percent, the captain gets it.
 export type Discipline = "silent" | "standard" | "flank";
+// 🔴 LINKED: silent == REGEN_MAX_THRUST_PCT. These were set independently
+// and did not line up — silent capped at 25 while regen needs the SETTING at
+// or under 20, so "silent running", the posture whose entire identity is
+// patience, was the one posture that drained the tank to zero and never paid
+// a drop back. A captain who set silent and walked away came back dry. Fixed
+// 2026-07-14 after the playtest question "what are the fuel rates?" surfaced
+// the gap. Silent is now exactly the harvest band: infinite endurance, and
+// the only posture that regenerates while it moves.
 export const DISCIPLINE_CAP: Record<Discipline, number> = {
-  silent: 25, // takes forever; nobody hears you
+  silent: 20, // slow, unheard, and it PAYS — the regen band exactly
   standard: 60, // the new default
   flank: 100, // "I don't care who hears — get me there"
 };
@@ -763,7 +771,29 @@ export const SHROUD_CURRENT_FLOW_FLOOR_MPS = 80; // the flow never stalls — th
 // aperture, ever: if the window is too tight RAISE DURATION — never a
 // floor, never APERTURE_W_M. Still in-system at closure: RUN ENDED —
 // STRANDED. The pylons ride the aperture inward: closed = wall.
-export const GATE_CLOSE_GRACE_S = 240;
+// 2026-07-14: +30 s of window, added to GRACE (240 -> 270), NOT to DURATION.
+// The measured budget for a head-on Hunter kill was ~382 s of perfect
+// piloting against 420 — 38 s of slack that assumed a lucky chase, no voice
+// round-trips, and no rock in the hulk's path. The stern-chase kill (a
+// nearly co-moving hulk) was always comfortable at ~260 s; the head-on one
+// was arithmetic, not skill. The 15 km salvage gate lifting in the same
+// patch gives the captain an instrument for that leg; this gives him the
+// seconds to fly it.
+//
+// ⚠️ WHY GRACE AND NOT DURATION, despite the note above saying "RAISE
+// DURATION": the two are not interchangeable. Total window is GRACE +
+// DURATION, so either buys the same 30 s of looting time — but DURATION is
+// also THE VISE (campaign.test.ts §30): a full-hold cruiser on the far side
+// when the narrowing STARTS must not be able to reach the door. It needs
+// ~204 s to cross the region, so DURATION 210 would have handed it the
+// crossing by 6 s and deleted "jettison or die" as a decision. Measured, not
+// guessed — §30 went red on the first try. Put window into GRACE; keep
+// DURATION at the vise.
+//
+// Note "wait out the current" is NOT a real escape hatch: the current only
+// acts outside the rim and the Hunter's leash means he usually dies steering
+// inward, so the hulk never crosses.
+export const GATE_CLOSE_GRACE_S = 270;
 export const GATE_CLOSE_DURATION_S = 180;
 
 // --- Stage 1: the run (§1) + salvage (§4) + progression (§6) ---

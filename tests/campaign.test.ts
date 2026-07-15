@@ -565,10 +565,25 @@ const missionSim = (over: Partial<Mission> = {}, seed?: string): Sim => {
   let ev = sim.tick();
   assert(ev.some((e) => e.kind === "notice" && /Coming alongside wreck A/.test((e as any).text)), '"salvage A" inside 15 km: the XO takes her in, by name');
   assert((a.maneuver as any)?.wreckId === 1, "the maneuver targets the NAMED site, not the nearest");
-  // a distant site teaches the rule
+  // a distant site is ACCEPTED and flown to — the 15 km gate is gone
+  // (2026-07-14). It was the only thing between the captain and a moving
+  // wreck: past it nothing else resolves a wreck letter, so the Hunter's
+  // hulk could only be chased with `set_heading absolute` at a STATIC
+  // bearing against an 800 m/s target, re-read by voice every second. And
+  // the gate was ISSUE-TIME ONLY — armed inside 15 km the same solver would
+  // chase that hulk to any range, so it never protected a limit, it just
+  // refused to start.
   sim.enqueue("A", [{ verb: "salvage", params: { target: "B" } } as any]);
   ev = sim.tick();
-  assert(ev.some((e) => e.kind === "reject" && /too far out.*fifteen klicks/.test((e as any).reason)), "a distant site rejects with the fifteen-klick rule");
+  assert(
+    !ev.some((e) => e.kind === "reject"),
+    "a 90 km site is no longer refused — the XO has a closed loop, so he flies it"
+  );
+  assert((a.maneuver as any)?.wreckId === 2, "…and the maneuver targets the distant site");
+  assert(
+    ev.some((e) => e.kind === "notice" && /Coming alongside wreck B/.test((e as any).text)),
+    "…announcing it by name, same ceremony as the close one"
+  );
   // an unresolved rumor is a legal target — that IS investigation
   sim.enqueue("A", [{ verb: "salvage", params: { target: "C" } } as any]);
   ev = sim.tick();
@@ -739,6 +754,44 @@ const missionSim = (over: Partial<Mission> = {}, seed?: string): Sim => {
 // the boundary trigger is computing a brake he cannot buy.
 // A pin belongs here once the fuel-budgeting call is made (TODO.md). Writing
 // one now that passes on a hand-picked seed would repeat the original sin.
+
+// 25c. THE HULK IS REACHABLE NOW. The 15 km gate lifting is only worth
+// something if the solver actually closes a long chase against a moving
+// prize — which is the leg the game gave the captain no instrument for, and
+// the reason "there's barely enough time to loot a Hunter even if the XO
+// could pilot perfectly" was true. One command, 80 km out, 800 m/s hulk.
+{
+  const sim = missionSim();
+  const a = sim.ships.get("A")!;
+  a.x = 0; a.y = 0; a.vx = a.vy = 0;
+  const wreck = {
+    id: 7, letter: "H", x: 80000, y: 0, vx: 800, vy: 0,
+    marked: true, checked: false, type: "hulk",
+    items: [{ kind: "missiles", amount: 2 } as any],
+  };
+  sim.mission!.wrecks.push(wreck as any);
+  sim.enqueue("A", [{ verb: "salvage", params: { target: "H" } } as any]);
+  const ev = sim.tick();
+  assert(!ev.some((e) => e.kind === "reject"), "one command, 80 km out, a hulk under way: accepted");
+  assert(
+    ev.some((e) => e.kind === "notice" && /match her drift first/.test((e as any).text)),
+    "…and the XO warns it will look wrong before it looks right"
+  );
+  let relBest = Infinity;
+  let dockedAt = -1;
+  for (let t = 0; t < 500; t++) {
+    sim.tick();
+    const rel = Math.hypot(a.vx - wreck.vx, a.vy - wreck.vy);
+    const d = dist(a.x, a.y, wreck.x, wreck.y);
+    relBest = Math.min(relBest, rel);
+    if (dockedAt < 0 && d <= C.SALVAGE_DOCK_RANGE_M && rel < C.SALVAGE_STOP_SPEED_MPS) dockedAt = t;
+  }
+  assert(
+    dockedAt >= 0,
+    `the XO flies the whole intercept and rides along (docked at t=${dockedAt}s, best relative speed ${relBest.toFixed(0)} m/s)`
+  );
+  assert(sim.mission!.stats.salvaged > 0, "…and the transfer actually runs — the prize is reachable");
+}
 
 // 26. ANVIL §3a — the transfer gate is RELATIVE: an 800 m/s wreck cannot
 // be looted by a stationary ship, and CAN be by one matching its velocity

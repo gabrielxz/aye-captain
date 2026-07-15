@@ -1443,22 +1443,42 @@ export class Sim {
               ? `Wreck ${letter} is stripped bare, Captain — nothing left to take.`
               : `That rumor was a dry hole, Captain — nothing there.`;
           }
-          if (dist(ship.x, ship.y, target.x, target.y) > C.SALVAGE_APPROACH_RANGE_M) {
-            // fixed strings (letters only, no numbers) — rejections speak
-            // verbatim and the synthesis cache must stay bounded
-            return `${noun(target)} ${letter} is too far out, Captain — get us inside fifteen klicks and I'll take her in.`;
-          }
+          // NO RANGE GATE. Lifted 2026-07-14 — see the block comment on the
+          // nearest-site branch below.
         } else {
           const cand = sites
             .filter(isCandidate)
             .map((w) => ({ w, d: dist(ship.x, ship.y, w.x, w.y) }))
             .sort((a, b) => a.d - b.d)[0];
           if (!cand) return "No sites left with anything in them, Captain.";
-          if (cand.d > C.SALVAGE_APPROACH_RANGE_M) {
-            return "No site inside fifteen klicks, Captain — pick one and get us closer.";
-          }
           target = cand.w;
         }
+        // 🔴 THE 15 KM GATE IS GONE (2026-07-14). It was the ONLY thing
+        // standing between the captain and a moving wreck, and it made the
+        // Hunter's hulk — the richest prize in the game — unreachable in
+        // practice: beyond fifteen klicks nothing else resolves a wreck
+        // (`set_heading target` takes ships, missiles, decoys and rumbles;
+        // a wreck letter is not in the contact book), so the only tool left
+        // was `set_heading absolute` at a bearing read off the state line —
+        // a STATIC snapshot bearing against a hulk doing 800 m/s, re-issued
+        // by voice at 1 Hz through an LLM. There was no closed-loop pursuit
+        // available to the player at all.
+        //
+        // Meanwhile the solver was already here, and already correct: the
+        // terminal approach runs in the WRECK'S FRAME (lead hops, retro-brake
+        // on relative velocity, then ride along), and the gate was
+        // ISSUE-TIME ONLY — armed inside 15 km it would happily chase that
+        // same hulk to any range. So the gate never protected a limit; it
+        // just refused to start. Now `salvage <letter>` flies the whole
+        // intercept, and the XO quotes the price on the way (§2d, below) —
+        // which is the actual answer to "is it worth it", and a better one
+        // than a refusal.
+        //
+        // What is deliberately UNCHANGED: SALVAGE_DOCK_RANGE_M still aborts
+        // an active transfer that drifts (stepSalvage), the workshop rule
+        // still needs a full stop, and the approach is still loud, slow and
+        // predictable — salvage is still bait. Existing salvage tests are
+        // untouched, which is the proof.
         const salvDisc = this.parseDiscipline(cmd.params.discipline);
         ship.maneuver = { type: "salvage", wreckId: target.id, ...(salvDisc ? { discipline: salvDisc } : {}) };
         events.push({
@@ -4941,10 +4961,25 @@ export class Sim {
           events.push({ kind: "notice", ship: ship.id, text: "Tanks dry — I can't finish the stop, Captain.", alert: true });
           return;
         }
-        // lead intercept: aim where the target WILL be at hop speed —
-        // for a static wreck the lead term is zero (current position)
-        const tLead = d / Math.max(50, rspeed);
-        const to = bearingTo(ship.x, ship.y, dockAt.x + wvx * tLead, dockAt.y + wvy * tLead);
+        // Aim AT it. Everything above this line is already solved in the
+        // wreck's frame (rvx/rvy), and in that frame the wreck does not
+        // move — so there is nothing to lead. Thrust is frame-invariant:
+        // burning at the hulk's current position closes the gap whether or
+        // not you are both drifting at 800 m/s.
+        //
+        // This used to carry `tLead = d / max(50, rspeed)` and aim at
+        // `dockAt + wv * tLead`, which mixed the two frames: once the ship
+        // MATCHED the hulk (rspeed small — exactly what the brake above is
+        // for), tLead exploded and the hop aimed tens of km ahead, burning
+        // along the hulk's velocity instead of toward it. It was invisible
+        // for a static wreck (wv = 0 makes the term vanish) and for a short
+        // chase (you arrive hot, so the closing clause carries the hop),
+        // and fatal for the case that matters — the Hunter's hulk, far away
+        // and fast. Measured 2026-07-14: from 80 km against an 800 m/s
+        // hulk it closed to 2.3 km, then chattered between hop and brake
+        // around SALVAGE_STOP_SPEED_MPS and drifted back out to 8.5 km,
+        // never docking. With the lead gone it docks at t≈400.
+        const to = bearingTo(ship.x, ship.y, dockAt.x, dockAt.y);
         ship.goal = { mode: "absolute", degrees: to };
         ship.thrust = Math.abs(angDiff(ship.facing, to)) <= 15 ? Math.min(35, cap) : 0;
         return;

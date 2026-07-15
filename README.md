@@ -43,13 +43,14 @@ be going somewhere — not both.
   happen at once: its hold — the richest in the system, double modules —
   becomes a drifting hulk keeping 40% of its death velocity on its death
   course (loot it by MATCHING that velocity — the momentum is the price —
-  or let the shroud current walk an escaped corpse back inside over a few
-  minutes while the clock spends), and the gate destabilizes — 4 minutes
-  of GATE STABLE grace, then 3 of GATE CLOSING as the pylons walk inward
-  to a fully closed wall; still in-system at zero and the run ends
-  STRANDED. Autopilot maneuvers fly under a discipline posture
-  (silent 25% / standard 60% / flank 100%, per-order overrides —
-  "come to a full stop, quietly"), propellant refills at each jump
+  and "come alongside the hulk" is ONE command at any range: the XO flies
+  the transit, matches the drift, docks and strips it), and the gate
+  destabilizes — 4.5 minutes of GATE STABLE grace, then 3 of GATE CLOSING
+  as the pylons walk inward to a fully closed wall; still in-system at zero
+  and the run ends STRANDED. Autopilot maneuvers fly under a discipline
+  posture (silent 20% / standard 60% / flank 100%, per-order overrides —
+  "come to a full stop, quietly"; silent is the only posture that
+  regenerates propellant while it moves), propellant refills at each jump
   (hull/missiles/ammo are the attrition axes), and the railgun's pinpoint
   solution now requires ID tier — a mere track fires a cone.
   The gate is flown
