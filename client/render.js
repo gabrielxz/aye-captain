@@ -665,10 +665,14 @@ function drawGrid() {
 // Both are ESTIMATES against reference constants (server-derived,
 // you.rings) — soft gradient edges on purpose; they must LOOK like
 // estimates. States from rings-model.js (pure, fog-safe by signature).
+// Alphas roughly halved after the 2026-07-14 playtest ("very cool, I like
+// how it moves, but it's overwhelming"). The LADDER is the information —
+// quiet < crossover < contact — so all three moved together and the
+// relative steps are intact; only the absolute level came down.
 const RING_STYLES = {
-  quiet: { disc: "240, 135, 106", rim: 0.28, fill: 0.05 }, // coral, at ease
-  crossover: { disc: "252, 129, 129", rim: 0.45, fill: 0.09 }, // hotter: they hear us first
-  contact: { disc: "255, 99, 71", rim: 0.7, fill: 0.13 }, // a known contact is inside our voice
+  quiet: { disc: "240, 135, 106", rim: 0.15, fill: 0.02 }, // coral, at ease
+  crossover: { disc: "252, 129, 129", rim: 0.22, fill: 0.035 }, // hotter: they hear us first
+  contact: { disc: "255, 99, 71", rim: 0.36, fill: 0.055 }, // a known contact is inside our voice
 };
 // client-side smoothing so the disc BREATHES between 4 Hz snapshots
 let voiceDrawnM = null;
@@ -690,11 +694,21 @@ function drawSignatureRings(you, dts) {
   // VOICE: a radial-gradient disc — no hard edge anywhere (estimate!)
   const vpx = voiceDrawnM * camera.zoom;
   const style = RING_STYLES[rs.state];
-  if (vpx > 8 && vpx < span * 2.5) {
+  // The disc's information is its EDGE. Once the rim is off-screen the
+  // gradient's inner flat-fill region covers the whole canvas and all three
+  // rim stops fall outside it — a flat, edgeless red tint with no ring and
+  // no gradient, which is what the player was actually complaining about
+  // (it hit hardest at flank, exactly when the style is `crossover` too).
+  // Fade the whole disc out as the rim leaves the view; that also retires
+  // the old vpx < span*2.5 cutoff, which popped it off in a single frame.
+  const rimFade = Math.max(0, Math.min(1, (span * 1.6 - vpx) / (span * 0.7)));
+  if (vpx > 8 && rimFade > 0.01) {
+    const fill = style.fill * rimFade;
+    const rim = style.rim * rimFade;
     const grad = ctx.createRadialGradient(sx, sy, Math.max(0, vpx * 0.55), sx, sy, vpx * 1.08);
-    grad.addColorStop(0, `rgba(${style.disc}, ${style.fill})`);
-    grad.addColorStop(0.82, `rgba(${style.disc}, ${style.fill + style.rim * 0.25})`);
-    grad.addColorStop(0.93, `rgba(${style.disc}, ${style.rim * 0.5})`);
+    grad.addColorStop(0, `rgba(${style.disc}, ${fill})`);
+    grad.addColorStop(0.82, `rgba(${style.disc}, ${fill + rim * 0.25})`);
+    grad.addColorStop(0.93, `rgba(${style.disc}, ${rim * 0.5})`);
     grad.addColorStop(1, `rgba(${style.disc}, 0)`);
     ctx.fillStyle = grad;
     ctx.beginPath();

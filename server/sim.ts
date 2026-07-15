@@ -831,6 +831,11 @@ export class Sim {
       tombstones: { letter: string; lastKnown: { x: number; y: number; facing: number; t: number } }[];
     }
   >();
+  // Patch 3.5 §2: who has already been told about the crossover. PUBLIC and
+  // deliberately reassignable — the Match hands the same set to each new
+  // system's sim, so the teaching line is once per SITTING rather than once
+  // per system (a campaign run rebuilds the sim eight times).
+  crossoverSpoken = new Set<ShipId>();
   // v5 §3: per-viewer opaque rumble aliases ("r1", "r2", ...) — the wire
   // must not let a client correlate rumbles across time by object id, nor
   // tell a ship rumble from a decoy rumble by prefix (invariants 11/13).
@@ -3750,10 +3755,23 @@ export class Sim {
   // spoken alarm at the starting gun.
   private announceCrossover(ship: Ship, events: SimEvent[]): void {
     if (ship.isDrone) return;
-    const prey = this.voiceRangeM(ship) > this.earsRangeM(ship);
+    const voice = this.voiceRangeM(ship);
+    const ears = this.earsRangeM(ship);
     const was = ship.prevPrey;
+    // Deadband. Without one the frigate — whose sigBase IS the book — sits
+    // exactly on the boundary at idle, so any thrust at all flipped the
+    // state and re-spoke the line every tick. A crossing has to CLEAR the
+    // book in the direction it's going.
+    const H = C.RINGS_CROSSOVER_HYSTERESIS;
+    const prey = was === null ? voice > ears : was ? voice > ears / H : voice > ears * H;
     ship.prevPrey = prey;
     if (was === null || prey === was) return;
+    // ...and once told, he doesn't tell you again. This is a teaching line:
+    // useful the first time you cross, noise every time after (playtest
+    // 2026-07-14). The set is Match-owned, so it survives the per-system
+    // sim rebuild — once per SITTING, not once per system.
+    if (this.crossoverSpoken.has(ship.id)) return;
+    this.crossoverSpoken.add(ship.id);
     events.push({
       kind: "notice",
       ship: ship.id,

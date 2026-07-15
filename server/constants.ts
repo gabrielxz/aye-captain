@@ -192,6 +192,14 @@ export const ARCH_BASE_PROBES: Record<ArchetypeName, number> = {
 // showed stealth was FREE (dark = off-switch); dark is now an edge: a
 // drifter is still contact-visible at ~54 km, just not lockable until ~32.
 export const SIG_BASE = 30; // a drifting dark ship. LINKED: == ARCHETYPES.frigate.sigBase
+// Patch 3.5 crossover deadband. The predicate reduces to `sig > SIG_BASE`,
+// and the FRIGATE's sigBase IS SIG_BASE — so at idle it sits exactly on the
+// boundary and 1% of thrust flipped it, re-speaking the line once a second
+// forever (playtest 2026-07-14: "so annoying"). A crossing must now clear
+// the book by this factor in the direction of travel. Consequence worth
+// knowing: a frigate can never get back UNDER (its floor is the book), so
+// it says the line once and means it.
+export const RINGS_CROSSOVER_HYSTERESIS = 1.15;
 export const SIG_SPIKE_LAUNCH = 150; // missile launch flash (replaces the flat reveal)
 export const SIG_SPIKE_LAUNCH_S = 5;
 export const SIG_SPIKE_PDC = 50; // PDC firing (used by v4 §6)

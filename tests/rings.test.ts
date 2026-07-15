@@ -118,7 +118,12 @@ const crossoverDown = /We hear them first again/;
   void b;
 }
 
-// 7. crossover XO line: edge-triggered, once per transition, both directions
+// 7. crossover XO line: a TEACHING line — said once per sitting, and never
+// again. Playtest 2026-07-14: the frigate's sigBase IS SIG_BASE, so idle sat
+// exactly on a strict-> boundary and 1% of thrust flipped it; the XO
+// re-spoke the pair every time the throttle moved, including under his own
+// autopilot. The deadband fixes the flapping; the once-per-sitting cap fixes
+// the rest.
 {
   const sim = new Sim();
   const a = sim.addShip("A", 0, 0, 0);
@@ -136,10 +141,64 @@ const crossoverDown = /We hear them first again/;
   a.thrust = 100;
   for (let i = 0; i < 10; i++) count(sim.tick());
   assert(up === 1, `burning past the crossover speaks EXACTLY once (got ${up})`);
-  a.thrust = 0;
-  for (let i = 0; i < 30; i++) count(sim.tick());
-  assert(down === 1, `dropping back under speaks exactly once (got ${down})`);
-  assert(up === 1, "the sustain never re-speaks (edge-triggered, not repeated)");
+  // cycling the throttle is the reported bug: it used to re-speak on every
+  // pass. A frigate can never get back UNDER the book (its floor IS the
+  // book), so the honest answer is silence, not a second opinion.
+  for (let cycle = 0; cycle < 3; cycle++) {
+    a.thrust = 0;
+    for (let i = 0; i < 30; i++) count(sim.tick());
+    a.thrust = 100;
+    for (let i = 0; i < 30; i++) count(sim.tick());
+  }
+  assert(up === 1, `throttle cycling never re-speaks the line (got ${up})`);
+  assert(down === 0, `and the frigate never claims it got back under the book (got ${down})`);
+}
+
+// 7b. the deadband is real: a hull that CAN go quiet again (the corvette's
+// sigBase is under the book) still only gets told once — and small throttle
+// moves either side of the boundary never chatter.
+{
+  const sim = new Sim();
+  const c = sim.addShip("C", 0, 0, 0, false, null, "C", "corvette");
+  let lines = 0;
+  const count = (evs: any[]) => {
+    for (const e of evs) {
+      if (e.kind === "notice" && (crossoverUp.test(e.text) || crossoverDown.test(e.text))) lines++;
+    }
+  };
+  count(sim.tick());
+  // corvette: prey ⟺ sig > 30, sigBase 20 — the boundary is thrust ~10%.
+  // Wiggle across it the way a captain trimming throttle would.
+  for (let cycle = 0; cycle < 5; cycle++) {
+    c.thrust = 12;
+    for (let i = 0; i < 4; i++) count(sim.tick());
+    c.thrust = 8;
+    for (let i = 0; i < 4; i++) count(sim.tick());
+  }
+  assert(lines <= 1, `trimming the throttle across the boundary does not chatter (got ${lines})`);
+}
+
+// 7c. the teaching line survives the sim rebuild — a campaign run rebuilds
+// eight times, and being told eight times is being told wrong
+{
+  const first = new Sim();
+  const a = first.addShip("A", 0, 0, 0);
+  first.tick();
+  a.thrust = 100;
+  let up = 0;
+  for (let i = 0; i < 10; i++) {
+    for (const e of first.tick() as any[]) if (e.kind === "notice" && crossoverUp.test(e.text)) up++;
+  }
+  assert(up === 1, "system one: told once");
+  const next = new Sim(); // what beginMatch does at every system transition
+  next.crossoverSpoken = first.crossoverSpoken; // ...carrying the set across
+  const a2 = next.addShip("A", 0, 0, 0);
+  next.tick();
+  a2.thrust = 100;
+  for (let i = 0; i < 10; i++) {
+    for (const e of next.tick() as any[]) if (e.kind === "notice" && crossoverUp.test(e.text)) up++;
+  }
+  assert(up === 1, `system two does not re-teach the lesson (got ${up})`);
 }
 
 // 8. a ship that SPAWNS prey gets the tinted ring, not a spoken alarm —
