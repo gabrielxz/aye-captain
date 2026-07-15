@@ -254,6 +254,34 @@ export const PING_COOLDOWN_S = 30;
 // can tear open behind rocks/dust without a client-side raycast port.
 export const PING_SHADOW_SAMPLES = 180; // 2 deg resolution
 
+// THERMAL SIGNATURE MEMORY. Cutting the drive used to make you dim on the very
+// next tick, which made going dark a SWITCH rather than a commitment and
+// invited strobing: light the array, take a snapshot, power down, burn for one
+// second, vanish. The hull remembers now — signature floors at a decaying
+// high-water mark of the SUSTAINED emission (sigBase + effective thrust +
+// reactor draw). You can still become hard to detect; you can no longer erase
+// the last ten seconds of your own behaviour.
+//
+// What it deliberately does NOT remember: the transient weapon spikes
+// (SIG_SPIKE_LAUNCH / _PDC / RAIL_SIG_SPIKE). Those already carry their own
+// timers and are the "you flashed" mechanic; feeding them in would turn a 5 s
+// launch flash into ~20 s of glow — a balance change nobody asked for. The
+// strobing problem was always about THRUST and POWER, so that is what this
+// fixes. Spikes still add on top.
+//
+// A RATE, not a window: a bigger flare glows longer, which is the honest
+// relationship and it prices a hard burn above a module. At 10/s a frigate at
+// full burn (emission 130) needs ~10 s to reach its cold floor of 30 — the
+// 10 s the audit suggested starting from. Tune BY EAR/EYE against the voice
+// disc, which renders this for free (voiceRangeM reads signatureOf).
+//
+// Continuous end to end — a decaying float plus a max(), no thresholds
+// anywhere, so invariant 13 (the hearing channel) holds. Invariant 8 still
+// holds literally (the emission uses EFFECTIVE thrust, so a dry ship's
+// emission does collapse) — what changes is that its GLOW now outlives the
+// fuel, which is the intended lesson.
+export const THERMAL_DECAY_PER_S = 10;
+
 // v5 §5: the railgun. Frigate & Cruiser ship with one; a corvette can loot
 // and mount one (see STARTING_LOADOUT above — hull is not a gate).
 // SOLUTION mode computes constant-velocity lead against a

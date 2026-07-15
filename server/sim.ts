@@ -260,6 +260,10 @@ export interface Ship {
   commsCooldownBroadcastS: number;
   commsCooldownTightbeamS: number;
   sigSpikeRail: number; // seconds of +RAIL_SIG_SPIKE remaining after firing
+  // Decaying high-water mark of the sustained emission — the hull's memory of
+  // its own recent behaviour, and the floor under signatureOf. 0 on a fresh
+  // hull: max() means an un-ticked ship still reads its true emission.
+  thermalSig: number;
   droneCooldown: number; // drone-only: seconds until it may fire again
   droneWaypoint: number; // drone-only: index into the patrol route
   droneDodge: -1 | 0 | 1; // drone-only: committed dodge direction (hysteresis)
@@ -933,6 +937,7 @@ export class Sim {
       commsCooldownBroadcastS: 0,
       commsCooldownTightbeamS: 0,
       sigSpikeRail: 0,
+      thermalSig: 0,
       prevPainted: "none",
       prevPrey: null,
       sigSpikeLaunch: 0,
@@ -985,14 +990,27 @@ export class Sim {
     return ship;
   }
 
-  // Signature follows EFFECTIVE thrust (a tanks-dry ship goes dim) plus
+  // The SUSTAINED emission: what the hull is radiating right now, before any
+  // transient flash and before the multipliers. This is the quantity thermal
+  // memory remembers (see THERMAL_DECAY_PER_S) — split out so the floor and
+  // the reading cannot drift apart.
+  // THE LAW (Patch 4 §0): everything you run makes noise — power draw IS
+  // signature. One number, two consequences: it spends the reactor and
+  // it makes you loud. Cold modules contribute ZERO here and full mass.
+  sustainedEmissionOf(obj: Ship): number {
+    return statsOf(obj).sigBase + effectiveThrust(obj) + reactorDraw(obj) * C.POWER_TO_SIG;
+  }
+
+  // Signature follows EFFECTIVE thrust (a tanks-dry ship's EMISSION goes dim —
+  // but see the thermal floor below: its GLOW outlives the fuel) plus
   // transient spikes (missile launch; PDC fire in §6).
   signatureOf(obj: Ship | Decoy): number {
     if (!("thrust" in obj)) return C.DECOY_SIGNATURE;
-    // THE LAW (Patch 4 §0): everything you run makes noise — power draw IS
-    // signature. One number, two consequences: it spends the reactor and
-    // it makes you loud. Cold modules contribute ZERO here and full mass.
-    let sig = statsOf(obj).sigBase + effectiveThrust(obj) + reactorDraw(obj) * C.POWER_TO_SIG;
+    // The thermal floor: a decaying high-water mark of the sustained emission.
+    // max() and not "replace", so a ship that is loud RIGHT NOW reads its real
+    // emission with no tick required — thermal only ever adds lag on the way
+    // DOWN, which is the only direction that was ever a lie.
+    let sig = Math.max(this.sustainedEmissionOf(obj), obj.thermalSig);
     if (obj.sigSpikeLaunch > 0) sig += C.SIG_SPIKE_LAUNCH;
     if (obj.sigSpikePdc > 0) sig += C.SIG_SPIKE_PDC;
     if (obj.sigSpikeRail > 0) sig += C.RAIL_SIG_SPIKE;
@@ -4693,6 +4711,13 @@ export class Sim {
     ship.sigSpikeLaunch = Math.max(0, ship.sigSpikeLaunch - dt);
     ship.sigSpikePdc = Math.max(0, ship.sigSpikePdc - dt);
     ship.sigSpikeRail = Math.max(0, ship.sigSpikeRail - dt);
+    // Thermal memory: snap UP to any new peak instantly (you cannot hide a
+    // burn while you are making it), bleed DOWN at a fixed rate toward what
+    // you are actually emitting now. The floor under signatureOf.
+    ship.thermalSig = Math.max(
+      this.sustainedEmissionOf(ship),
+      ship.thermalSig - C.THERMAL_DECAY_PER_S * dt
+    );
     ship.railCooldownS = Math.max(0, ship.railCooldownS - dt);
     ship.commsCooldownBroadcastS = Math.max(0, ship.commsCooldownBroadcastS - dt);
     ship.commsCooldownTightbeamS = Math.max(0, ship.commsCooldownTightbeamS - dt);
