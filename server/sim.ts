@@ -5979,13 +5979,30 @@ export class Sim {
           `Salvage on the board: ${live
             .map(
               (w) =>
-                `${w.marked || w.checked ? "wreck" : "rumor"} ${w.letter}: bearing ${fmtBearing(bearingTo(ship.x, ship.y, w.x, w.y))}, ${(dist(ship.x, ship.y, w.x, w.y) / 1000).toFixed(0)} km${
+                // the TYPE is named for marked sites, exactly as the MP
+                // branch above does it — a hulk read as a bare "wreck H"
+                // and the captain calls it "the Hunter's wreck", so the
+                // translator had nothing to match on and asked him which
+                // one he meant (live-checked 2026-07-14, and the reason
+                // "I still can't send the XO to a wrecked Hunter" outlived
+                // the range gate). Rumors stay untyped — that IS the rumor.
+                `${
                   w.marked || w.checked
-                    ? ` (${w.items.length} items)`
+                    ? w.type && w.type !== "hulk"
+                      ? `${w.type} wreck`
+                      : w.type === "hulk"
+                        ? "hulk (a dead ship — the Hunter's corpse or a captain's)"
+                        : "wreck"
+                    : "rumor"
+                } ${w.letter}: bearing ${fmtBearing(bearingTo(ship.x, ship.y, w.x, w.y))}, ${(dist(ship.x, ship.y, w.x, w.y) / 1000).toFixed(0)} km${
+                  w.marked || w.checked
+                    ? ` (${w.items.length} items${
+                        Math.hypot(w.vx ?? 0, w.vy ?? 0) > C.SALVAGE_STOP_SPEED_MPS ? ", UNDER WAY" : ""
+                      })`
                     : " (contents unknown — resolves by PRESENCE en route; sensors and pings can't do it, dust or no dust)"
                 }`
             )
-            .join("; ")}. Within ${C.SALVAGE_APPROACH_RANGE_M / 1000} km the salvage verb (target = the letter) flies the whole approach and transfer ("come alongside rumor A"). Beyond that, steer for its bearing first and SAY the fifteen-klick rule.`
+            .join("; ")}. The salvage verb (target = the letter) flies the whole approach and transfer AT ANY RANGE ("come alongside rumor A", "take us to the hulk") — including a wreck under way, whose drift it matches first. There is no range rule: never tell the captain to get closer first.`
         );
       }
       const sv = m.salvaging[id];

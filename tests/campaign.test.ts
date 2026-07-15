@@ -793,6 +793,35 @@ const missionSim = (over: Partial<Mission> = {}, seed?: string): Sim => {
   assert(sim.mission!.stats.salvaged > 0, "…and the transfer actually runs — the prize is reachable");
 }
 
+// 25d. THE STATE LINE NAMES THE HULK. Lifting the range gate turned out to
+// be only half of "I still can't ask my XO to maneuver to a wrecked Hunter":
+// the campaign state line labelled every marked site a bare "wreck H" (the
+// MP branch had named types all along), so when the captain said "the
+// Hunter's wreck" the translator had nothing to match on and asked him which
+// one he meant. Live-checked against the real API before and after. The
+// state summary IS the LLM's prompt — a word missing here is a verb missing
+// in play.
+{
+  const sim = missionSim();
+  const a = sim.ships.get("A")!;
+  a.x = 0; a.y = 0;
+  sim.mission!.wrecks.push(
+    { id: 7, letter: "H", x: 82000, y: 0, vx: 800, vy: 0, marked: true, checked: false, type: "hulk", items: [{ kind: "missiles", amount: 2 }] } as any,
+    { id: 8, letter: "S", x: -9000, y: 0, vx: 0, vy: 0, marked: true, checked: false, type: "survey", items: [{ kind: "probes", amount: 2 }] } as any,
+    { id: 9, letter: "R", x: 3000, y: 3000, marked: false, checked: false, items: [{ kind: "ore", amount: 1 }] } as any
+  );
+  const line = sim.stateSummaryFor("A").split("\n").find((l) => /Salvage on the board/.test(l))!;
+  assert(/hulk[^;]*H:/.test(line), `a hulk is called a hulk, so "the Hunter's wreck" resolves (${line.slice(0, 60)}…)`);
+  assert(/Hunter's corpse/.test(line), "…and the line says whose corpse it is, in the captain's words");
+  assert(/survey wreck S:/.test(line), "typed wrecks carry their type, as the MP board already did");
+  assert(/rumor R:/.test(line), "a rumor stays untyped — not knowing IS the rumor");
+  assert(/UNDER WAY/.test(line), "a drifting prize says so — the approach will look wrong before it looks right");
+  assert(!/UNDER WAY[^;]*S:/.test(line.split(";")[1] ?? ""), "a parked wreck does not");
+  // 🔴 and the prompt must not teach a rule that no longer exists
+  assert(!/fifteen|15 km/i.test(line), "the state line teaches NO range rule — the gate is gone");
+  assert(/ANY RANGE/.test(line), "…it teaches the opposite, explicitly");
+}
+
 // 26. ANVIL §3a — the transfer gate is RELATIVE: an 800 m/s wreck cannot
 // be looted by a stationary ship, and CAN be by one matching its velocity
 {
