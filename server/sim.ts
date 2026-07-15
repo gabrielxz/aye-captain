@@ -532,7 +532,10 @@ export type SimEvent =
   // abbreviations); the transcript displays `text`, the voice says `speak`.
   // silent: transcript-only — never synthesized (v5.1 §1.3: confirmations
   // of instantly-visible effects, e.g. the drift-marker toggle)
-  | { kind: "notice"; ship: ShipId | "all"; text: string; alert?: boolean; speak?: string; silent?: boolean }
+  // hold: a LATCHED STATE, not a momentary event — it cannot go stale, so it
+  // waits out a long line ahead of it instead of expiring in the queue (see
+  // SPEECH_TTL_HOLD_MS). Use only where being told late is still useful.
+  | { kind: "notice"; ship: ShipId | "all"; text: string; alert?: boolean; speak?: string; silent?: boolean; hold?: boolean }
   | { kind: "ui"; ship: ShipId; what: "show_vector" } // client-side overlay triggers
   // persistent client-side overlay toggles (v4.7): pure ui, no sim state.
   // v5 adds ELEMENT values (probe markers, designations), not new events.
@@ -5566,7 +5569,17 @@ export class Sim {
       if (wreck.items.length === 0) {
         player.maneuver = null;
         delete this.salvaging[player.id];
-        events.push({ kind: "notice", ship: player.id, text: "That's the last of it — wreck's stripped, Captain." });
+        // `hold`: the last item is the BEST item (worst-first), so the line
+        // immediately ahead of this one is the longest in the game — a module
+        // fitting. At the news TTL this line reliably died in the queue,
+        // exactly when the haul was worth announcing. The wreck stays
+        // stripped; being told late costs nothing.
+        events.push({
+          kind: "notice",
+          ship: player.id,
+          text: "That's the last of it — wreck's stripped, Captain.",
+          hold: true,
+        });
       } else if (wreck.items[wreck.items.length - 1].kind === "module" && wreck.items.length === 1) {
         // the §4.2 teaser: you are stationary, listening to a rumble grow,
         // deciding whether the last item is worth it

@@ -7,9 +7,11 @@
 // Jaws. tests/music.test.ts pins it (mandatory-green).
 //
 // Shape: one scalar, `intensity` ∈ [0,1], drives five continuous layers
-// (§7.3): BED (always) · PULSE (≥0.25) · ARP (≥0.45) · PAD (≥0.65) ·
+// (§7.3): BED (bottom) · PULSE (≥0.25) · ARP (≥0.45) · PAD (≥0.65) ·
 // PERC (≥0.80). intensity = max(perceivedThreat, gateRun, damageStress)
 // (§7.4). The driver smooths it (§7.2); discrete events (`sting`) snap.
+// intensity 0 means SILENCE — no floor, no bed. An empty board is scored
+// with nothing at all, which is the only reading of §7.1 that is honest.
 
 export const GATE_RUN_TTG_MAX_S = 90; // gateRun starts ramping here (mirrors server constant)
 const LAYER_AT = { pulse: 0.25, arp: 0.45, pad: 0.65, perc: 0.8 };
@@ -52,7 +54,7 @@ const fade = (intensity, at) => clamp01((intensity - at) / 0.12);
 // identical output — that determinism IS the fog law, because an
 // undetected Hunter at 20 km and one at 200 km produce identical views.
 export function computeMusic(view, prevView = null) {
-  if (!view) return { intensity: 0, layers: { bed: 1, pulse: 0, arp: 0, pad: 0, perc: 0 }, sting: null, phase: "quiet" };
+  if (!view) return { intensity: 0, layers: { bed: 0, pulse: 0, arp: 0, pad: 0, perc: 0 }, sting: null, phase: "quiet" };
 
   // §7.4 perceivedThreat — from the snapshot's own contact picture
   let threat = 0;
@@ -86,7 +88,11 @@ export function computeMusic(view, prevView = null) {
     if (!view.gate.good) gateRun = Math.min(gateRun, NO_COMMIT_CAP);
   }
 
-  const intensity = Math.max(threat, damage, gateRun, 0.04); // 0.04: the bed never fully dies mid-run
+  // No floor. The doctrine at the top of this file says the Hunter closing
+  // undetected is scored with SILENCE — a floor made that a lie: it left a
+  // sawtooth drone under every quiet moment, and a drone that never resolves
+  // reads as an alarm, not as space (playtest 2026-07-14).
+  const intensity = Math.max(threat, damage, gateRun);
   const phase =
     view.spawnInS !== null && view.spawnInS > 0
       ? "race"
@@ -104,7 +110,9 @@ export function computeMusic(view, prevView = null) {
   return {
     intensity,
     layers: {
-      bed: 1,
+      // BED is the layer present at every intensity that HAS a score — but
+      // zero is zero. It fades in off the bottom rather than sitting on.
+      bed: fade(intensity, 0),
       pulse: fade(intensity, LAYER_AT.pulse),
       arp: fade(intensity, LAYER_AT.arp),
       pad: fade(intensity, LAYER_AT.pad),

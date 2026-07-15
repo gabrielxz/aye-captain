@@ -126,4 +126,25 @@ const missionSim = (): Sim => {
   assert(high.layers.pad > 0 && high.layers.perc > 0, "missiles inbound: everything is in");
 }
 
+// 8. an empty board is SILENT — no floor, no bed. The file's own doctrine
+// ("the Hunter closing, undetected, is scored with SILENCE") was a lie while
+// intensity floored at 0.04: it left a sawtooth drone under every quiet
+// moment. Playtest 2026-07-14: it read as an alarm, not as space.
+{
+  const empty = { spawnInS: 0, hunterActive: true, salvaging: false, contacts: [], rumbleLoud: 0, painted: "none", lockedBy: 0, missilesInbound: 0, hullFrac: 1, gate: null };
+  const out = computeMusic(empty as any);
+  assert(out.intensity === 0, `nothing detected, nothing scored: intensity ${out.intensity} === 0`);
+  assert(
+    Object.values(out.layers).every((v) => v === 0),
+    `…and every layer silent, the bed included (${JSON.stringify(out.layers)})`
+  );
+  // an undetected Hunter is exactly this view, so silence is the fog law too
+  const hunted = computeMusic({ ...empty, hunterActive: true } as any);
+  assert(hunted.intensity === 0, "an undetected Hunter is scored with silence — that is Jaws");
+  // but the moment anything is knowable, the bed is there to carry it
+  const heard = computeMusic({ ...empty, rumbleLoud: 0.6 } as any);
+  assert(heard.layers.bed === 1, "a rumble brings the bed in full — the bottom layer still exists");
+  assert(computeMusic(null as any).layers.bed === 0, "no view, no bed");
+}
+
 console.log("done: music");

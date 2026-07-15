@@ -218,7 +218,13 @@ export function setCollisionKlaxon(secs) {
   if (off) {
     clearTimeout(klaxonTimer);
     klaxonTimer = null;
+    alarmSources.klaxon = false;
+    refreshAlarmDuck();
     return;
+  }
+  if (!wasOn) {
+    alarmSources.klaxon = true;
+    refreshAlarmDuck();
   }
   if (!wasOn && ctx) whoopChain();
 }
@@ -450,6 +456,8 @@ export function setWarning(state, lockers = state === "locked" ? 1 : 0) {
   if (!changed && !newAttacker) return;
   warnState = state;
   clearWarnTimers();
+  alarmSources.rwr = state !== "none";
+  refreshAlarmDuck();
   if (!ctx || state === "none") return;
   if (state === "acquiring") {
     let beeps = 0;
@@ -577,13 +585,13 @@ const sched = createSpeechScheduler({
   },
 });
 
-export function enqueueSpeech(id, priority = "news") {
+export function enqueueSpeech(id, priority = "news", hold = false) {
   if (!ctx) return;
   // §4.3 verbosity: TERSE drops chatter, SILENT drops all but critical.
   // Speech only — the transcript logged the line either way.
   if (verbosity === "terse" && priority === "chatter") return;
   if (verbosity === "silent" && priority !== "critical") return;
-  sched.enqueue(id, priority);
+  sched.enqueue(id, priority, hold);
 }
 
 // PTT down: the captain spoke — drop the playing non-critical line, flush
@@ -614,13 +622,20 @@ let musicLow = null; // bed + pulse live here (the sidechain target)
 let musicNodes = null;
 let musicTimer = null;
 let musicState = { intensity: 0, layers: { bed: 0, pulse: 0, arp: 0, pad: 0, perc: 0 }, phase: "quiet" };
-let musicRoot = 110; // A2 — the race root; the spawn sting drops it
+const MUSIC_ROOT_RACE = 110; // A2 — the race root; the spawn sting drops it
+const MUSIC_ROOT_HUNT = 82.4; // E2
+let musicRoot = MUSIC_ROOT_RACE;
 const musicDucks = { speech: 1, rumble: 1, alarm: 1 };
+
+// the bus level the score should currently sit at, ducks included — anything
+// that sets musicBus absolutely must go through this or it discards the duck
+function musicBusTarget() {
+  return 0.9 * mixVol.music * musicDucks.speech * musicDucks.alarm;
+}
 
 function applyMusicDuck() {
   if (!musicBus) return;
-  const duckAll = musicDucks.speech * musicDucks.alarm;
-  musicBus.gain.linearRampToValueAtTime(0.9 * mixVol.music * duckAll, ctx.currentTime + 0.2);
+  musicBus.gain.linearRampToValueAtTime(musicBusTarget(), ctx.currentTime + 0.2);
   // the rumble sidechain hits only the LOW layers — the pad/arp stay,
   // the floor opens so the drive rumble reads through
   musicLow.gain.linearRampToValueAtTime(musicDucks.rumble, ctx.currentTime + 0.4);
@@ -629,6 +644,18 @@ function applyMusicDuck() {
 function musicDuckSet(which, v) {
   musicDucks[which] = v;
   applyMusicDuck();
+}
+
+// §7.7 "music ducks under speech AND alarms — the XO always wins" was only
+// half-built: MUSIC_DUCK_ALARM was defined and never referenced, so the
+// score played at full level straight through the lock alarm and the
+// klaxon. A bed that never makes room for the threat stops reading as
+// music and starts reading as one (playtest 2026-07-14). Either alarm
+// ducks it; the last one to clear lifts it.
+const alarmSources = { rwr: false, klaxon: false };
+function refreshAlarmDuck() {
+  const on = alarmSources.rwr || alarmSources.klaxon;
+  musicDuckSet("alarm", on ? MUSIC_DUCK_ALARM : 1);
 }
 
 function noteHz(root, degree, octave = 0) {
@@ -731,10 +758,18 @@ export function setMusic(out) {
   musicState = out;
   const t = ctx.currentTime;
   const ramp = out.sting ? 0.1 : MUSIC_RAMP_S;
+  // §7.6's phase inversion is once per SYSTEM, not once per page: the race
+  // root has to come back, or every system after the first plays dark and
+  // the contrast the sting exists for is spent. `race` means the clock is
+  // still running — the brain's own word for it, so no new fog surface.
+  if (out.phase === "race" && musicRoot !== MUSIC_ROOT_RACE) {
+    musicRoot = MUSIC_ROOT_RACE;
+    musicNodes.bedOscs.forEach((o) => o.frequency.setTargetAtTime(musicRoot / 2, t, 0.4));
+  }
   if (out.sting === "spawn") {
     // §7.6 the spawn: a sting, and the bed drops to a darker root — the
     // phase inversion made audible. NO bearing information.
-    musicRoot = 82.4; // E2
+    musicRoot = MUSIC_ROOT_HUNT;
     musicNodes.bedOscs.forEach((o) => o.frequency.setTargetAtTime(musicRoot / 2, t, 0.4));
     osc("sawtooth", 660, t, 0.5, 0.22 * mixVol.music, 82, musicBus);
     osc("sine", 41, t, 1.2, 0.3 * mixVol.music, 30, musicBus);
@@ -756,7 +791,7 @@ export function musicExit() {
   musicBus.gain.cancelScheduledValues(t);
   musicBus.gain.setValueAtTime(0.0001, t); // the beat of silence (~200 ms)
   osc("sine", 330, t + 0.05, 0.9, 0.24, 990, master); // the single rising tone
-  musicBus.gain.setValueAtTime(0.9 * mixVol.music, t + 0.95);
+  musicBus.gain.setValueAtTime(musicBusTarget(), t + 0.95); // ducks survive the exit
   // release: one sustained resolve, then nothing (§8.5)
   for (const [deg, oct, amp] of [[0, 1, 0.06], [4, 1, 0.045], [0, 2, 0.03]]) {
     const g = ctx.createGain();

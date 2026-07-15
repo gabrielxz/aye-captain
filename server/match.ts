@@ -1429,6 +1429,7 @@ export class Match {
           priority: ev.alert ? "critical" : "news",
           speak: ev.speak,
           noSpeech: ev.silent,
+          hold: ev.hold,
         });
       }
     }
@@ -1462,7 +1463,7 @@ export class Match {
     id: ShipId,
     who: string,
     text: string,
-    opts: { priority?: SpeechPriority; speak?: string; noSpeech?: boolean } = {}
+    opts: { priority?: SpeechPriority; speak?: string; noSpeech?: boolean; hold?: boolean } = {}
   ): void {
     const seat = this.seats.find((s) => s.id === id);
     const ws = seat?.ws;
@@ -1478,7 +1479,14 @@ export class Match {
         !text.startsWith("direct");
       const speech = speak ? ensureSpeech(opts.speak ?? text) : null;
       ws.send(
-        JSON.stringify({ type: "transcript", who, text, priority, ...(speech ? { speech } : {}) })
+        JSON.stringify({
+          type: "transcript",
+          who,
+          text,
+          priority,
+          ...(speech ? { speech } : {}),
+          ...(opts.hold ? { hold: true } : {}),
+        })
       );
     }
   }
