@@ -288,6 +288,18 @@ Note: on this machine's rootless Docker, `-p` port publishing doesn't route
 12. Any behavior change updates `/how-to-play` (client/how-to-play.html)
     AND README.md's gameplay description in the same commit — both carry
     rounded gameplay values that must stay true (README added v4.5 §0).
+    **AND the translator's system prompt (`buildSystemPrompt` in
+    server/translator.ts), which is the THIRD copy of the rules and the one
+    that bites hardest: a stale line there is not a stale doc, it is the XO
+    lying to the captain, in character, every tick.** Deleting a rule from
+    the sim does NOT delete it from the prompt. This drifted THREE TIMES
+    in one day (2026-07-15): the prompt still taught "corvettes have no
+    railgun" months after hull gating was removed; still taught the
+    dry-tank "setting remembered" rule the 2026-07-13 playtest REVERSED;
+    and promised PDCs "25%/s kill chance EACH" two commits after finite
+    throughput made that false — that last one written by the same hand
+    that broke it, hours apart. **A sim rule change is not done until you
+    have grepped translator.ts.**
 13. The hearing channel is CONTINUOUS end to end — no thresholds anywhere
     in it (v4.5 design law: a threshold instantly becomes a throttle
     policy). Rumbles are a contact class BELOW faint carrying bearing (+ a
@@ -345,6 +357,24 @@ Note: on this machine's rootless Docker, `-p` port publishing doesn't route
     sigMult scales TOTAL signature and is therefore also an
     anti-lock/anti-seeker stat — deliberate double-axis, documented at
     HUNTER_SIG_MULT.
+
+**Status addendum (2026-07-15): the GPT-audit response, tiers 1+2, is
+SHIPPED (main == prod @ 5356a8e, 1,473 asserts).** `AYE, CAPTAIN.pdf` was a
+42-page static audit (ChatGPT; it never ran the code, and says so). Every
+claim was verified against the source by six parallel agents BEFORE any
+edit — **TODO.md's verdicts are ours, not the PDF's, and it carries a 🔴 DO
+NOT BUILD list where the audit is wrong** (mines inheriting velocity DELETES
+the mine layer; un-capping missiles undoes the v4.5 no-counterplay fix; PDC
+"variance" argues against a number the game does not have). Shipped: prompt
+caching (~90% off every utterance — the audit missed it entirely), the
+NO-RAILGUN doc lie, match telemetry, the ping-margin pin, thermal signature,
+wreck-field fairness, PDC throughput. **🔴 Thermal and PDC are UNPLAYTESTED
+balance changes and their constants are first guesses — fly them before
+building on top.** The general lesson: a static audit gets MECHANISMS right
+and NUMBERS wrong; this one read the frigate-linked legacy globals
+(`SENSOR_BASE_M`, `ACCEL_FULL_THRUST_MPS2`, `TURN_RATE_DEG_PER_SEC`) as
+universal law and quoted a missile speed from a version constants.ts
+explicitly documents as superseded.
 
 ## Judgment calls already made (user-visible, flagged in check-ins)
 

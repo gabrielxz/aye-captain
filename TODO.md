@@ -51,7 +51,7 @@ from a version we explicitly superseded.
   machinery. No audio concatenation exists (`audio.js:547` is one buffer per line,
   and `speech-scheduler.js` promises "one line at a time"). Not worth building.
 
-### Tier 1 — ✅ BUILT 2026-07-15 (branch `audit-tier-1`, suite 1,410 green)
+### Tier 1 — ✅ SHIPPED 2026-07-15 (merged + deployed)
 
 All five landed in one commit. Zero sim/balance change. Measured outcomes and
 corrections to what this file originally claimed:
@@ -196,11 +196,24 @@ The audit's Option B is already written — in `constants.ts:140-143` and
 on the first mine drop. Zero sim change. This closes the audit's §2.6 honestly
 without touching the module.
 
-### Tier 2 — ✅ BUILT 2026-07-15 (branch `audit-tier-2`, suite 1,473 green)
+### Tier 2 — ✅ SHIPPED 2026-07-15 (merged + deployed, suite 1,473 green)
 
-**NOT PUSHED. Thermal + PDC are the first real BALANCE changes since v5.1's
-§0 "zero sim/balance changes" law, and both want a playtest before they go to
-prod.** Measured outcomes and corrections:
+🔴 **SHIPPED BUT UNPLAYTESTED — this is the next thing to do.** Thermal and PDC
+are the first real BALANCE changes since v5.1's §0 "zero sim/balance changes"
+law. `THERMAL_DECAY_PER_S = 10` and `pdcChannels` 1/2/3 are FIRST GUESSES, not
+tuned numbers — they were chosen to be defensible, not to be right. Fly them
+before building anything else on top:
+- **Thermal, by feel**: does "ten seconds to cold" read as tense or tedious?
+  Watch the voice disc drain — that is the whole feedback channel. If cutting
+  the drive feels pointless, the rate is too slow; if darkness feels free, too
+  fast.
+- **PDC channels, by outcome**: does a salvo saturating point defense read as a
+  real play or an auto-win? The corvette (1 channel) is the hull to watch.
+- The two-mode Loadout playtest (1v1 + 6-player FFA) was already the gating
+  milestone and now covers these too. The wreck-fairness fix landed BEFORE it
+  rather than poisoning it.
+
+Measured outcomes and corrections:
 - **Thermal**: built as a decaying floor under the sustained emission. Full
   burn → cut → still 130, decaying 10/s to cold at +10 s. Verified live that
   the XO's doctrine followed: *"Engines cold. Signature bleeding down — we'll
