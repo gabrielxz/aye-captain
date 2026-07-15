@@ -1483,7 +1483,11 @@ export class Match {
     }
   }
 
-  handleUtterance(ws: WebSocket, text: string, source: "voice" | "typed" = "typed"): void {
+  handleUtterance(
+    ws: WebSocket,
+    text: string,
+    source: "voice" | "typed" | "panel" = "typed"
+  ): void {
     const seat = this.seats.find((s) => s.ws === ws);
     if (!seat || seat.dead) return; // the dead watch; they don't command
 
@@ -1509,9 +1513,14 @@ export class Match {
         }
         const commands: Command[] = Array.isArray(parsed) ? parsed : [parsed];
         this.sim.enqueue(seat.id, commands);
-        this.sendTranscript(seat.id, "sys", `direct: ${commands.map((c) => c.verb).join(", ")}`, {
-          priority: "chatter",
-        });
+        // Panel controls ride this path too, but they aren't the dev harness:
+        // the captain clicked a labelled button and the sim answers with its
+        // own line. Echoing the verb would just leak plumbing into his ear.
+        if (source !== "panel") {
+          this.sendTranscript(seat.id, "sys", `direct: ${commands.map((c) => c.verb).join(", ")}`, {
+            priority: "chatter",
+          });
+        }
       } catch {
         this.sendTranscript(seat.id, "sys", "direct command parse error", { priority: "news" });
       }

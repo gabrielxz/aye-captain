@@ -213,7 +213,11 @@ wss.on("connection", (ws: WebSocket) => {
       case "utterance": {
         const match = matchByWs.get(ws);
         if (match && typeof msg.text === "string") {
-          match.handleUtterance(ws, msg.text, msg.source === "voice" ? "voice" : "typed");
+          match.handleUtterance(
+            ws,
+            msg.text,
+            msg.source === "voice" ? "voice" : msg.source === "panel" ? "panel" : "typed"
+          );
         }
         break;
       }

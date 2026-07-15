@@ -60,8 +60,26 @@ function cancelOrder(label) {
         acknowledgement: `Standing order "${label}" belayed.`,
       },
     ]),
-    source: "typed",
+    source: "panel",
   });
+}
+
+// posture clicks ride the same raw-JSON path. The XO still quotes the price:
+// the sim's set_maneuver_discipline handler deletes any acknowledgement and
+// pushes the stock line that names the cap, so a click and a spoken order are
+// indistinguishable downstream. Wired once — paintPanel runs every frame.
+let disciplineWired = false;
+function wireDiscipline() {
+  disciplineWired = true;
+  for (const seg of $("p-discipline").children) {
+    seg.addEventListener("click", () => {
+      send({
+        type: "utterance",
+        text: JSON.stringify([{ verb: "set_maneuver_discipline", params: { level: seg.dataset.d } }]),
+        source: "panel",
+      });
+    });
+  }
 }
 
 function paintOrders(orders) {
@@ -222,7 +240,8 @@ export function updatePanel(snap) {
     cEl.appendChild(span);
   }
 
-  // posture (display of the ship's actual state — orders still go by voice)
+  // posture (clickable; the sim speaks the cap either way)
+  if (!disciplineWired) wireDiscipline();
   for (const seg of $("p-discipline").children) {
     const on = seg.dataset.d === model.posture.discipline;
     seg.className = on ? `on${model.posture.cls === "alert" ? " pv-alert" : ""}` : "";

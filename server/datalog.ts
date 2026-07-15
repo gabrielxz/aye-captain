@@ -14,7 +14,7 @@ let warned = false;
 export interface UtteranceEntry {
   room: string; // room code, or "practice"
   ship: string;
-  source: "voice" | "typed";
+  source: "voice" | "typed" | "panel";
   text: string;
 }
 
