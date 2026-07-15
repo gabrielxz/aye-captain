@@ -1,6 +1,6 @@
 // §6 PDCs: posture command, missile attrition, ammo budget, warnings,
 // LOS gating, signature spike.
-import { Sim, type Ship, type Missile } from "../server/sim.js";
+import { Sim, pdcShares, type Ship, type Missile } from "../server/sim.js";
 import * as C from "../server/constants.js";
 
 const assert = (cond: boolean, msg: string) => {
@@ -131,6 +131,106 @@ function injectSlowMissile(sim: Sim, owner: "A" | "B", x: number, y: number): Mi
     leaked >= trials * 0.15 && leaked <= trials * 0.7,
     `torpedoes still leak, but die more often than not (${leaked}/${trials} got through)`
   );
+}
+
+// ===== Throughput: one mount, finite rate (audit §2.7) =====================
+// Until 2026-07-15 a single mount rolled an INDEPENDENT full-rate kill chance
+// at every eligible missile, probe and mine at once, while ammo drained once
+// per substep either way — unlimited simultaneous defense for the same cost.
+// None of the tests above noticed, because they are all single-target. That
+// silence was the finding, so these pin the property directly.
+
+// 9. The single-target case is UNTOUCHED — the whole point of dividing the
+// rate rather than capping channels. If this moves, the ~57% single-missile
+// envelope kill (block 5's "the spec's intent") moved with it.
+{
+  for (const ch of [1, 2, 3]) {
+    const s = pdcShares(ch, 1, 0, 0);
+    assert(s.missile === 1, `1 missile vs ${ch} channel(s): full rate, nothing changes`);
+  }
+}
+
+// 10. Saturation is real: past the channel count the mounts time-slice, so
+// TOTAL kill throughput is capped instead of scaling with the target count.
+{
+  const one = pdcShares(1, 2, 0, 0);
+  assert(one.missile === 0.5, "1 channel vs 2 missiles: each engaged at half rate");
+  const two = pdcShares(2, 4, 0, 0);
+  assert(two.missile === 0.5, "2 channels vs 4 missiles: half rate each — throughput, not count");
+  // the invariant behind both: rate x targets never exceeds the channels
+  for (const ch of [1, 2, 3]) {
+    for (let n = 1; n <= 8; n++) {
+      const s = pdcShares(ch, n, 0, 0);
+      assert(
+        s.missile * n <= ch + 1e-9,
+        `${ch} channels vs ${n} missiles: total throughput ${(s.missile * n).toFixed(2)} never exceeds ${ch}`
+      );
+    }
+  }
+}
+
+// 11. Not a cliff. The audit asked for hard channels, which never engage the
+// 2nd missile at all on a corvette — it would live every time. Every target
+// in an engaged class gets a real, non-zero share.
+{
+  const s = pdcShares(1, 4, 0, 0);
+  assert(s.missile > 0, "the 4th missile vs 1 channel is still shot at (0.25), not ignored");
+}
+
+// 12. Guns go to what kills you soonest. A minefield must not dilute
+// anti-missile fire — mines and probes get only what the missiles left.
+{
+  const busy = pdcShares(1, 1, 6, 2);
+  assert(busy.missile === 1, "one inbound missile takes the corvette's whole mount, at full rate");
+  assert(busy.mine === 0 && busy.probe === 0, "...and the minefield gets nothing while it flies");
+  const calm = pdcShares(1, 0, 4, 0);
+  assert(calm.mine === 0.25, "with nothing inbound the mount works the minefield again");
+  const cruiser = pdcShares(3, 1, 4, 0);
+  assert(cruiser.missile === 1, "cruiser: missile served first at full rate");
+  assert(cruiser.mine === 0.5, "...and 2 spare channels still work the mines (4 mines, half rate)");
+}
+
+// 13. Ordering is strict, not proportional: a class is served only from what
+// is left. Pin it so nobody "improves" this into a weighted split.
+{
+  const s = pdcShares(2, 3, 5, 5);
+  assert(s.missile * 3 === 2, "3 missiles consume BOTH channels outright");
+  assert(s.mine === 0 && s.probe === 0, "nothing is left for mines or probes — strict priority");
+}
+
+// 14. End to end: the shares are actually WIRED to the roll, not just a pure
+// function sitting in a corner. A corvette (1 channel) facing 4 birds kills
+// meaningfully fewer of them than it would at the old unlimited full rate.
+// Statistical, so the bound is generous — the exact rate is block 5's job.
+{
+  const trials = 220;
+  let killed = 0;
+  let total = 0;
+  for (let t = 0; t < trials; t++) {
+    const sim = new Sim();
+    const a = sim.addShip("A", 0, 0, 0, false, null, undefined, "corvette");
+    a.pdcPosture = "free";
+    const b = sim.addShip("B", 0, 200000, 180, false);
+    b.pdcPosture = "hold";
+    for (let i = 0; i < 4; i++) {
+      sim.missiles.push({
+        id: 9000 + i, owner: "B", team: null, x: (i - 1.5) * 200, y: 6000,
+        vx: 0, vy: -C.MISSILE_MAX_SPEED_MPS, course: 180, speed: C.MISSILE_MAX_SPEED_MPS,
+        fuel: 0, burning: false, guidance: "bearing", target: null, ageS: 0, armed: true,
+      } as Missile);
+    }
+    const before = sim.missiles.length;
+    sim.tick();
+    total += before;
+    killed += before - sim.missiles.filter((m) => m.id >= 9000).length;
+  }
+  const rate = killed / total;
+  // 1 channel split 4 ways ~= a quarter of the old per-missile hazard.
+  assert(
+    rate < 0.16,
+    `a 1-channel corvette cannot shred a 4-bird salvo at full rate each (${(rate * 100).toFixed(1)}% killed in one second)`
+  );
+  assert(rate > 0, "...but it is still shooting — every bird is engaged, just slower");
 }
 
 console.log("done");

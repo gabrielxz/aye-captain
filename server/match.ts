@@ -312,8 +312,64 @@ export class Match {
     }
   }
 
+  // Every captain's spawn — the points a wreck must not land on. Drones don't
+  // salvage and don't care. Ships are always added before the field is seeded
+  // (spawnShips / buildCampaignSim both run first), so the sim IS the source of
+  // truth here; the old code hardcoded one point instead and got it wrong for
+  // every room with more than two seats.
+  private static spawnPointsOf(sim: Sim): { x: number; y: number }[] {
+    return [...sim.ships.values()]
+      .filter((s) => !s.isDrone)
+      .map((s) => ({ x: s.x, y: s.y }));
+  }
+
+  // How lopsided a field is: the gap between the best- and worst-placed spawn,
+  // measured by how far each must fly to reach the nearest wreck worth having.
+  // Zero for one spawn — there is nobody to be unfair to.
+  private static wreckSpreadM(wrecks: Wreck[], spawns: { x: number; y: number }[]): number {
+    if (spawns.length < 2 || wrecks.length === 0) return 0;
+    // Wreck.type is optional (hand-built test fields omit it); an untyped site
+    // is simply not counted as rich rather than crashing the measure.
+    const rich = wrecks.filter(
+      (w) => w.type !== undefined && (C.WRECK_RICH_TYPES as readonly string[]).includes(w.type)
+    );
+    const pool = rich.length > 0 ? rich : wrecks; // a field with no rich site is fair by omission
+    const ds = spawns.map((s) => Math.min(...pool.map((w) => Math.hypot(w.x - s.x, w.y - s.y))));
+    return Math.max(...ds) - Math.min(...ds);
+  }
+
+  // Generate K candidate fields for this seed and keep the fairest (see
+  // WRECK_FAIRNESS_ATTEMPTS). Deterministic per seed. Attempt 0 keeps the
+  // original rand stream, so a one-spawn field — solo campaign, practice —
+  // short-circuits on the first pass and is bit-identical to before.
   private static generateWrecks(seed: string, sim: Sim, allMarked = false): Wreck[] {
-    const rand = mulberry32(hashSeed(`${seed}:wrecks`));
+    const spawns = Match.spawnPointsOf(sim);
+    let best: Wreck[] = [];
+    let bestSpread = Infinity;
+    for (let i = 0; i < C.WRECK_FAIRNESS_ATTEMPTS; i++) {
+      const field = Match.buildWreckField(
+        i === 0 ? `${seed}:wrecks` : `${seed}:wrecks:${i}`,
+        sim,
+        allMarked,
+        spawns
+      );
+      const spread = Match.wreckSpreadM(field, spawns);
+      if (spread < bestSpread) {
+        bestSpread = spread;
+        best = field;
+      }
+      if (bestSpread === 0) break; // one spawn (or no rich sites): nothing to balance
+    }
+    return best;
+  }
+
+  private static buildWreckField(
+    salt: string,
+    sim: Sim,
+    allMarked: boolean,
+    spawns: { x: number; y: number }[]
+  ): Wreck[] {
+    const rand = mulberry32(hashSeed(salt));
     const rollType = (): WreckType => {
       const r = rand();
       if (r < 0.08) return "derelict"; // rare, and worth crossing a system for
@@ -338,9 +394,9 @@ export class Match {
           x = Math.cos(ang) * r;
           y = Math.sin(ang) * r;
         }
-        // not inside a rock, not on the spawn point
+        // not inside a rock, and not on ANY captain's doorstep
         if (sim.terrain.rocks.some((rk) => Math.hypot(x - rk.x, y - rk.y) < rk.r + 3000)) continue;
-        if (Math.hypot(x - 0, y + C.SPAWN_RING_RADIUS_M) < 30000) continue;
+        if (spawns.some((s) => Math.hypot(x - s.x, y - s.y) < C.WRECK_SPAWN_CLEAR_M)) continue;
         return { x, y };
       }
       return { x: 0, y: 0 };

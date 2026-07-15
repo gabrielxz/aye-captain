@@ -60,11 +60,18 @@ export interface ArchetypeStats {
   railguns: 0 | 1;
   railSlugs: number;
   probes: number;
+  // Simultaneous targets the mounts hold at FULL rate. Past this they
+  // time-slice: total kill throughput is capped, so saturation is a real
+  // answer to point defense (audit §2.7 — one mount used to engage unlimited
+  // objects at full rate each, for the same ammo per second). Not a hard
+  // channel cliff: with one target the fraction is 1 and nothing about the
+  // single-missile case (~57% across the envelope, the spec's intent) moves.
+  pdcChannels: number;
 }
 export const ARCHETYPES: Record<ArchetypeName, ArchetypeStats> = {
-  corvette: { hull: 60, accel: 85, turn: 39.2, sigBase: 20, sensorBase: 210000, tubes: 1, magazine: 4, tubeReload: 20, decoys: 6, pdcAmmoS: 40, railguns: 0, railSlugs: 0, probes: 4 }, // turn 28 → 39.2: Anvil §5, +40% exactly (the wanted turn-rate pass, corvette leg)
-  frigate:  { hull: 100, accel: 60, turn: 20, sigBase: 30, sensorBase: 180000, tubes: 2, magazine: 6, tubeReload: 30, decoys: 4, pdcAmmoS: 60, railguns: 1, railSlugs: 20, probes: 2 },
-  cruiser:  { hull: 160, accel: 40, turn: 14, sigBase: 45, sensorBase: 160000, tubes: 3, magazine: 9, tubeReload: 30, decoys: 4, pdcAmmoS: 90, railguns: 1, railSlugs: 30, probes: 1 },
+  corvette: { hull: 60, accel: 85, turn: 39.2, sigBase: 20, sensorBase: 210000, tubes: 1, magazine: 4, tubeReload: 20, decoys: 6, pdcAmmoS: 40, railguns: 0, railSlugs: 0, probes: 4, pdcChannels: 1 }, // turn 28 → 39.2: Anvil §5, +40% exactly (the wanted turn-rate pass, corvette leg)
+  frigate:  { hull: 100, accel: 60, turn: 20, sigBase: 30, sensorBase: 180000, tubes: 2, magazine: 6, tubeReload: 30, decoys: 4, pdcAmmoS: 60, railguns: 1, railSlugs: 20, probes: 2, pdcChannels: 2 },
+  cruiser:  { hull: 160, accel: 40, turn: 14, sigBase: 45, sensorBase: 160000, tubes: 3, magazine: 9, tubeReload: 30, decoys: 4, pdcAmmoS: 90, railguns: 1, railSlugs: 30, probes: 1, pdcChannels: 3 },
 };
 
 // ===== Patches 4+5 "The Loadout" (HANDOFF-PATCH-4-5-LOADOUT.md, as amended
@@ -253,6 +260,34 @@ export const PING_COOLDOWN_S = 30;
 // v4.7: the ping fx ships a precomputed occlusion mask so the client ring
 // can tear open behind rocks/dust without a client-side raycast port.
 export const PING_SHADOW_SAMPLES = 180; // 2 deg resolution
+
+// THERMAL SIGNATURE MEMORY. Cutting the drive used to make you dim on the very
+// next tick, which made going dark a SWITCH rather than a commitment and
+// invited strobing: light the array, take a snapshot, power down, burn for one
+// second, vanish. The hull remembers now — signature floors at a decaying
+// high-water mark of the SUSTAINED emission (sigBase + effective thrust +
+// reactor draw). You can still become hard to detect; you can no longer erase
+// the last ten seconds of your own behaviour.
+//
+// What it deliberately does NOT remember: the transient weapon spikes
+// (SIG_SPIKE_LAUNCH / _PDC / RAIL_SIG_SPIKE). Those already carry their own
+// timers and are the "you flashed" mechanic; feeding them in would turn a 5 s
+// launch flash into ~20 s of glow — a balance change nobody asked for. The
+// strobing problem was always about THRUST and POWER, so that is what this
+// fixes. Spikes still add on top.
+//
+// A RATE, not a window: a bigger flare glows longer, which is the honest
+// relationship and it prices a hard burn above a module. At 10/s a frigate at
+// full burn (emission 130) needs ~10 s to reach its cold floor of 30 — the
+// 10 s the audit suggested starting from. Tune BY EAR/EYE against the voice
+// disc, which renders this for free (voiceRangeM reads signatureOf).
+//
+// Continuous end to end — a decaying float plus a max(), no thresholds
+// anywhere, so invariant 13 (the hearing channel) holds. Invariant 8 still
+// holds literally (the emission uses EFFECTIVE thrust, so a dry ship's
+// emission does collapse) — what changes is that its GLOW now outlives the
+// fuel, which is the intended lesson.
+export const THERMAL_DECAY_PER_S = 10;
 
 // v5 §5: the railgun. Frigate & Cruiser ship with one; a corvette can loot
 // and mount one (see STARTING_LOADOUT above — hull is not a gate).
@@ -816,6 +851,28 @@ export const SALVAGE_STOP_SPEED_MPS = 25; // must be under this for the transfer
 export const SALVAGE_HOP_ALIGN = 0.8;
 export const SALVAGE_DOCK_RANGE_M = 2000; // come alongside — the XO won't grapple across the map
 export const SALVAGE_ITEM_S = 10; // per item; the haul is sequential, worst -> best (§4.2 — a greed curve, not a progress bar)
+// No wreck lands on anyone's doorstep: every site must clear EVERY spawn by
+// this much. It used to clear one hardcoded point — (0, -SPAWN_RING_RADIUS_M),
+// the solo campaign spawn — which in a multiplayer room protects an arbitrary
+// compass bearing that may be nobody's spawn, and nobody else.
+export const WRECK_SPAWN_CLEAR_M = 30000;
+// The wrecks worth crossing a map for. Used only to MEASURE field fairness;
+// the loot pools are the real economy (rollWreckLoot).
+export const WRECK_RICH_TYPES = ["military", "derelict"] as const;
+// Fairness by best-of-K, not by a threshold. Wreck TYPE is rolled independently
+// of position, so a military wreck can land 25 km from one spawn and 200 km
+// from another — a visible unfair race, since MP wrecks are public from t=0.
+// Measured across 40 seeds before choosing this: at 8 players the median spread
+// between the best- and worst-placed spawn was 177 km and the worst seed 286 km.
+// A threshold would have been invented, because perfect fairness is impossible
+// by geometry — eight spawns on a ring with ~2 rich wrecks can never be
+// equidistant (the floor is ~85 km). So: generate K candidate fields, keep the
+// fairest. Solo and practice have one spawn, spread is 0 on the first attempt,
+// and the loop exits immediately — those fields stay bit-identical.
+// If the remaining spread ever reads as unfair in play, the lever is wreck
+// COUNT (SALVAGE_* below), not a bigger K.
+export const WRECK_FAIRNESS_ATTEMPTS = 8;
+
 export const SALVAGE_MARKED_SITES = 2; // reliable contents. WATCHED by the Hunter (§4.3/§4.4)
 export const SALVAGE_RUMORED_SITES = 3; // might be empty, might be the run-maker; the Hunter doesn't know them; the richest sit in dust
 // A rumor RESOLVES by going and looking (playtest 2026-07-12: a dust rumor

@@ -51,6 +51,13 @@ const missionSim = (): Sim => {
     h.x = a.x;
     h.y = a.y + distM;
     h.thrust = 0; // dark
+    // ...and COLD. Thermal memory made "dark" a state you reach rather than a
+    // switch you flip: the Hunter spawned hot, so thrust=0 alone leaves it
+    // glowing (~130 sig) and audible at 80 km but not at 190 km — which would
+    // fail this pin for a reason that has nothing to do with fog. Zero the
+    // glow for the same reason the lines below zero velocity and the AI: the
+    // pin is about DISTANCE, nothing else.
+    h.thermalSig = 0;
     h.hunterAI = false; // hold it still: the pin is about DISTANCE, nothing else
     h.vx = h.vy = 0;
     sim.tick();

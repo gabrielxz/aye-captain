@@ -67,7 +67,19 @@ const assert = (cond: boolean, msg: string) => {
   assert(a.thrust === 0, "dry tanks auto-safe the setting to zero (no more stuck state)");
   assert(a.propellant < 1, "tank ran dry (regen trickle already restarting)");
   assert(effectiveThrust(a) === 0, "no thrust output at zero setting");
-  assert(sim.signatureOf(a) === C.SIG_BASE, "dry ship signature drops to base (dim)");
+  // Thermal memory split this in two. The EMISSION still collapses with the
+  // drive — invariant 8 ("signature uses EFFECTIVE thrust") is intact and
+  // pinned here. What changed: the hull's GLOW outlives the fuel, so running
+  // dry is not a stealth button. This assertion used to read
+  // `signatureOf(a) === SIG_BASE` and was the instant-dim rule in test form.
+  assert(
+    sim.sustainedEmissionOf(a) === C.SIG_BASE,
+    "dry ship's EMISSION drops to base — invariant 8 holds (effective thrust)"
+  );
+  assert(
+    sim.signatureOf(a) > C.SIG_BASE,
+    `...but it still GLOWS from the burn it just made (${sim.signatureOf(a).toFixed(0)} > ${C.SIG_BASE})`
+  );
   const [vx, vy] = [a.vx, a.vy];
   sim.enqueue("A", [{ verb: "set_heading", params: { mode: "absolute", degrees: 90 } }]);
   sim.tick();
