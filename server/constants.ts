@@ -192,6 +192,14 @@ export const ARCH_BASE_PROBES: Record<ArchetypeName, number> = {
 // showed stealth was FREE (dark = off-switch); dark is now an edge: a
 // drifter is still contact-visible at ~54 km, just not lockable until ~32.
 export const SIG_BASE = 30; // a drifting dark ship. LINKED: == ARCHETYPES.frigate.sigBase
+// Patch 3.5 crossover deadband. The predicate reduces to `sig > SIG_BASE`,
+// and the FRIGATE's sigBase IS SIG_BASE — so at idle it sits exactly on the
+// boundary and 1% of thrust flipped it, re-speaking the line once a second
+// forever (playtest 2026-07-14: "so annoying"). A crossing must now clear
+// the book by this factor in the direction of travel. Consequence worth
+// knowing: a frigate can never get back UNDER (its floor is the book), so
+// it says the line once and means it.
+export const RINGS_CROSSOVER_HYSTERESIS = 1.15;
 export const SIG_SPIKE_LAUNCH = 150; // missile launch flash (replaces the flat reveal)
 export const SIG_SPIKE_LAUNCH_S = 5;
 export const SIG_SPIKE_PDC = 50; // PDC firing (used by v4 §6)
@@ -431,6 +439,23 @@ export const DESIGNATION_LETTERS = [
 // otherwise the XO can't correlate and opens a NEW letter (identification
 // resets with it).
 export const CONTACT_CORRELATE_S = 60;
+// How long a last-known fix stays ON THE MAP. Nothing aged these out: the
+// tombstone array was push-only and an unobserved-death ghost was
+// structurally unclearable (the ship leaves the board, so its record is
+// never revisited), and every match silently accreted dashed outlines
+// (playtest 2026-07-14: "my screen is filled with last seen X seconds").
+// 🔴 This is safe ONLY because it is AGE-driven. The v5 §3 tombstone exists
+// so that deleting a letter's ghost AT THE INSTANT a new letter opens can't
+// leak that both are one hull — a fixed age-out fires on the ghost's own
+// clock and therefore correlates with nothing. Never make this
+// event-driven. Both correlation-failure branches stay covered: an
+// out-of-reach failure tombstones a YOUNG fix that still draws, and a
+// timeout failure can only happen after CONTACT_CORRELATE_S, by which time
+// the ghost is long gone on its own. Pinned in tests/designation.test.ts.
+export const GHOST_TTL_S = 30;
+// The steering fallback (v5 §1: a `track` goal holds last-known when the
+// contact drops) reads the RECORD, not the wire, and is deliberately
+// untouched by this — the map declutters; the autopilot does not change.
 
 // Match lifecycle (v5 §2)
 export const MAX_PLAYERS = 8; // captains per room; spectators unlimited
@@ -575,7 +600,31 @@ export const HUNTER_SENSOR_MULT = 1.4;
 export const HUNTER_SIG_MULT = 0.75;
 
 // Hunter AI (server/hunter.ts — a pure function of snapshotFor(hunter)).
-export const HUNTER_ENGAGE_RANGE_M = 60000; // inside this with a track: lock and shoot
+// 2026-07-14 lethality pass. This was 60 km, which is 19 km BEYOND the range
+// at which a missile can still steer: MISSILE_ACCEL_MPS2 150 reaches
+// MISSILE_MAX_SPEED_MPS 2400 in 16 s over 19.2 km, then coasts out the
+// remaining 9 s of MISSILE_PROPELLANT_S at 2400 = 21.6 km, so powered range
+// is ~40.8 km — and MISSILE_TURN_RATE_DPS is "ONLY while the engine is on".
+// The Hunter dumped its whole magazine between 60 and 49 km and every bird
+// arrived ballistic against a target that only had to change vector. 35 km
+// keeps the shot inside powered flight AND inside a realistic seeker
+// envelope (MISSILE_SEEKER_BASE_M x sig/100 is ~20 km against a quiet
+// player). If the Hunter ever feels too passive, this is NOT the knob —
+// it is the one keeping his birds able to turn.
+export const HUNTER_ENGAGE_RANGE_M = 35000; // inside this with a track: lock and shoot
+// Rail range. At TRACK the solution is a ±RAIL_TRACK_DISPERSION_DEG cone, so
+// the miss grows with range: at 25 km a 1.2° cone throws ±524 m against a
+// SHIP_RADIUS_M + RAIL_HIT_RADIUS_M = 250 m target, i.e. it lands roughly
+// half the time and is deadly at ID. Note the Hunter PAYS for every shot:
+// firing auto-lights a cold rail (+2 draw = +16 signature, permanently) and
+// RAIL_SIG_SPIKE 80 is heard map-wide. A Hunter that opens up with the rail
+// tells you exactly where it is — that trade is the point, not a bug.
+export const HUNTER_RAIL_RANGE_M = 25000;
+// the engage band is sticky: once fighting, he keeps the nose on you until
+// the range clears the band by this factor. Without it the fight and the
+// approach trade the nose back and forth at 1 Hz and the lock never builds
+// — the same failure the nose-on-target fix exists to kill.
+export const HUNTER_ENGAGE_EXIT_FRAC = 1.25;
 export const HUNTER_FIRE_COOLDOWN_S = 25; // missile cadence (corvette carries 4 — spent birds stay spent)
 export const HUNTER_PURSUE_THROTTLE = 100;
 export const HUNTER_HUNT_THROTTLE = 55; // regen band cruise; its own rumble discipline is the player's tell
@@ -679,8 +728,16 @@ export const GATE_XO_COOLDOWN_S = 10; // min gap between gate-solution XO calls 
 // deliberately down from the old 100 — slower and quieter is the point.
 // Timed burns are exempt: the captain named a percent, the captain gets it.
 export type Discipline = "silent" | "standard" | "flank";
+// 🔴 LINKED: silent == REGEN_MAX_THRUST_PCT. These were set independently
+// and did not line up — silent capped at 25 while regen needs the SETTING at
+// or under 20, so "silent running", the posture whose entire identity is
+// patience, was the one posture that drained the tank to zero and never paid
+// a drop back. A captain who set silent and walked away came back dry. Fixed
+// 2026-07-14 after the playtest question "what are the fuel rates?" surfaced
+// the gap. Silent is now exactly the harvest band: infinite endurance, and
+// the only posture that regenerates while it moves.
 export const DISCIPLINE_CAP: Record<Discipline, number> = {
-  silent: 25, // takes forever; nobody hears you
+  silent: 20, // slow, unheard, and it PAYS — the regen band exactly
   standard: 60, // the new default
   flank: 100, // "I don't care who hears — get me there"
 };
@@ -714,7 +771,29 @@ export const SHROUD_CURRENT_FLOW_FLOOR_MPS = 80; // the flow never stalls — th
 // aperture, ever: if the window is too tight RAISE DURATION — never a
 // floor, never APERTURE_W_M. Still in-system at closure: RUN ENDED —
 // STRANDED. The pylons ride the aperture inward: closed = wall.
-export const GATE_CLOSE_GRACE_S = 240;
+// 2026-07-14: +30 s of window, added to GRACE (240 -> 270), NOT to DURATION.
+// The measured budget for a head-on Hunter kill was ~382 s of perfect
+// piloting against 420 — 38 s of slack that assumed a lucky chase, no voice
+// round-trips, and no rock in the hulk's path. The stern-chase kill (a
+// nearly co-moving hulk) was always comfortable at ~260 s; the head-on one
+// was arithmetic, not skill. The 15 km salvage gate lifting in the same
+// patch gives the captain an instrument for that leg; this gives him the
+// seconds to fly it.
+//
+// ⚠️ WHY GRACE AND NOT DURATION, despite the note above saying "RAISE
+// DURATION": the two are not interchangeable. Total window is GRACE +
+// DURATION, so either buys the same 30 s of looting time — but DURATION is
+// also THE VISE (campaign.test.ts §30): a full-hold cruiser on the far side
+// when the narrowing STARTS must not be able to reach the door. It needs
+// ~204 s to cross the region, so DURATION 210 would have handed it the
+// crossing by 6 s and deleted "jettison or die" as a decision. Measured, not
+// guessed — §30 went red on the first try. Put window into GRACE; keep
+// DURATION at the vise.
+//
+// Note "wait out the current" is NOT a real escape hatch: the current only
+// acts outside the rim and the Hunter's leash means he usually dies steering
+// inward, so the hulk never crosses.
+export const GATE_CLOSE_GRACE_S = 270;
 export const GATE_CLOSE_DURATION_S = 180;
 
 // --- Stage 1: the run (§1) + salvage (§4) + progression (§6) ---

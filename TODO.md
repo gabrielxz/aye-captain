@@ -1,5 +1,52 @@
 # TODO — next steps
 
+## 🔴 OPEN: the Hunter runs out of gas and drifts out of the shroud
+
+Found while building the 2026-07-14 lethality pass. **This is the actual
+cause of "he flies into the shroud", it is NOT the rocks, and it predates
+that pass** (measured identically on the previous build — not a regression).
+
+PURSUE burns `HUNTER_PURSUE_THROTTLE = 100`, which is
+`PROPELLANT_BURN_AT_FULL = 1.0`/s, so a long transit empties a 100-unit tank
+in 100 s. `effectiveThrust()` is `propellant > 0 ? thrust : 0` — a dry
+Hunter has NO drive at all — and regen needs `insideZone`, which is false
+exactly where he ends up. So he coasts out, while `boundaryThreat()`
+confidently computes a braking distance nobody can pay for.
+
+Probed across all three archetypes × five seeds, bait parked outside the
+rim. Max radius vs the 250 km law, **propellant at max radius EXACTLY 0.0**
+in every failing case:
+
+| hull | max radius | verdict |
+|---|---|---|
+| corvette | 245–254 km | marginal |
+| frigate | 254–270 km | **out** |
+| cruiser | 212–276 km | **out** |
+
+Why nothing caught it: `campaign.test.ts §25` runs `new Sim()` — EMPTY
+TERRAIN — and hardcodes the corvette, the one hull with brake authority to
+spare. `hunter.test.ts §17` flies a full tank and no fuel model at all. Both
+were green the whole time the player was watching it happen.
+
+**Needs a design call — do not guess it.** Measured dead ends, do not repeat:
+- making `boundaryThreat` fire earlier (turn-aware braking distance) just
+  spends the tank sooner and made the corvette WORSE (245 → 254);
+- returning `Infinity` when the fuel won't cover the burn forces a 100%
+  burn at low fuel — strictly worse;
+- latching the retro burn (`mem.retro`) to stop the brake/re-accelerate
+  oscillation: no measurable effect on the exits.
+
+The real question is a POLICY one: should the Hunter reserve the propellant
+needed to stop before it spends it? That is a fuel-budgeting rule (a bingo
+number, a chase leash priced in fuel, or PURSUE respecting the fuel floor),
+and it changes how the chase FEELS — which is Gabriel's call, not a
+mechanical fix. Related: `HUNTER_FUEL_FLOOR`/`RESUME` hysteresis works, but
+both AVOID branches deliberately ignore it ("survival outranks fuel
+discipline"), and that is where the last 20 units go.
+
+Until then `campaign.test.ts §25b` is a comment, not a pin: writing one that
+passes on a hand-picked seed would repeat exactly the sin that hid this.
+
 ## Patches 4+5 "The Loadout" — steps 1-6 BUILT 2026-07-14 (branch `patch-4-loadout`)
 
 Mass (force/mass through accelOf/turnRateOf; ARCHETYPES stays THE BOOK,

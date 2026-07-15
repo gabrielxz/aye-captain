@@ -5,6 +5,7 @@ import {
   createSpeechScheduler,
   SPEECH_MIN_GAP_MS,
   SPEECH_TTL_MS,
+  SPEECH_TTL_HOLD_MS,
   BARGE_FADE_MS,
 } from "../client/speech-scheduler.js";
 import { Match } from "../server/match.js";
@@ -99,6 +100,35 @@ function harness() {
   h.tick(11_000 + SPEECH_TTL_MS.news + 200); // older than its TTL by the time the gap opens
   h.s.poll();
   assert(!h.started.some((e) => e.id === "n1"), "news that outlived its TTL is dropped, not played late");
+}
+
+// 4b. `hold`: a latched-state line survives a long line ahead of it. This is
+// the exact race that ate the salvage-complete call (playtest 2026-07-14):
+// both lines enqueue on the SAME tick, the item line ahead of it is a ~4 s
+// module fitting, and the gap then pushes the second line past the 6 s news
+// TTL — leaving 2.5 s of headroom that the best loot always overran.
+{
+  const h = harness();
+  h.s.enqueue("item", "news"); // the module line — starts now
+  h.s.enqueue("done", "news", true); // the completion — same tick, held
+  assert(h.started[0]?.id === "item" && h.started.length === 1, "the item line goes first");
+  h.tick(4000); // a module fitting is the longest line in the game
+  h.s.onEnded();
+  h.tick(4000 + SPEECH_MIN_GAP_MS + 10); // 7.5 s: past the news TTL, inside hold's
+  h.s.poll();
+  assert(
+    h.started.some((e) => e.id === "done"),
+    "the held completion line waits out the gap and still plays"
+  );
+  // and it is genuinely bounded — not immortal
+  const h2 = harness();
+  h2.s.enqueue("n1", "news");
+  h2.tick(1000);
+  h2.s.onEnded();
+  h2.s.enqueue("stale", "news", true);
+  h2.tick(1000 + SPEECH_TTL_HOLD_MS + 200);
+  h2.s.poll();
+  assert(!h2.started.some((e) => e.id === "stale"), "a held line still expires eventually");
 }
 
 // 5. critical dedupe + freshest-2 cap

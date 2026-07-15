@@ -543,7 +543,13 @@ export class Match {
   // Patch 3.5 §3: the rings are estimates against the book — said once,
   // on first draw (= the first welcome; the rings are always on). The
   // Hunter's better-than-book ears stay a lesson learned the hard way.
+  // "Once" was aspirational: this is called from beginMatch, so it re-fired
+  // on all eight campaign system transitions and every rematch. It only
+  // escaped notice by being chatter that the welcome line usually buries.
+  private primerSent = new Set<string>();
   private sendRingsPrimer(id: string): void {
+    if (this.primerSent.has(id)) return;
+    this.primerSent.add(id);
     this.sendTranscript(id, "xo", "That's the book, Captain. He may not have read it.", {
       priority: "chatter",
     });
@@ -791,6 +797,10 @@ export class Match {
   // rematch.
   private beginMatch(seed: string): void {
     this.stop();
+    // the rings are taught ONCE per sitting, not once per system — carry the
+    // "already told" set across the rebuild (a campaign run rebuilds the sim
+    // eight times, and the XO repeating himself every system was the bug)
+    const alreadyTold = this.sim?.crossoverSpoken ?? new Set<ShipId>();
     if (this.campaign) {
       // campaign: rebuild on the CURRENT run state (nextSystem sets it for
       // a transition; reset() re-freshes it for a new run). Co-op: the
@@ -822,6 +832,7 @@ export class Match {
       // bait: a full stop, loud on approach, predictable.
       this.sim.seedField(Match.generateWrecks(seed, this.sim, true));
     }
+    this.sim.crossoverSpoken = alreadyTold;
     this.launched = true;
     this.kills = [];
     this.rematchVotes.clear();
@@ -1429,6 +1440,7 @@ export class Match {
           priority: ev.alert ? "critical" : "news",
           speak: ev.speak,
           noSpeech: ev.silent,
+          hold: ev.hold,
         });
       }
     }
@@ -1462,7 +1474,7 @@ export class Match {
     id: ShipId,
     who: string,
     text: string,
-    opts: { priority?: SpeechPriority; speak?: string; noSpeech?: boolean } = {}
+    opts: { priority?: SpeechPriority; speak?: string; noSpeech?: boolean; hold?: boolean } = {}
   ): void {
     const seat = this.seats.find((s) => s.id === id);
     const ws = seat?.ws;
@@ -1478,12 +1490,23 @@ export class Match {
         !text.startsWith("direct");
       const speech = speak ? ensureSpeech(opts.speak ?? text) : null;
       ws.send(
-        JSON.stringify({ type: "transcript", who, text, priority, ...(speech ? { speech } : {}) })
+        JSON.stringify({
+          type: "transcript",
+          who,
+          text,
+          priority,
+          ...(speech ? { speech } : {}),
+          ...(opts.hold ? { hold: true } : {}),
+        })
       );
     }
   }
 
-  handleUtterance(ws: WebSocket, text: string, source: "voice" | "typed" = "typed"): void {
+  handleUtterance(
+    ws: WebSocket,
+    text: string,
+    source: "voice" | "typed" | "panel" = "typed"
+  ): void {
     const seat = this.seats.find((s) => s.ws === ws);
     if (!seat || seat.dead) return; // the dead watch; they don't command
 
@@ -1509,9 +1532,14 @@ export class Match {
         }
         const commands: Command[] = Array.isArray(parsed) ? parsed : [parsed];
         this.sim.enqueue(seat.id, commands);
-        this.sendTranscript(seat.id, "sys", `direct: ${commands.map((c) => c.verb).join(", ")}`, {
-          priority: "chatter",
-        });
+        // Panel controls ride this path too, but they aren't the dev harness:
+        // the captain clicked a labelled button and the sim answers with its
+        // own line. Echoing the verb would just leak plumbing into his ear.
+        if (source !== "panel") {
+          this.sendTranscript(seat.id, "sys", `direct: ${commands.map((c) => c.verb).join(", ")}`, {
+            priority: "chatter",
+          });
+        }
       } catch {
         this.sendTranscript(seat.id, "sys", "direct command parse error", { priority: "news" });
       }

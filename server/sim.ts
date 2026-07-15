@@ -532,7 +532,10 @@ export type SimEvent =
   // abbreviations); the transcript displays `text`, the voice says `speak`.
   // silent: transcript-only — never synthesized (v5.1 §1.3: confirmations
   // of instantly-visible effects, e.g. the drift-marker toggle)
-  | { kind: "notice"; ship: ShipId | "all"; text: string; alert?: boolean; speak?: string; silent?: boolean }
+  // hold: a LATCHED STATE, not a momentary event — it cannot go stale, so it
+  // waits out a long line ahead of it instead of expiring in the queue (see
+  // SPEECH_TTL_HOLD_MS). Use only where being told late is still useful.
+  | { kind: "notice"; ship: ShipId | "all"; text: string; alert?: boolean; speak?: string; silent?: boolean; hold?: boolean }
   | { kind: "ui"; ship: ShipId; what: "show_vector" } // client-side overlay triggers
   // persistent client-side overlay toggles (v4.7): pure ui, no sim state.
   // v5 adds ELEMENT values (probe markers, designations), not new events.
@@ -828,6 +831,11 @@ export class Sim {
       tombstones: { letter: string; lastKnown: { x: number; y: number; facing: number; t: number } }[];
     }
   >();
+  // Patch 3.5 §2: who has already been told about the crossover. PUBLIC and
+  // deliberately reassignable — the Match hands the same set to each new
+  // system's sim, so the teaching line is once per SITTING rather than once
+  // per system (a campaign run rebuilds the sim eight times).
+  crossoverSpoken = new Set<ShipId>();
   // v5 §3: per-viewer opaque rumble aliases ("r1", "r2", ...) — the wire
   // must not let a client correlate rumbles across time by object id, nor
   // tell a ship rumble from a decoy rumble by prefix (invariants 11/13).
@@ -1435,22 +1443,42 @@ export class Sim {
               ? `Wreck ${letter} is stripped bare, Captain — nothing left to take.`
               : `That rumor was a dry hole, Captain — nothing there.`;
           }
-          if (dist(ship.x, ship.y, target.x, target.y) > C.SALVAGE_APPROACH_RANGE_M) {
-            // fixed strings (letters only, no numbers) — rejections speak
-            // verbatim and the synthesis cache must stay bounded
-            return `${noun(target)} ${letter} is too far out, Captain — get us inside fifteen klicks and I'll take her in.`;
-          }
+          // NO RANGE GATE. Lifted 2026-07-14 — see the block comment on the
+          // nearest-site branch below.
         } else {
           const cand = sites
             .filter(isCandidate)
             .map((w) => ({ w, d: dist(ship.x, ship.y, w.x, w.y) }))
             .sort((a, b) => a.d - b.d)[0];
           if (!cand) return "No sites left with anything in them, Captain.";
-          if (cand.d > C.SALVAGE_APPROACH_RANGE_M) {
-            return "No site inside fifteen klicks, Captain — pick one and get us closer.";
-          }
           target = cand.w;
         }
+        // 🔴 THE 15 KM GATE IS GONE (2026-07-14). It was the ONLY thing
+        // standing between the captain and a moving wreck, and it made the
+        // Hunter's hulk — the richest prize in the game — unreachable in
+        // practice: beyond fifteen klicks nothing else resolves a wreck
+        // (`set_heading target` takes ships, missiles, decoys and rumbles;
+        // a wreck letter is not in the contact book), so the only tool left
+        // was `set_heading absolute` at a bearing read off the state line —
+        // a STATIC snapshot bearing against a hulk doing 800 m/s, re-issued
+        // by voice at 1 Hz through an LLM. There was no closed-loop pursuit
+        // available to the player at all.
+        //
+        // Meanwhile the solver was already here, and already correct: the
+        // terminal approach runs in the WRECK'S FRAME (lead hops, retro-brake
+        // on relative velocity, then ride along), and the gate was
+        // ISSUE-TIME ONLY — armed inside 15 km it would happily chase that
+        // same hulk to any range. So the gate never protected a limit; it
+        // just refused to start. Now `salvage <letter>` flies the whole
+        // intercept, and the XO quotes the price on the way (§2d, below) —
+        // which is the actual answer to "is it worth it", and a better one
+        // than a refusal.
+        //
+        // What is deliberately UNCHANGED: SALVAGE_DOCK_RANGE_M still aborts
+        // an active transfer that drifts (stepSalvage), the workshop rule
+        // still needs a full stop, and the approach is still loud, slow and
+        // predictable — salvage is still bait. Existing salvage tests are
+        // untouched, which is the proof.
         const salvDisc = this.parseDiscipline(cmd.params.discipline);
         ship.maneuver = { type: "salvage", wreckId: target.id, ...(salvDisc ? { discipline: salvDisc } : {}) };
         events.push({
@@ -3747,10 +3775,23 @@ export class Sim {
   // spoken alarm at the starting gun.
   private announceCrossover(ship: Ship, events: SimEvent[]): void {
     if (ship.isDrone) return;
-    const prey = this.voiceRangeM(ship) > this.earsRangeM(ship);
+    const voice = this.voiceRangeM(ship);
+    const ears = this.earsRangeM(ship);
     const was = ship.prevPrey;
+    // Deadband. Without one the frigate — whose sigBase IS the book — sits
+    // exactly on the boundary at idle, so any thrust at all flipped the
+    // state and re-spoke the line every tick. A crossing has to CLEAR the
+    // book in the direction it's going.
+    const H = C.RINGS_CROSSOVER_HYSTERESIS;
+    const prey = was === null ? voice > ears : was ? voice > ears / H : voice > ears * H;
     ship.prevPrey = prey;
     if (was === null || prey === was) return;
+    // ...and once told, he doesn't tell you again. This is a teaching line:
+    // useful the first time you cross, noise every time after (playtest
+    // 2026-07-14). The set is Match-owned, so it survives the per-system
+    // sim rebuild — once per SITTING, not once per system.
+    if (this.crossoverSpoken.has(ship.id)) return;
+    this.crossoverSpoken.add(ship.id);
     events.push({
       kind: "notice",
       ship: ship.id,
@@ -4524,7 +4565,13 @@ export class Sim {
           );
           rec.prevTier = 1; // transition lines below take it from faint
         } else {
-          if (rec.lastKnown) book.tombstones.push({ letter: rec.letter, lastKnown: rec.lastKnown });
+          if (rec.lastKnown) {
+            // drop any that have aged off the map before adding — the array
+            // was push-only and grew for the whole match
+            const cutoff = this.tickCount - C.GHOST_TTL_S * C.TICK_RATE_HZ;
+            book.tombstones = book.tombstones.filter((tb) => tb.lastKnown.t >= cutoff);
+            book.tombstones.push({ letter: rec.letter, lastKnown: rec.lastKnown });
+          }
           rec.letter = this.nextLetter(book);
           rec.identified = false;
           rec.lostAt = null;
@@ -4914,10 +4961,25 @@ export class Sim {
           events.push({ kind: "notice", ship: ship.id, text: "Tanks dry — I can't finish the stop, Captain.", alert: true });
           return;
         }
-        // lead intercept: aim where the target WILL be at hop speed —
-        // for a static wreck the lead term is zero (current position)
-        const tLead = d / Math.max(50, rspeed);
-        const to = bearingTo(ship.x, ship.y, dockAt.x + wvx * tLead, dockAt.y + wvy * tLead);
+        // Aim AT it. Everything above this line is already solved in the
+        // wreck's frame (rvx/rvy), and in that frame the wreck does not
+        // move — so there is nothing to lead. Thrust is frame-invariant:
+        // burning at the hulk's current position closes the gap whether or
+        // not you are both drifting at 800 m/s.
+        //
+        // This used to carry `tLead = d / max(50, rspeed)` and aim at
+        // `dockAt + wv * tLead`, which mixed the two frames: once the ship
+        // MATCHED the hulk (rspeed small — exactly what the brake above is
+        // for), tLead exploded and the hop aimed tens of km ahead, burning
+        // along the hulk's velocity instead of toward it. It was invisible
+        // for a static wreck (wv = 0 makes the term vanish) and for a short
+        // chase (you arrive hot, so the closing clause carries the hop),
+        // and fatal for the case that matters — the Hunter's hulk, far away
+        // and fast. Measured 2026-07-14: from 80 km against an 800 m/s
+        // hulk it closed to 2.3 km, then chattered between hop and brake
+        // around SALVAGE_STOP_SPEED_MPS and drifted back out to 8.5 km,
+        // never docking. With the lead gone it docks at t≈400.
+        const to = bearingTo(ship.x, ship.y, dockAt.x, dockAt.y);
         ship.goal = { mode: "absolute", degrees: to };
         ship.thrust = Math.abs(angDiff(ship.facing, to)) <= 15 ? Math.min(35, cap) : 0;
         return;
@@ -5566,7 +5628,17 @@ export class Sim {
       if (wreck.items.length === 0) {
         player.maneuver = null;
         delete this.salvaging[player.id];
-        events.push({ kind: "notice", ship: player.id, text: "That's the last of it — wreck's stripped, Captain." });
+        // `hold`: the last item is the BEST item (worst-first), so the line
+        // immediately ahead of this one is the longest in the game — a module
+        // fitting. At the news TTL this line reliably died in the queue,
+        // exactly when the haul was worth announcing. The wreck stays
+        // stripped; being told late costs nothing.
+        events.push({
+          kind: "notice",
+          ship: player.id,
+          text: "That's the last of it — wreck's stripped, Captain.",
+          hold: true,
+        });
       } else if (wreck.items[wreck.items.length - 1].kind === "module" && wreck.items.length === 1) {
         // the §4.2 teaser: you are stationary, listening to a rumble grow,
         // deciding whether the last item is worth it
@@ -5907,13 +5979,30 @@ export class Sim {
           `Salvage on the board: ${live
             .map(
               (w) =>
-                `${w.marked || w.checked ? "wreck" : "rumor"} ${w.letter}: bearing ${fmtBearing(bearingTo(ship.x, ship.y, w.x, w.y))}, ${(dist(ship.x, ship.y, w.x, w.y) / 1000).toFixed(0)} km${
+                // the TYPE is named for marked sites, exactly as the MP
+                // branch above does it — a hulk read as a bare "wreck H"
+                // and the captain calls it "the Hunter's wreck", so the
+                // translator had nothing to match on and asked him which
+                // one he meant (live-checked 2026-07-14, and the reason
+                // "I still can't send the XO to a wrecked Hunter" outlived
+                // the range gate). Rumors stay untyped — that IS the rumor.
+                `${
                   w.marked || w.checked
-                    ? ` (${w.items.length} items)`
+                    ? w.type && w.type !== "hulk"
+                      ? `${w.type} wreck`
+                      : w.type === "hulk"
+                        ? "hulk (a dead ship — the Hunter's corpse or a captain's)"
+                        : "wreck"
+                    : "rumor"
+                } ${w.letter}: bearing ${fmtBearing(bearingTo(ship.x, ship.y, w.x, w.y))}, ${(dist(ship.x, ship.y, w.x, w.y) / 1000).toFixed(0)} km${
+                  w.marked || w.checked
+                    ? ` (${w.items.length} items${
+                        Math.hypot(w.vx ?? 0, w.vy ?? 0) > C.SALVAGE_STOP_SPEED_MPS ? ", UNDER WAY" : ""
+                      })`
                     : " (contents unknown — resolves by PRESENCE en route; sensors and pings can't do it, dust or no dust)"
                 }`
             )
-            .join("; ")}. Within ${C.SALVAGE_APPROACH_RANGE_M / 1000} km the salvage verb (target = the letter) flies the whole approach and transfer ("come alongside rumor A"). Beyond that, steer for its bearing first and SAY the fifteen-klick rule.`
+            .join("; ")}. The salvage verb (target = the letter) flies the whole approach and transfer AT ANY RANGE ("come alongside rumor A", "take us to the hulk") — including a wreck under way, whose drift it matches first. There is no range rule: never tell the captain to get closer first.`
         );
       }
       const sv = m.salvaging[id];
@@ -6388,9 +6477,13 @@ export class Sim {
     // single-ghost shape (freshest) for the current client.
     const ghosts: { x: number; y: number; facing: number; t: number; label?: string }[] = [];
     const book = this.contactBooks.get(id);
+    // a fix older than GHOST_TTL_S is off the board — see the constant for
+    // why an AGE-driven expiry leaks nothing the tombstone was protecting
+    const stale = (fix: { t: number }) =>
+      (this.tickCount - fix.t) / C.TICK_RATE_HZ > C.GHOST_TTL_S;
     if (book) {
       for (const [key, rec] of book.records) {
-        if (rec.lostAt === null || !rec.lastKnown) continue;
+        if (rec.lostAt === null || !rec.lastKnown || stale(rec.lastKnown)) continue;
         const label =
           rec.identified && key.startsWith("s")
             ? this.callsigns.get(key.slice(1)) ?? rec.letter
@@ -6398,6 +6491,7 @@ export class Sim {
         ghosts.push({ ...rec.lastKnown, label });
       }
       for (const t of book.tombstones) {
+        if (stale(t.lastKnown)) continue;
         ghosts.push({ ...t.lastKnown, label: t.letter });
       }
     }

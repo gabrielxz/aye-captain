@@ -34,17 +34,23 @@ be going somewhere — not both.
   but once it has seen you it searches outward from your last fix in a
   circle that grows at your max speed (sitting still gets you found;
   coasting away silently does not), spending probes and then active pings
-  as its uncertainty grows. Kill it (the Anvil patches) and two things
+  as its uncertainty grows. Inside ~35 km with a track it stops maneuvering,
+  puts its nose on you and holds it — that is what a lock costs — cutting
+  thrust to do it, so it goes quiet exactly as it turns dangerous. The
+  heavier hulls carry railguns and fire them on a solution (no lock needed),
+  paying the same price you would: rail fire is heard map-wide and a lit rail
+  never goes quiet again. Kill it (the Anvil patches) and two things
   happen at once: its hold — the richest in the system, double modules —
   becomes a drifting hulk keeping 40% of its death velocity on its death
   course (loot it by MATCHING that velocity — the momentum is the price —
-  or let the shroud current walk an escaped corpse back inside over a few
-  minutes while the clock spends), and the gate destabilizes — 4 minutes
-  of GATE STABLE grace, then 3 of GATE CLOSING as the pylons walk inward
-  to a fully closed wall; still in-system at zero and the run ends
-  STRANDED. Autopilot maneuvers fly under a discipline posture
-  (silent 25% / standard 60% / flank 100%, per-order overrides —
-  "come to a full stop, quietly"), propellant refills at each jump
+  and "come alongside the hulk" is ONE command at any range: the XO flies
+  the transit, matches the drift, docks and strips it), and the gate
+  destabilizes — 4.5 minutes of GATE STABLE grace, then 3 of GATE CLOSING
+  as the pylons walk inward to a fully closed wall; still in-system at zero
+  and the run ends STRANDED. Autopilot maneuvers fly under a discipline
+  posture (silent 20% / standard 60% / flank 100%, per-order overrides —
+  "come to a full stop, quietly"; silent is the only posture that
+  regenerates propellant while it moves), propellant refills at each jump
   (hull/missiles/ammo are the attrition axes), and the railgun's pinpoint
   solution now requires ID tier — a mere track fires a cone.
   The gate is flown
@@ -84,9 +90,11 @@ be going somewhere — not both.
   Pointing at a target TRACKS it: the helm keeps the nose on the contact
   (or down a rumble's bearing — "steer for that rumble") until you give a
   new heading; lose the contact and the helm holds its last known position
-  and says so. Ships drift (Newtonian): turning doesn't change your
-  velocity. "Show me our vector" (or V) draws where you're going and where
-  you could stop.
+  and says so. A lost track leaves a dashed last-seen outline that clears
+  after 30 s — after that it's a guess about a ship with half a minute of
+  head start (the helm's last-known steering is unaffected). Ships drift
+  (Newtonian): turning doesn't change your velocity. "Show me our vector"
+  (or V) draws where you're going and where you could stop.
 - **Pick a hull**: three archetypes, numbers only. **Corvette** — the
   ghost: fastest, dimmest, best sensors, 6 decoys, 1 tube, no railgun.
   **Frigate** — the baseline all-rounder. **Cruiser** — the thunderstorm:

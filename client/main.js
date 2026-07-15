@@ -340,7 +340,7 @@ function handleMessage(msg) {
     case "transcript":
       addTranscript(msg.who, msg.text, msg.priority === "critical");
       // incoming transmissions queue (above acks, below combat warnings)
-      if (msg.speech) audio.enqueueSpeech(msg.speech, msg.priority ?? "news");
+      if (msg.speech) audio.enqueueSpeech(msg.speech, msg.priority ?? "news", !!msg.hold);
       break;
     default:
       console.log("unhandled message", msg);

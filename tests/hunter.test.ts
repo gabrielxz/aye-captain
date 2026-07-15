@@ -4,6 +4,7 @@
 // Sim-level fog integration is pinned in campaign.test.ts.
 import { hunterDecide, initialHunterMem, type HunterSnap, type HunterIntel } from "../server/hunter.js";
 import { emptyTerrain, type Terrain } from "../server/terrain.js";
+import { headingVec } from "../server/sim.js";
 import * as C from "../server/constants.js";
 
 const assert = (cond: boolean, msg: string) => {
@@ -11,10 +12,16 @@ const assert = (cond: boolean, msg: string) => {
   else console.log("ok:", msg);
 };
 
+// the ladder's baseline hull is the corvette — accel/turnRate are on the
+// wire for real (sim.ts `accel: accelOf(ship)`, `turnRate: turnRateOf(ship)`)
+// and the AI now reads them instead of assuming the worst archetype
 const you = (over: Partial<HunterSnap["you"]> = {}): HunterSnap["you"] => ({
   x: 0, y: 0, vx: 0, vy: 0, facing: 0, propellant: 100,
+  accel: C.ARCHETYPES.corvette.accel,
+  turnRate: C.ARCHETYPES.corvette.turn,
   lock: { has: false },
   tubes: [{ state: "ready" }],
+  rail: null, // corvette mounts none; the railgun rows override this
   ...over,
 });
 const snap = (over: Partial<HunterSnap> = {}): HunterSnap => ({
@@ -59,12 +66,83 @@ const thrustOf = (cmds: ReturnType<typeof hunterDecide>["commands"]) =>
 // indistinguishable here (invariant 11): the Hunter chases and designates it
 {
   const s = snap({
-    contacts: [{ cid: "Bravo", tier: 2, x: 0, y: 40000, vx: 0, vy: 0 }],
+    contacts: [{ cid: "Bravo", tier: 2, x: 0, y: 30000, vx: 0, vy: 0 }],
   });
   const { commands } = hunterDecide(s, initialHunterMem(), emptyTerrain(), intel());
   assert(Math.abs(headingOf(commands)) < 1, "pursues the contact's bearing");
   const lockCmd = commands.find((c) => c.verb === "set_lock_target");
   assert(lockCmd !== undefined && lockCmd.params.contact === "Bravo", "designates by cid (decoys included — that's the design)");
+}
+
+// 3b. 🔴 THE AIMING LAW: inside the engage band the nose is ON the target,
+// every tick, whatever the closing rate is doing. A lock needs the contact
+// inside ±LOCK_CONE_HALF_ANGLE_DEG of FACING for LOCK_TIME_S CONTINUOUS
+// seconds. The old ENGAGE branch only set `throttle`, so the braking
+// envelope above it held `heading` at the retrograde of relative velocity —
+// ~180° off — and the Hunter designated a contact it was pointing away from
+// and polled a lock that could never build. It is why he essentially never
+// killed anyone. Fixture: closing HOT, which is precisely when the old code
+// flipped retrograde.
+{
+  let mem = initialHunterMem();
+  const target = { cid: "Alpha", tier: 2, loud: 0.8, x: 0, y: 30000, vx: 0, vy: 0 };
+  let worst = 0;
+  for (let t = 0; t < C.LOCK_TIME_S + 3; t++) {
+    const s = snap({
+      // barrelling straight in at max speed — "too hot" by any envelope
+      you: you({ x: 0, y: 0, vx: 0, vy: C.MAX_SPEED_MPS }),
+      contacts: [target],
+    });
+    const r = hunterDecide(s, mem, emptyTerrain(), intel());
+    mem = r.mem;
+    const bearing = 0; // target is due north of us
+    const off = Math.abs(((headingOf(r.commands) - bearing + 540) % 360) - 180);
+    worst = Math.max(worst, off);
+  }
+  assert(
+    worst <= C.LOCK_CONE_HALF_ANGLE_DEG,
+    `🔴 nose holds inside the lock cone for a full LOCK_TIME_S while closing hot (worst ${worst.toFixed(1)}° of ${C.LOCK_CONE_HALF_ANGLE_DEG}°)`
+  );
+}
+
+// 3c. THE RAILGUN EXISTS. Four of the eight ladder rows mount one and row 3
+// says so out loud ("It'll have a railgun, Captain") — and hunter.ts had
+// never contained the word. It needs no lock, only TRACK tier, which is the
+// one precondition this AI already satisfies.
+{
+  const armed = you({ rail: { slugs: 20, cooldownS: 0 }, accel: C.ARCHETYPES.frigate.accel, turnRate: C.ARCHETYPES.frigate.turn });
+  const s = snap({ you: armed, contacts: [{ cid: "Alpha", tier: 2, x: 0, y: 20000, vx: 0, vy: 0 }] });
+  const { commands } = hunterDecide(s, initialHunterMem(), emptyTerrain(), intel());
+  const rail = commands.find((c) => c.verb === "fire_railgun");
+  assert(rail !== undefined && rail.params.target === "Alpha", "a frigate Hunter inside rail range FIRES the railgun");
+  assert(rail!.params.mode === "solution", "…on a solution: it needs TRACK tier, not a lock");
+
+  // no lock required — the whole point
+  assert(!armed.lock.has, "…and it fired with no lock held");
+
+  // cold barrel and empty magazine both hold fire
+  const cooling = snap({ you: you({ rail: { slugs: 20, cooldownS: 4 } }), contacts: [{ cid: "Alpha", tier: 2, x: 0, y: 20000, vx: 0, vy: 0 }] });
+  assert(
+    !hunterDecide(cooling, initialHunterMem(), emptyTerrain(), intel()).commands.some((c) => c.verb === "fire_railgun"),
+    "a recharging rail holds fire"
+  );
+  const dry = snap({ you: you({ rail: { slugs: 0, cooldownS: 0 } }), contacts: [{ cid: "Alpha", tier: 2, x: 0, y: 20000, vx: 0, vy: 0 }] });
+  assert(
+    !hunterDecide(dry, initialHunterMem(), emptyTerrain(), intel()).commands.some((c) => c.verb === "fire_railgun"),
+    "an empty magazine holds fire"
+  );
+  // a corvette carries none and must never invent one
+  const corv = snap({ contacts: [{ cid: "Alpha", tier: 2, x: 0, y: 20000, vx: 0, vy: 0 }] });
+  assert(
+    !hunterDecide(corv, initialHunterMem(), emptyTerrain(), intel()).commands.some((c) => c.verb === "fire_railgun"),
+    "a corvette Hunter has no rail and never fires one"
+  );
+  // and a FAINT contact is not a solution
+  const faint = snap({ you: armed, contacts: [{ cid: "Alpha", tier: 1, x: 0, y: 20000 }] });
+  assert(
+    !hunterDecide(faint, initialHunterMem(), emptyTerrain(), intel()).commands.some((c) => c.verb === "fire_railgun"),
+    "faint is not a firing solution — TRACK or nothing"
+  );
 }
 
 // 4. ENGAGE: fires on a held lock, then respects the cadence
@@ -354,34 +432,106 @@ const thrustOf = (cmds: ReturnType<typeof hunterDecide>["commands"]) =>
 
 // 17. ANVIL 1.1 §5a — the leash BURNS: at max speed on an outbound radial
 // vector the Hunter commands a retro burn (home, full throttle) and the
-// braking math holds it inside the region. Kinematic integration.
-{
-  // 135 km out doing 3000: braking distance (112.5 km on the weakest
-  // drive) + margin has just crossed the rim — the trigger MUST be live,
-  // and physics can still recover (135 + 112.5 < 250). Closed-loop flight
-  // never gets deeper than this — the trigger fires the moment
-  // recoverability is at stake (pinned at sim level in campaign.test §25).
-  let hx = 0, hy = 135000, hvx = 0, hvy = C.MAX_SPEED_MPS;
+// braking math holds it inside the region.
+//
+// This pin was rewritten 2026-07-14, because as written it could not fail.
+// Two holes, each fatal on its own:
+//   (a) it integrated `hvx += sin(h) * A * thr` — thrust applied INSTANTLY
+//       along the commanded heading. The real sim rotates at turnRateOf()
+//       first and only then accelerates along FACING (sim.ts:4700). A
+//       cruiser flipping 180° at 14°/s takes 12.9 s = ~38 km of outward
+//       travel at 3 km/s that the test model simply did not have. It was
+//       validating a ship with infinite turn authority.
+//   (b) it ran ONE hull's start state against ANOTHER hull's accel.
+// Now: every archetype, each flown with its OWN accel and its OWN turn
+// rate, started exactly where that hull can still just recover. Deeper than
+// that is unrecoverable by physics, not by AI — the trigger fires at the
+// recoverability boundary, which is the guarantee actually on offer.
+//
+// ⚠️ AND IT IS CONDITIONAL ON FUEL. These fixtures fly a full tank, so what
+// is pinned here is "the AI COMMANDS a containing burn", not "the Hunter
+// stays inside". In the real sim he routinely arrives at the rim dry (see
+// campaign.test.ts §25b) and a commanded burn with propellant 0 moves
+// nothing. Do not read these as the law being kept.
+for (const [name, a] of Object.entries(C.ARCHETYPES)) {
+  const v = C.MAX_SPEED_MPS;
+  const flipS = 180 / a.turn; // the nose starts 180° from where it must point
+  const needM = v * flipS + (v * v) / (2 * a.accel);
+  // sit in the window where the trigger is LIVE (d + needM + 5 km margin is
+  // past the rim) but recovery is still physically possible (d + needM is
+  // not). That window is the whole guarantee: 4 km inside it either way.
+  const start = C.REGION_RADIUS_M - needM - 4000;
+  let hx = 0, hy = start, hvx = 0, hvy = v;
+  let facing = 0; // pointing straight out — the worst case
   let mem = initialHunterMem();
-  const A = C.ARCHETYPES.cruiser.accel; // the WEAKEST drive — the floor the brake math assumes
   let maxR = 0;
-  const first = hunterDecide(snap({ you: you({ x: hx, y: hy, vx: hvx, vy: hvy }) }), mem, emptyTerrain(), intel());
-  assert(Math.abs(headingOf(first.commands) - 180) < 1 && thrustOf(first.commands) === 100,
-    "outbound at max speed: the boundary commands a full retro burn NOW, not a heading change");
-  for (let t = 0; t < 300; t++) {
-    const s = snap({ you: you({ x: hx, y: hy, vx: hvx, vy: hvy }) });
-    const r = hunterDecide(s, mem, emptyTerrain(), intel());
+  const mkSnap = () => snap({
+    you: you({ x: hx, y: hy, vx: hvx, vy: hvy, facing, accel: a.accel, turnRate: a.turn }),
+  });
+  const first = hunterDecide(mkSnap(), mem, emptyTerrain(), intel());
+  assert(
+    Math.abs(headingOf(first.commands) - 180) < 1 && thrustOf(first.commands) === 100,
+    `${name}: outbound at max speed commands a full retro burn NOW, not a heading change`
+  );
+  for (let t = 0; t < 400; t++) {
+    const r = hunterDecide(mkSnap(), mem, emptyTerrain(), intel());
     mem = r.mem;
-    const h = headingOf(r.commands) * (Math.PI / 180);
+    // rotate toward the commanded heading at THIS hull's turn rate, then
+    // burn along facing — the sim's actual order of operations
+    const want = headingOf(r.commands);
+    const diff = ((want - facing + 540) % 360) - 180;
+    facing = (facing + Math.max(-a.turn, Math.min(a.turn, diff)) + 360) % 360;
+    const h = facing * (Math.PI / 180);
     const thr = thrustOf(r.commands) / 100;
-    hvx += Math.sin(h) * A * thr; hvy += Math.cos(h) * A * thr;
+    hvx += Math.sin(h) * a.accel * thr;
+    hvy += Math.cos(h) * a.accel * thr;
     const sp = Math.hypot(hvx, hvy);
     if (sp > C.MAX_SPEED_MPS) { hvx *= C.MAX_SPEED_MPS / sp; hvy *= C.MAX_SPEED_MPS / sp; }
     hx += hvx; hy += hvy;
     maxR = Math.max(maxR, Math.hypot(hx, hy));
   }
-  assert(maxR <= C.REGION_RADIUS_M,
-    `never exits: max radius ${(maxR / 1000).toFixed(1)} km of ${C.REGION_RADIUS_M / 1000} — the burn-leash law holds at max speed`);
+  assert(
+    maxR <= C.REGION_RADIUS_M,
+    `${name}: WITH FUEL, commands a containing burn — max radius ${(maxR / 1000).toFixed(1)} km of ${C.REGION_RADIUS_M / 1000}, flown with its own turn rate`
+  );
+}
+
+// 17b. 🔴 the rock dodge no longer blanks the boundary law. rocks seed to
+// 0.95R and the leash parks the Hunter at 0.9R, so the dodge zone and the
+// rim OVERLAP — and AVOID chains `if (rock) ... else if (boundary)`, so any
+// rock on the vector silently disabled containment. BOTH existing never-exits
+// pins run on EMPTY terrain, where this branch cannot execute. That is the
+// "flies into the shroud" the player reported, and nothing could have caught
+// it. Here: a rock placed on an outbound vector near the rim.
+{
+  const rimRock: Terrain = {
+    seed: "rim",
+    rocks: [{ x: 6000, y: 232000, r: 6000, centerpiece: false } as any],
+    dust: [],
+  } as Terrain;
+  // running outbound past the leash with that rock dead ahead: BOTH threats
+  // live. ±60° off a radial-outward vector is still outward, and flipping
+  // the dodge sign would steer into the rock — so the answer to both is the
+  // same retro burn.
+  const s = snap({ you: you({ x: 0, y: 226000, vx: 0, vy: C.MAX_SPEED_MPS }) });
+  const { commands } = hunterDecide(s, initialHunterMem(), rimRock, intel());
+  const [hx, hy] = headingVec(headingOf(commands));
+  assert(
+    hx * s.you.x + hy * s.you.y < 0 && thrustOf(commands) === 100,
+    `🔴 rock + rim together: burn home, not out through the shroud (heading ${headingOf(commands).toFixed(0)}°)`
+  );
+
+  // and with the rim NOT in play, the rock dodge is untouched — it still
+  // steers off the collision line rather than braking
+  const inField: Terrain = {
+    seed: "mid",
+    rocks: [{ x: 6000, y: 60000, r: 6000, centerpiece: false } as any],
+    dust: [],
+  } as Terrain;
+  const mid = snap({ you: you({ x: 0, y: 30000, vx: 0, vy: C.MAX_SPEED_MPS }) });
+  const r2 = hunterDecide(mid, initialHunterMem(), inField, intel());
+  assert(r2.mem.dodge !== 0, "deep inside the region a rock still gets a committed dodge, not a brake");
+  assert(Math.abs(((headingOf(r2.commands) - 180 + 540) % 360) - 180) > 30, "…and that dodge is not a retro burn");
 }
 
 // ---------- Patch 2 "Two Ships" §1: loudest-signature targeting ----------

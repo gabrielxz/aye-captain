@@ -87,10 +87,65 @@ const texts = (evs: SimEvent[], ship: string) =>
     "stale reacquisition opens a NEW letter"
   );
   const snap = sim.snapshotFor("A") as any;
+  // This used to assert the tombstone was ON the map here. It can't be: the
+  // timeout branch only fires after CONTACT_CORRELATE_S (60 s), by which
+  // point the fix is long past GHOST_TTL_S (30 s) and aged off on its own
+  // clock — 30+ seconds BEFORE the new letter opened. That is the invariant
+  // the tombstone was protecting, met more strongly: the old letter's fix
+  // did not vanish *because* a new letter appeared.
+  assert(
+    !(snap.ghosts ?? []).some((g: any) => g.label === "Alpha"),
+    "a fix older than the ghost TTL is off the map, whatever else happens"
+  );
+  void a;
+}
+
+// 3b. 🔴 the leak the tombstone exists for, in the branch where it still
+// bites: correlation can ALSO fail on REACH (the contact moved further than
+// max speed allows) — and that can happen at any age, including seconds in.
+// There the fix is young, the tombstone draws, and the old letter does NOT
+// disappear in the same instant its replacement is designated.
+{
+  const sim = new Sim();
+  const a = sim.addShip("A", 0, 0, 0);
+  const b = sim.addShip("B", 0, 8000, 180, false, null, "Kestrel");
+  a.pdcPosture = "hold"; b.pdcPosture = "hold";
+  sim.tick();
+  b.y = 200000; // vanish
+  sim.tick();
+  // back after only a few seconds, but somewhere max speed cannot explain
+  for (let i = 0; i < 3; i++) sim.tick();
+  b.x = 9000;
+  b.y = -9000;
+  const evNew = sim.tick();
+  assert(
+    texts(evNew, "A").some((t) => /New contact — designating (?!Alpha)/.test(t)),
+    "an implausible reacquisition opens a NEW letter (reach, not timeout)"
+  );
+  const snap = sim.snapshotFor("A") as any;
   assert(
     (snap.ghosts ?? []).some((g: any) => g.label === "Alpha"),
-    "the uncorrelated old letter lingers as a tombstone ghost"
+    "🔴 the young tombstone still draws — deleting it would say both letters are one hull"
   );
+  void a;
+}
+
+// 3c. the TTL is age-driven and nothing else: a ghost nobody reacquires
+// still leaves, on its own clock. (The map used to accrete these forever —
+// tombstones were push-only and an unobserved death was unclearable.)
+{
+  const sim = new Sim();
+  const a = sim.addShip("A", 0, 0, 0);
+  const b = sim.addShip("B", 0, 8000, 180, false, null, "Kestrel");
+  a.pdcPosture = "hold"; b.pdcPosture = "hold";
+  sim.tick();
+  b.y = 200000; // gone, and never coming back
+  sim.tick();
+  const before = sim.snapshotFor("A") as any;
+  assert((before.ghosts ?? []).length === 1, "the fix is on the map while it is fresh");
+  for (let i = 0; i < C.GHOST_TTL_S + 2; i++) sim.tick();
+  const after = sim.snapshotFor("A") as any;
+  assert((after.ghosts ?? []).length === 0, `and gone once it is stale (got ${(after.ghosts ?? []).length})`);
   void a;
 }
 
