@@ -439,6 +439,23 @@ export const DESIGNATION_LETTERS = [
 // otherwise the XO can't correlate and opens a NEW letter (identification
 // resets with it).
 export const CONTACT_CORRELATE_S = 60;
+// How long a last-known fix stays ON THE MAP. Nothing aged these out: the
+// tombstone array was push-only and an unobserved-death ghost was
+// structurally unclearable (the ship leaves the board, so its record is
+// never revisited), and every match silently accreted dashed outlines
+// (playtest 2026-07-14: "my screen is filled with last seen X seconds").
+// 🔴 This is safe ONLY because it is AGE-driven. The v5 §3 tombstone exists
+// so that deleting a letter's ghost AT THE INSTANT a new letter opens can't
+// leak that both are one hull — a fixed age-out fires on the ghost's own
+// clock and therefore correlates with nothing. Never make this
+// event-driven. Both correlation-failure branches stay covered: an
+// out-of-reach failure tombstones a YOUNG fix that still draws, and a
+// timeout failure can only happen after CONTACT_CORRELATE_S, by which time
+// the ghost is long gone on its own. Pinned in tests/designation.test.ts.
+export const GHOST_TTL_S = 30;
+// The steering fallback (v5 §1: a `track` goal holds last-known when the
+// contact drops) reads the RECORD, not the wire, and is deliberately
+// untouched by this — the map declutters; the autopilot does not change.
 
 // Match lifecycle (v5 §2)
 export const MAX_PLAYERS = 8; // captains per room; spectators unlimited

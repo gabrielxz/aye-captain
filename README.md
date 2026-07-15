@@ -84,9 +84,11 @@ be going somewhere — not both.
   Pointing at a target TRACKS it: the helm keeps the nose on the contact
   (or down a rumble's bearing — "steer for that rumble") until you give a
   new heading; lose the contact and the helm holds its last known position
-  and says so. Ships drift (Newtonian): turning doesn't change your
-  velocity. "Show me our vector" (or V) draws where you're going and where
-  you could stop.
+  and says so. A lost track leaves a dashed last-seen outline that clears
+  after 30 s — after that it's a guess about a ship with half a minute of
+  head start (the helm's last-known steering is unaffected). Ships drift
+  (Newtonian): turning doesn't change your velocity. "Show me our vector"
+  (or V) draws where you're going and where you could stop.
 - **Pick a hull**: three archetypes, numbers only. **Corvette** — the
   ghost: fastest, dimmest, best sensors, 6 decoys, 1 tube, no railgun.
   **Frigate** — the baseline all-rounder. **Cruiser** — the thunderstorm:

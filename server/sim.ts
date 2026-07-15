@@ -4545,7 +4545,13 @@ export class Sim {
           );
           rec.prevTier = 1; // transition lines below take it from faint
         } else {
-          if (rec.lastKnown) book.tombstones.push({ letter: rec.letter, lastKnown: rec.lastKnown });
+          if (rec.lastKnown) {
+            // drop any that have aged off the map before adding — the array
+            // was push-only and grew for the whole match
+            const cutoff = this.tickCount - C.GHOST_TTL_S * C.TICK_RATE_HZ;
+            book.tombstones = book.tombstones.filter((tb) => tb.lastKnown.t >= cutoff);
+            book.tombstones.push({ letter: rec.letter, lastKnown: rec.lastKnown });
+          }
           rec.letter = this.nextLetter(book);
           rec.identified = false;
           rec.lostAt = null;
@@ -6419,9 +6425,13 @@ export class Sim {
     // single-ghost shape (freshest) for the current client.
     const ghosts: { x: number; y: number; facing: number; t: number; label?: string }[] = [];
     const book = this.contactBooks.get(id);
+    // a fix older than GHOST_TTL_S is off the board — see the constant for
+    // why an AGE-driven expiry leaks nothing the tombstone was protecting
+    const stale = (fix: { t: number }) =>
+      (this.tickCount - fix.t) / C.TICK_RATE_HZ > C.GHOST_TTL_S;
     if (book) {
       for (const [key, rec] of book.records) {
-        if (rec.lostAt === null || !rec.lastKnown) continue;
+        if (rec.lostAt === null || !rec.lastKnown || stale(rec.lastKnown)) continue;
         const label =
           rec.identified && key.startsWith("s")
             ? this.callsigns.get(key.slice(1)) ?? rec.letter
@@ -6429,6 +6439,7 @@ export class Sim {
         ghosts.push({ ...rec.lastKnown, label });
       }
       for (const t of book.tombstones) {
+        if (stale(t.lastKnown)) continue;
         ghosts.push({ ...t.lastKnown, label: t.letter });
       }
     }
