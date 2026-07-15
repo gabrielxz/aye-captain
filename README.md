@@ -141,6 +141,12 @@ be going somewhere — not both.
   letter.
 - **Detection**: your drive plume is your signature. A hard-burning ship is
   visible ~234 km out; a dark drifter ~54 km (and unlockable until ~32).
+  **The hull remembers.** Signature doesn't collapse the instant you cut the
+  drive — heat sheds at ~10/s, so a ship at full burn takes ~10 seconds to
+  reach cold. You can still disappear; you can't erase the last ten seconds
+  of what you were doing. Going dark is a commitment you make *early*, not a
+  switch you flip when a contact appears — and the voice disc shows the glow
+  draining, so you can watch yourself cool.
   Contacts have **tiers**: FAINT (a smudge — approximate position, no
   vector), TRACK (true position + velocity, **lockable**), ID (full
   readout). The panel's CONTACTS row carries each track's designation and
@@ -193,7 +199,12 @@ be going somewhere — not both.
   you dark. 60 s of ammo, no resupply. Mutual PDC range is a mutual
   mauling. The mounts are **sensor-slaved** — they can't shoot what your
   sensors can't see, so a ballistic torpedo out of a dust shadow may
-  arrive with almost no warning.
+  arrive with almost no warning. They also have **finite throughput**: a
+  hull holds a few targets at full rate (Corvette 1, Frigate 2, Cruiser 3)
+  and time-slices past that, so the per-target chance divides. **A salvo
+  saturates point defense** — the fourth bird isn't ignored, it's just shot
+  at a quarter as hard. The guns go to what kills you soonest: missiles
+  first, then mines, then probes.
 - **Probes**: fire-and-drift remote sensors ("probe out, bearing 090") —
   a 20 s burn, then ~3 minutes of relay: contacts it earns (reduced eyes)
   and rumbles it hears merge into your map marked "via probe", with the
