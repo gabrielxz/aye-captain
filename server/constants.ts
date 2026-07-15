@@ -35,8 +35,12 @@ export const HULL_POINTS = 100; // LINKED: == ARCHETYPES.frigate.hull
 // blocks, no special abilities; the railgun loadout row is the first
 // sanctioned asymmetry). The FRIGATE row IS the v4 baseline — its values
 // are LINKED to the legacy globals below and must never drift from them.
-// Corvette: the ghost — dim, fast-cycling, deception-rich, best eyes, no
-// rail (a railgun is a spinal mount; the corvette's keel can't take one).
+// Corvette: the ghost — dim, fast-cycling, deception-rich, best eyes, and no
+// rail in its STARTING loadout. (It used to say the keel can't take a spinal
+// mount. The Loadout patch made that false and never came back here: nothing
+// gates modules on hull — landModule checks slots and reactor headroom only,
+// and loadout.test.ts pins a corvette mounting a looted rail on purpose.
+// Archetypes are starting hulls, not classes.)
 // Cruiser: the thunderstorm — audible at map scale perpetually (sig 45
 // cannot hide; intended), deep magazines, wins by making you come to it.
 // railguns/railSlugs (§5) and probes (§6) are declared here so a loadout
@@ -250,8 +254,9 @@ export const PING_COOLDOWN_S = 30;
 // can tear open behind rocks/dust without a client-side raycast port.
 export const PING_SHADOW_SAMPLES = 180; // 2 deg resolution
 
-// v5 §5: the railgun (Frigate & Cruiser; the corvette's keel can't take a
-// spinal mount). SOLUTION mode computes constant-velocity lead against a
+// v5 §5: the railgun. Frigate & Cruiser ship with one; a corvette can loot
+// and mount one (see STARTING_LOADOUT above — hull is not a gate).
+// SOLUTION mode computes constant-velocity lead against a
 // TRACK-or-better contact and fires immediately (no lock timer — the slug
 // can't be guided, so there's nothing to hold): deadly against ballistic
 // targets, and ANY thrust during flight breaks the assumption. This is the
@@ -493,6 +498,9 @@ export const PLAYER_NAME_MAX_CHARS = 16;
 // LLM
 export const LLM_MODEL = "claude-haiku-4-5-20251001";
 export const LLM_TIMEOUT_MS = 5000;
+// Boot-time cache prewarm (translator.ts): not on any captain's clock, so it
+// gets a real timeout rather than the 5 s gameplay budget.
+export const LLM_PREWARM_TIMEOUT_MS = 30000;
 export const LLM_MAX_TOKENS = 1000;
 export const UTTERANCE_MAX_COMMANDS = 4;
 

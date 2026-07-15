@@ -95,8 +95,9 @@ be going somewhere — not both.
   head start (the helm's last-known steering is unaffected). Ships drift
   (Newtonian): turning doesn't change your velocity. "Show me our vector"
   (or V) draws where you're going and where you could stop.
-- **Pick a hull**: three archetypes, numbers only. **Corvette** — the
-  ghost: fastest, dimmest, best sensors, 6 decoys, 1 tube, no railgun.
+- **Pick a hull**: three archetypes, numbers only — and a *starting* hull, not
+  a class: any of them can mount what it salvages. **Corvette** — the
+  ghost: fastest, dimmest, best sensors, 6 decoys, 1 tube, no railgun aboard.
   **Frigate** — the baseline all-rounder. **Cruiser** — the thunderstorm:
   160 hull, 3 tubes, deep magazines, and a signature that cannot hide.
   Enemy archetypes are ID-tier information: below ID every contact is a
@@ -108,13 +109,18 @@ be going somewhere — not both.
   reactor is hard-capped; over it the XO refuses ("something has to go
   cold"). Power is instant at any speed ("light up the array"); changing
   the deck itself — install/uninstall — is the **workshop rule**: a full
-  stop, ~a minute, helpless, and any thrust scrubs the job. Hulls spawn
+  stop, ~a minute, helpless, and any thrust scrubs the job. One exception:
+  a module you *salvage* fits on the spot if a slot and the reactor allow
+  it — the stop that landed it was the install. Hulls spawn
   with their book kit cold (Corvette: baffles −25% total sig while lit;
   Frigate: railgun + probe rack; Cruiser: railgun + armor plate). The
   railgun must be lit to fire — a cold rail lights itself on the fire
   order and stays humming until powered down. A lit mine layer drops
   station-keeping proximity mines (IFF-safe, near-silent, found at knife
-  range) — the chase becomes the trap; PDCs clear them only on FREE, and
+  range): they trim to a stop on cold gas instead of keeping your velocity
+  — the one thing in the game that doesn't drift, because a mine that
+  followed you home would be a decoy — so the chase becomes the trap.
+  PDCs clear them only on FREE, and
   loudly. Modules come off **typed wrecks** on every map — multiplayer
   included: military/survey/smuggler/freighter and a rare derelict, the
   type readable from across the system, salvaged with a full stop
@@ -171,7 +177,8 @@ be going somewhere — not both.
   their line. The fuse arms 3 km from the launch point: inside that,
   standoff is part of the weapon and your bird duds past. Tubes reload in
   30 s — a full salvo is FELT; staggered fire is doctrine.
-- **The railgun** (Frigate & Cruiser — a Corvette mounts none): 6 km/s
+- **The railgun** (Frigate & Cruiser ship with one; a Corvette can loot and
+  mount one — hull is not a gate): 6 km/s
   slugs, 25 damage, 6 s recharge, no resupply. **Solution mode** computes a
   lead against a TRACK-or-better contact and fires instantly — lethal to
   anything coasting; *any thrust during the slug's flight is a miss*. The

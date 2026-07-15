@@ -2,3 +2,6 @@ node_modules/
 dist/
 .env
 data/
+
+# the ChatGPT audit PDF (TODO.md summarizes it; the file is Gabriel's local copy)
+AYE, CAPTAIN.pdf

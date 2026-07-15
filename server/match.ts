@@ -12,7 +12,7 @@ import {
   type WreckType,
 } from "./sim.js";
 import { llmAvailable, translateUtterance, phraseQueryAnswer } from "./translator.js";
-import { logUtterance } from "./datalog.js";
+import { logUtterance, logMatch } from "./datalog.js";
 import { ensureSpeech } from "./tts.js";
 import { hashSeed, mulberry32, insideDust } from "./terrain.js";
 import { missilesAboard, type Wreck, type SalvageItem } from "./sim.js";
@@ -1426,6 +1426,17 @@ export class Match {
         }
       }
       this.sendGameoverToSpectators(ev.winnerName, ev.placementNames, durationS, false);
+      // The only sim telemetry we keep. Archetypes, never names (invariant 18
+      // — `ev.winnerName` is right there, and stays there).
+      logMatch({
+        room: this.code ?? (this.campaign ? "campaign" : "practice"),
+        mode: this.campaign ? "campaign" : this.practice ? "practice" : this.mode,
+        durationS,
+        winner: ev.winner ?? null,
+        winnerArchetype:
+          this.seats.find((s) => s.id === ev.winner)?.archetype ?? null,
+        archetypes: this.seats.map((s) => s.archetype),
+      });
     } else if (ev.kind === "ui") {
       const seat = this.seats.find((s) => s.id === ev.ship);
       if (seat?.ws && seat.ws.readyState === seat.ws.OPEN) {
