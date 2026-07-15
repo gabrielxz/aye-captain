@@ -196,7 +196,40 @@ The audit's Option B is already written — in `constants.ts:140-143` and
 on the first mine drop. Zero sim change. This closes the audit's §2.6 honestly
 without touching the module.
 
-### Tier 2 — real work, worth doing
+### Tier 2 — ✅ BUILT 2026-07-15 (branch `audit-tier-2`, suite 1,473 green)
+
+**NOT PUSHED. Thermal + PDC are the first real BALANCE changes since v5.1's
+§0 "zero sim/balance changes" law, and both want a playtest before they go to
+prod.** Measured outcomes and corrections:
+- **Thermal**: built as a decaying floor under the sustained emission. Full
+  burn → cut → still 130, decaying 10/s to cold at +10 s. Verified live that
+  the XO's doctrine followed: *"Engines cold. Signature bleeding down — we'll
+  be dark in ten seconds."* Two judgment calls flagged in the commit: weapon
+  SPIKES stay out of thermal (else a 5 s launch flash becomes ~20 s of glow),
+  and the floor goes INSIDE the multipliers (the audit's literal
+  `max(emission, thermal)` would bypass baffles).
+- **Wreck fairness**: the bug was worse than this file said. Measured across
+  40 seeds BEFORE touching it: 8-player median spread **177 km**, worst seed
+  **286 km**. Fixed by best-of-8 rather than a threshold — perfect fairness is
+  geometrically impossible (8 spawns on a ring, ~2 rich wrecks → ~85 km floor),
+  so any threshold would have been invented. After: 8p median **91 km** against
+  that ~85 km floor; worst case 286 → 134. Solo/practice bit-identical (pinned).
+- 🔴 **PDC: I did NOT build what the audit asked for, deliberately.** It wanted
+  hard channels; with 1 channel and 2 missiles that never engages the second
+  bird at all, so it lives every time — a cliff. Built throughput division
+  instead: `pdcChannels` targets at full rate, time-slice past that. The
+  single-target case is EXACTLY unchanged (fraction 1), so the ~57% envelope
+  kill the spec intends never moved. Verified the pins fail without the fix
+  (1-channel corvette vs a 4-bird salvo: 21.4% killed/s → 6.6%).
+- 🔴 **I violated invariant 12 and caught it before pushing.** Thermal and PDC
+  shipped without docs, and the LLM prompt promised "25%/s kill chance EACH" —
+  a lie I wrote myself two commits earlier. That is the THIRD prompt-vs-code
+  drift found today (railgun, propellant, this one). **The rule is now: a sim
+  rule change is not done until you have grepped translator.ts.**
+
+The original analysis follows, kept because it is the evidence trail.
+
+### Tier 2 — the original analysis
 
 **6. Thermal signature memory (audit §2.10 / §7.1) — its best idea.**
 Verified TRUE: `signatureOf()` (`sim.ts:990-1010`) is a pure function of current
