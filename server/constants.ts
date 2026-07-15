@@ -600,7 +600,31 @@ export const HUNTER_SENSOR_MULT = 1.4;
 export const HUNTER_SIG_MULT = 0.75;
 
 // Hunter AI (server/hunter.ts — a pure function of snapshotFor(hunter)).
-export const HUNTER_ENGAGE_RANGE_M = 60000; // inside this with a track: lock and shoot
+// 2026-07-14 lethality pass. This was 60 km, which is 19 km BEYOND the range
+// at which a missile can still steer: MISSILE_ACCEL_MPS2 150 reaches
+// MISSILE_MAX_SPEED_MPS 2400 in 16 s over 19.2 km, then coasts out the
+// remaining 9 s of MISSILE_PROPELLANT_S at 2400 = 21.6 km, so powered range
+// is ~40.8 km — and MISSILE_TURN_RATE_DPS is "ONLY while the engine is on".
+// The Hunter dumped its whole magazine between 60 and 49 km and every bird
+// arrived ballistic against a target that only had to change vector. 35 km
+// keeps the shot inside powered flight AND inside a realistic seeker
+// envelope (MISSILE_SEEKER_BASE_M x sig/100 is ~20 km against a quiet
+// player). If the Hunter ever feels too passive, this is NOT the knob —
+// it is the one keeping his birds able to turn.
+export const HUNTER_ENGAGE_RANGE_M = 35000; // inside this with a track: lock and shoot
+// Rail range. At TRACK the solution is a ±RAIL_TRACK_DISPERSION_DEG cone, so
+// the miss grows with range: at 25 km a 1.2° cone throws ±524 m against a
+// SHIP_RADIUS_M + RAIL_HIT_RADIUS_M = 250 m target, i.e. it lands roughly
+// half the time and is deadly at ID. Note the Hunter PAYS for every shot:
+// firing auto-lights a cold rail (+2 draw = +16 signature, permanently) and
+// RAIL_SIG_SPIKE 80 is heard map-wide. A Hunter that opens up with the rail
+// tells you exactly where it is — that trade is the point, not a bug.
+export const HUNTER_RAIL_RANGE_M = 25000;
+// the engage band is sticky: once fighting, he keeps the nose on you until
+// the range clears the band by this factor. Without it the fight and the
+// approach trade the nose back and forth at 1 Hz and the lock never builds
+// — the same failure the nose-on-target fix exists to kill.
+export const HUNTER_ENGAGE_EXIT_FRAC = 1.25;
 export const HUNTER_FIRE_COOLDOWN_S = 25; // missile cadence (corvette carries 4 — spent birds stay spent)
 export const HUNTER_PURSUE_THROTTLE = 100;
 export const HUNTER_HUNT_THROTTLE = 55; // regen band cruise; its own rumble discipline is the player's tell

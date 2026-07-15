@@ -34,7 +34,12 @@ be going somewhere — not both.
   but once it has seen you it searches outward from your last fix in a
   circle that grows at your max speed (sitting still gets you found;
   coasting away silently does not), spending probes and then active pings
-  as its uncertainty grows. Kill it (the Anvil patches) and two things
+  as its uncertainty grows. Inside ~35 km with a track it stops maneuvering,
+  puts its nose on you and holds it — that is what a lock costs — cutting
+  thrust to do it, so it goes quiet exactly as it turns dangerous. The
+  heavier hulls carry railguns and fire them on a solution (no lock needed),
+  paying the same price you would: rail fire is heard map-wide and a lit rail
+  never goes quiet again. Kill it (the Anvil patches) and two things
   happen at once: its hold — the richest in the system, double modules —
   becomes a drifting hulk keeping 40% of its death velocity on its death
   course (loot it by MATCHING that velocity — the momentum is the price —

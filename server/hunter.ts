@@ -26,8 +26,15 @@ export interface HunterSnap {
     vy: number;
     facing: number;
     propellant: number;
-    lock: { has: boolean };
+    // owner-only engineering — all of it already on the wire for a human
+    // captain's own HUD, so reading it is not a fog seam. `accel` and
+    // `turnRate` replace a hardcoded worst-case floor; `rail` is the
+    // weapon four of the eight ladder rows carry.
+    accel: number;
+    turnRate: number;
+    lock: { has: boolean; progress?: number };
     tubes: { state: string }[];
+    rail?: { slugs: number; cooldownS: number } | null;
     ping?: { ready: boolean };
     probes?: number;
   };
@@ -57,6 +64,12 @@ export interface HunterMem {
   // pick — losing the target picks fresh immediately.
   targetCid: string | null;
   retargetS: number;
+  // in the engage band last tick — the band has hysteresis so the fight and
+  // the approach don't trade the nose back and forth at 1 Hz
+  engaged: boolean;
+  // committed to a boundary retro burn: HOLD it until the outward velocity
+  // is actually dead, rather than re-testing the trigger every tick
+  retro: boolean;
   // Anvil §1b: the datum — where the trail went cold and how stale it is.
   // The uncertainty radius is DERIVED (ageS × MAX_SPEED_MPS), never stored.
   datum: { x: number; y: number; ageS: number } | null;
@@ -85,6 +98,8 @@ export function initialHunterMem(): HunterMem {
     lockedCid: null,
     targetCid: null,
     retargetS: 0,
+    engaged: false,
+    retro: false,
     dryS: 0,
     lastSignalBearing: null,
     gateProbed: false,
@@ -107,18 +122,51 @@ function clampWp(x: number, y: number): { x: number; y: number } {
 }
 
 // §1a boundary-AVOID trigger: could the current OUTWARD radial speed carry
-// us past the rim before a retro burn kills it? Braking distance against
-// the weakest archetype drive — a fixed lookahead can't make this promise
-// at 3 km/s, physics can. (The snapshot carries no accel figure; a Hunter
-// knows its own engineering, and the conservative floor is safe for all.)
-const BRAKE_ACCEL_FLOOR = Math.min(...Object.values(C.ARCHETYPES).map((a) => a.accel));
-function boundaryThreat(you: HunterSnap["you"]): boolean {
+// us past the rim before a retro burn kills it? Braking distance — a fixed
+// lookahead can't make this promise at 3 km/s, physics can.
+//
+// Two corrections, 2026-07-14. (1) The old comment claimed "the snapshot
+// carries no accel figure, and the conservative floor is safe for all". It
+// was factually wrong — sim.ts puts `accel: accelOf(ship)` on the wire — and
+// the floor (the cruiser's 40) was simultaneously too conservative for the
+// corvette, which flipped and braked ~1.46x earlier than it needed to on
+// every approach, and too generous where it mattered. (2) It ignored the
+// TURN: a cruiser needs 180/14 = 12.9 s to swing its nose retrograde, and at
+// 3 km/s that is 38 km of outward travel the old model simply didn't have.
+// Both of those are why "never exits" held in the tests and not in the game.
+// ⚠️ KNOWN HOLE, 2026-07-14 — this whole function assumes a burn it may not
+// be able to buy. PURSUE runs at 100%, which is PROPELLANT_BURN_AT_FULL =
+// 1.0/s, so a long transit empties the tank in 100 s; effectiveThrust() is
+// `propellant > 0 ? thrust : 0`, so a dry Hunter has NO drive, and there is
+// no regen outside the region (insideZone gates it). Probed across every
+// archetype and five seeds against a bait parked outside the rim: the Hunter
+// reaches its maximum radius with propellant EXACTLY 0.0 and simply coasts
+// out. It is not dodging into the shroud; it is drifting into it, out of
+// gas, while this function confidently computes a braking distance nobody
+// can pay for. That predates this pass (measured identically on the previous
+// build) and the fix is a fuel-budgeting policy call, not a bug fix — see
+// TODO.md. Do not "fix" it by making the trigger fire earlier: that just
+// spends the tank sooner (measured).
+function brakeDistanceM(you: HunterSnap["you"], vOut: number): number {
+  const flipS = 180 / Math.max(1, you.turnRate); // worst case: nose is 180° off
+  return vOut * flipS + (vOut * vOut) / (2 * Math.max(1, you.accel));
+}
+function outwardSpeed(you: HunterSnap["you"]): number {
   const d = Math.hypot(you.x, you.y);
-  if (d < 1) return false;
-  const vOut = (you.vx * you.x + you.vy * you.y) / d; // outward radial speed
+  return d < 1 ? 0 : (you.vx * you.x + you.vy * you.y) / d;
+}
+// `committed` LATCHES the burn. Re-testing the raw trigger every tick let the
+// Hunter brake until the threat cleared, burn outward again, re-trigger, and
+// repeat — an oscillation that spent the very propellant the real stop needs.
+// Once the rim is in play, hold the retro until the outward velocity is
+// actually dead. (Propellant is 1.0/s at full burn and effectiveThrust() is
+// `propellant > 0 ? thrust : 0`, so a wasted burn is not just noise — a dry
+// Hunter has NO drive at all and coasts wherever it was pointed.)
+function boundaryThreat(you: HunterSnap["you"], committed: boolean): boolean {
+  const vOut = outwardSpeed(you);
   if (vOut <= 0) return false;
-  const brakeM = (vOut * vOut) / (2 * BRAKE_ACCEL_FLOOR);
-  return d + brakeM + 5000 > C.REGION_RADIUS_M;
+  if (committed) return true;
+  return Math.hypot(you.x, you.y) + brakeDistanceM(you, vOut) + 5000 > C.REGION_RADIUS_M;
 }
 
 // HUNT patrol route: rock flanks, then the region center. Terrain is public
@@ -229,47 +277,44 @@ export function hunterDecide(
   let throttle: number;
 
   if (best) {
-    // PURSUE (1.1 §5b): a RENDEZVOUS, not a ram. With a vector in hand
-    // (tier >= 2) he flies the braking envelope — close to weapons range
-    // arriving with a manageable rate — instead of lead-intercepting the
-    // position like a heat-seeker (the observed yo-yo: overshoot, flip,
-    // burn back). Above the allowed closing rate for the distance left,
-    // flip and kill closure; below it, lead and burn. A faint fix has no
-    // vector to rendezvous with: direct pursuit stays (and stays fallible
-    // — fix physics, no omniscience).
-    if (best.tier >= 2 && best.vx !== undefined && best.vy !== undefined) {
-      const rvx = you.vx - best.vx; // our velocity in the target's frame
-      const rvy = you.vy - best.vy;
-      const closing =
-        (rvx * (best.x - you.x) + rvy * (best.y - you.y)) / Math.max(1, bestRange);
-      const dRem = Math.max(0, bestRange - C.HUNTER_ENGAGE_RANGE_M * 0.6);
-      const vAllow =
-        0.85 * Math.sqrt(2 * BRAKE_ACCEL_FLOOR * dRem) + C.HUNTER_CLOSE_RATE_FLOOR_MPS;
-      if (closing > vAllow) {
-        // too hot for the distance left: retrograde of the RELATIVE
-        // velocity, full burn — the kill approach is flank (§2e)
-        heading = norm360(bearingTo(0, 0, -rvx, -rvy));
-        throttle = C.HUNTER_PURSUE_THROTTLE;
-      } else {
-        const closeSpeed = Math.max(800, Math.hypot(you.vx, you.vy));
-        const t = bestRange / closeSpeed;
-        const aim = clampWp(best.x + best.vx * t, best.y + best.vy * t); // §1a: the chase bends at the rim
-        heading = bearingTo(you.x, you.y, aim.x, aim.y);
-        throttle = C.HUNTER_PURSUE_THROTTLE;
-      }
-    } else {
-      const aim = clampWp(best.x, best.y); // §1a
-      heading = bearingTo(you.x, you.y, aim.x, aim.y);
-      throttle = C.HUNTER_PURSUE_THROTTLE;
-    }
+    const hasVector = best.tier >= 2 && best.vx !== undefined && best.vy !== undefined;
+    const rvx = you.vx - (best.vx ?? 0); // our velocity in the target's frame
+    const rvy = you.vy - (best.vy ?? 0);
+    const closing = (rvx * (best.x - you.x) + rvy * (best.y - you.y)) / Math.max(1, bestRange);
+    // ENGAGE is a RANGE BAND, not a moment, and it owns the nose. Leaving it
+    // needs to clear the band or the two branches chatter at 1 Hz.
+    const engaged =
+      best.tier >= 2 &&
+      bestRange <= C.HUNTER_ENGAGE_RANGE_M * (mem.engaged ? C.HUNTER_ENGAGE_EXIT_FRAC : 1);
+    next.engaged = engaged;
 
-    if (best.tier >= 2 && bestRange <= C.HUNTER_ENGAGE_RANGE_M) {
-      // ENGAGE: designate, and shoot on cadence once the lock holds.
-      // WATCH ITEM (Stage 0 playtest): with the magazine dry this branch
-      // fires nothing — but the pursuit above continues at full commit,
-      // PDCs still auto-engage. A dry Hunter is fanatical, never passive
-      // (spec §2.2). Do not add a retreat here.
-      throttle = C.HUNTER_HUNT_THROTTLE; // steady the approach; regen stays honest
+    if (engaged) {
+      // FIGHT. The nose stays on the target, always.
+      //
+      // This is the bug that cost the Hunter nearly all of its lethality: a
+      // lock needs the contact inside LOCK_CONE_HALF_ANGLE_DEG (±30°) of
+      // FACING for LOCK_TIME_S (5) CONTINUOUS seconds, with a 2 s grace
+      // before progress resets. The old ENGAGE branch was nested inside
+      // PURSUE and only overrode `throttle` — so while the braking envelope
+      // held `heading` at the retrograde of relative velocity, i.e. ~180°
+      // off, it designated a contact it was physically pointing away from
+      // and then polled you.lock.has, which could never go true. The
+      // corvette chattered across the envelope with a 4.6 s flip time
+      // against a 5 s lock requirement; the CRUISER never even chattered
+      // (ENGAGE forced throttle 55, giving it 22 m/s² against the 28.9 its
+      // own envelope assumed), so ladder row 6 — "do not trade with it,
+      // Captain" — was structurally incapable of firing a missile.
+      //
+      // You cannot brake and aim at once; that is physics, not code. So the
+      // braking now finishes OUTSIDE the band (see below) and in here the
+      // Hunter simply flies its nose at you and shoots. Throttle only
+      // chases when you are outrunning it — which points at you anyway, so
+      // the lock survives the chase.
+      heading = bearingTo(you.x, you.y, best.x, best.y);
+      throttle = closing < C.HUNTER_CLOSE_RATE_FLOOR_MPS ? C.HUNTER_HUNT_THROTTLE : 0;
+      // coasting inside the band also quiets his drive — an emergent tell
+      // worth keeping: the Hunter is loudest on the way in, not at the kill
+
       if (next.lockedCid !== best.cid) {
         commands.push({ verb: "set_lock_target", params: { contact: best.cid } });
         next.lockedCid = best.cid;
@@ -279,6 +324,54 @@ export function hunterDecide(
         commands.push({ verb: "fire_missile", params: {} });
         next.fireCooldownS = C.HUNTER_FIRE_COOLDOWN_S;
       }
+      // THE RAILGUN. Four of the eight ladder rows mount one (frigate and
+      // cruiser STARTING_LOADOUT) and row 3's spawn line promises it out
+      // loud — and hunter.ts had never contained the word. It is the one
+      // weapon whose preconditions this AI already satisfies: the solution
+      // needs TRACK tier, not a lock, and fires immediately. He pays for it
+      // in noise, which is the trade working as designed.
+      if (
+        you.rail &&
+        you.rail.slugs > 0 &&
+        you.rail.cooldownS <= 0 &&
+        bestRange <= C.HUNTER_RAIL_RANGE_M
+      ) {
+        commands.push({ verb: "fire_railgun", params: { mode: "solution", target: best.cid } });
+      }
+      // WATCH ITEM (Stage 0 playtest): with the magazine dry this branch
+      // fires nothing — but the pursuit continues at full commit and PDCs
+      // still auto-engage. A dry Hunter is fanatical, never passive (spec
+      // §2.2). Do not add a retreat here.
+    } else if (hasVector) {
+      // APPROACH (1.1 §5b): a RENDEZVOUS, not a ram. Fly the braking
+      // envelope so we ARRIVE at the band with a manageable rate, instead
+      // of lead-intercepting the position like a heat-seeker (the observed
+      // yo-yo: overshoot, flip, burn back).
+      //
+      // dRem now measures to the EDGE of the engage band, not to 60% of the
+      // way inside it. The braking has to be finished by the time the
+      // fighting starts, or it spends the whole fight pointing backwards.
+      const dRem = Math.max(0, bestRange - C.HUNTER_ENGAGE_RANGE_M);
+      const vAllow =
+        0.85 * Math.sqrt(2 * Math.max(1, you.accel) * dRem) + C.HUNTER_CLOSE_RATE_FLOOR_MPS;
+      if (closing > vAllow) {
+        // too hot for the distance left: retrograde of the RELATIVE
+        // velocity, full burn — the kill approach is flank (§2e)
+        heading = norm360(bearingTo(0, 0, -rvx, -rvy));
+        throttle = C.HUNTER_PURSUE_THROTTLE;
+      } else {
+        const closeSpeed = Math.max(800, Math.hypot(you.vx, you.vy));
+        const t = bestRange / closeSpeed;
+        const aim = clampWp(best.x + best.vx! * t, best.y + best.vy! * t); // §1a: the chase bends at the rim
+        heading = bearingTo(you.x, you.y, aim.x, aim.y);
+        throttle = C.HUNTER_PURSUE_THROTTLE;
+      }
+    } else {
+      // a faint fix has no vector to rendezvous with: direct pursuit stays
+      // (and stays fallible — fix physics, no omniscience)
+      const aim = clampWp(best.x, best.y); // §1a
+      heading = bearingTo(you.x, you.y, aim.x, aim.y);
+      throttle = C.HUNTER_PURSUE_THROTTLE;
     }
   } else if (intel.gateCamp) {
     // PICKET (§3, late rows): hold station just inside the gate and let
@@ -475,7 +568,31 @@ export function hunterDecide(
       }
     }
   }
-  if (threat) {
+  // 🔴 The two halves of AVOID COMPOSE. They used to chain `if (rock) ...
+  // else if (boundary) ...`, so ANY rock on the vector silently disabled
+  // containment — and rocks seed to 0.95R while the leash parks the Hunter
+  // at 0.9R, so the dodge zone and the rim OVERLAP by 12.5 km. A rock near
+  // the rim meant `heading = travel ± 60°` (still outward if travel was
+  // outward) at throttle 100 with nothing watching the boundary, for as
+  // long as the dodge stayed committed: ~45 km of outward burn at 3 km/s.
+  // That is the reported "flies into the shroud", and NEITHER never-exits
+  // pin could catch it because both run on empty terrain, where this branch
+  // cannot execute.
+  //
+  // The resolution is that both threats want the SAME answer. Turning the
+  // dodge inward isn't available (±60° off a radial-outward vector still
+  // points outward) and flipping the dodge sign would steer INTO the rock.
+  // But a retro burn serves both masters at once: it kills the outward
+  // velocity the rim cares about AND takes the speed out of the rock we're
+  // about to hit — and collision damage is quadratic in speed, harmless
+  // below 50 m/s. When the rim and a rock both threaten, brake.
+  const rimThreat = boundaryThreat(you, mem.retro);
+  next.retro = rimThreat;
+  if (threat && rimThreat) {
+    next.dodge = 0;
+    heading = bearingTo(you.x, you.y, 0, 0);
+    throttle = 100;
+  } else if (threat) {
     if (next.dodge === 0) {
       // steer away from the side the rock sits on
       const cross = you.vx * (threat.y - you.y) - you.vy * (threat.x - you.x);
@@ -484,7 +601,7 @@ export function hunterDecide(
     const travel = norm360((Math.atan2(you.vx, you.vy) * 180) / Math.PI);
     heading = norm360(travel + next.dodge * 60);
     throttle = 100; // survival outranks fuel discipline
-  } else if (boundaryThreat(you)) {
+  } else if (rimThreat) {
     // Anvil §1a: the boundary is in AVOID — outward momentum that could
     // carry past the rim steers home at full burn. Waypoint clamping
     // keeps this rare; this is the backstop that makes "never exits the

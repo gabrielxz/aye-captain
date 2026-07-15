@@ -13,8 +13,8 @@ const assert = (cond: boolean, msg: string) => {
   else console.log("ok:", msg);
 };
 
-const missionSim = (over: Partial<Mission> = {}): Sim => {
-  const sim = new Sim(); // empty terrain: exact fields by hand
+const missionSim = (over: Partial<Mission> = {}, seed?: string): Sim => {
+  const sim = new Sim(seed); // no seed = empty terrain: exact fields by hand
   sim.addShip("A", 0, -C.SPAWN_RING_RADIUS_M, 0);
   sim.mission = {
     playerIds: ["A"],
@@ -724,6 +724,21 @@ const missionSim = (over: Partial<Mission> = {}): Sim => {
     `the Hunter never exits the region — max radius ${(maxR / 1000).toFixed(1)} km of ${C.REGION_RADIUS_M / 1000} km`
   );
 }
+
+// 25b. NOT A PIN — A KNOWN HOLE. The law §25 asserts ("the Hunter never
+// exits the region") is FALSE today, and was false before this pass. Probed
+// on seeded fields against a bait parked outside the rim, max radius:
+//   corvette 245-254 km · frigate 254-270 km · cruiser 212-276 km
+// (measured identically on the pre-2026-07-14 build, so this is not a
+// regression — it is a law that was only ever tested where it could not
+// fail: §25 runs `new Sim()`, i.e. EMPTY TERRAIN, and hardcodes the
+// corvette.) In every failing case the Hunter reaches maximum radius with
+// propellant 0.0: PURSUE burns 100% = 1.0/s, a long transit empties the tank
+// in 100 s, effectiveThrust() is `propellant > 0 ? thrust : 0`, and there is
+// no regen outside the region. He coasts out because he is out of gas, and
+// the boundary trigger is computing a brake he cannot buy.
+// A pin belongs here once the fuel-budgeting call is made (TODO.md). Writing
+// one now that passes on a hand-picked seed would repeat the original sin.
 
 // 26. ANVIL §3a — the transfer gate is RELATIVE: an 800 m/s wreck cannot
 // be looted by a stationary ship, and CAN be by one matching its velocity
