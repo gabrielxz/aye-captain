@@ -116,6 +116,43 @@ const ping = (sim: Sim, id: "A" | "B") =>
   assert(!everLocked, "a ping FINDS ships — it never completes the lock by itself");
 }
 
+// 5b. THE MARGIN, pinned. Test 5 pins the OUTCOME (no lock); this pins the
+// MECHANISM that produces it, because the outcome survives by exactly ONE TICK
+// and nothing else was watching that tick.
+//
+// PING_TRACK_S and LOCK_TIME_S are both 5 — an exact tie. What breaks it is
+// sampling order: timers decrement in stepShip, updateLock runs on the LAST
+// substep, so pingGrantS is always READ AFTER it has been decremented. The
+// grant therefore yields PING_TRACK_S - 1 = 4 track-ticks, one short of the 5
+// a lock needs. That margin rests on the float-dust guard at sim.ts:4702 —
+// without it, 5 - 0.1x50 leaves an ~1e-15 residue that buys the fifth tick and
+// completes the lock invariant 14 forbids.
+//
+// This assertion has teeth: verified RED (maxProgress 5, everLocked true) with
+// the tickDown guard replaced by plain subtraction. A reordering of stepShip
+// vs updateLock, or a lost snap-to-zero, fails HERE instead of shipping green.
+{
+  const sim = new Sim();
+  const a = sim.addShip("A", 0, 0, 0);
+  sim.addShip("B", 0, 60000, 180, false); // same geometry as test 5
+  a.pdcPosture = "hold";
+  sim.tick();
+  ping(sim, "A");
+  let maxProgress = 0;
+  for (let i = 0; i < C.PING_COOLDOWN_S; i++) {
+    sim.tick();
+    maxProgress = Math.max(maxProgress, a.lock.progress);
+  }
+  assert(
+    maxProgress === C.PING_TRACK_S - 1,
+    `a ping grant is worth exactly PING_TRACK_S-1 lock ticks (want ${C.PING_TRACK_S - 1}, got ${maxProgress})`
+  );
+  assert(
+    maxProgress < C.LOCK_TIME_S,
+    `...which is why it can never reach LOCK_TIME_S (${maxProgress} < ${C.LOCK_TIME_S}) — invariant 14`
+  );
+}
+
 // 6. pinged ordnance: a coasting torpedo far beyond its passive detection
 // range shows for the window, then vanishes again
 {

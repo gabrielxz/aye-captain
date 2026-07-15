@@ -17,6 +17,7 @@ import {
 import { Match, sanitizeName } from "./match.js";
 import { sttAvailable, transcribe, SttBusyError } from "./stt.js";
 import { getSpeech, pregenStockLines, ttsAvailable } from "./tts.js";
+import { llmAvailable, prewarmPromptCache } from "./translator.js";
 
 const PORT = Number(process.env.PORT ?? 8080);
 const HOST = "0.0.0.0";
@@ -254,4 +255,5 @@ server.listen(PORT, HOST, () => {
   console.log(`aye-captain listening on http://${HOST}:${PORT}`);
   if (ttsAvailable()) void pregenStockLines();
   else console.log("tts offline: ELEVENLABS_API_KEY not set — ship AI is text-only");
+  if (llmAvailable()) void prewarmPromptCache();
 });

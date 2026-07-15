@@ -1,5 +1,387 @@
 # TODO — next steps
 
+## GPT AUDIT RESPONSE (2026-07-15) — approved, not yet built
+
+Gabriel dropped `AYE, CAPTAIN.pdf` in the repo root: a 42-page static audit by
+ChatGPT ("Simulation, Fiction, Fairness, and Voice-Command Design Audit"). It
+never ran the game or the tests, and says so. **Every claim below was verified
+against the code by six parallel agents before this list was written** — the
+verdicts are ours, not the PDF's. Gabriel approved this whole list on
+2026-07-15; nothing here is built yet.
+
+**The audit's headline verdict is worth keeping**: "optimize for physically
+consequential command, not maximum realism." Its mechanism reads are almost all
+accurate. Its NUMBERS are where it fails, and always the same way: it read the
+frigate-linked legacy globals (`SENSOR_BASE_M`, `ACCEL_FULL_THRUST_MPS2`,
+`TURN_RATE_DEG_PER_SEC`) as universal law, and it quoted at least one constant
+from a version we explicitly superseded.
+
+**🔴 DO NOT BUILD — verified wrong, do not let a future session "fix" these:**
+- **Mines inheriting velocity** (audit §2.6, its Option A). It calls the zero
+  velocity "the second-clearest physical error" and assumes an oversight. It is
+  DELIBERATE and documented three times — `constants.ts:140-143`, `sim.ts:467-471`,
+  and `HANDOFF-PATCH-4-5-LOADOUT.md:163,170`: *"cold-gas trim — a drifting mine
+  would just follow its layer home."* The `Mine` interface (`sim.ts:472-479`) has
+  no velocity FIELD; it was never modeled, not forgotten. Option A deletes the
+  module: a fleeing ship's mines would travel WITH the fleeing ship and never
+  enter the chaser's path, killing the whole "the chase becomes the trap" premise.
+  Its Option B ("make the fiction explicit") is already done in comments — the
+  only real gap is that the player never hears it (see Tier 1 item 5).
+- **Removing the missile speed cap** (audit §2.4). It claims missile max is
+  6000 m/s (2x ship) and wants ~3.75 km/s of delta-v. Real value:
+  `MISSILE_MAX_SPEED_MPS = 2400` (`constants.ts:362`), deliberately **0.8x** ship
+  max. `constants.ts:356-361` names the trap out loud: the 2x-ship-max link was
+  INTENTIONALLY BROKEN in v4.5 because 6 km/s was a no-counterplay zone at real
+  engagement ranges. 6000 is `RAIL_SLUG_SPEED_MPS` (`constants.ts:266`) — it
+  appears to have grabbed the railgun's constant or read a pre-v4.5 doc.
+- **Reducing PDC variance / "deterministic exposure"** (audit §2.7, §4.3). It
+  derives ~50/50 from a 2.7 s bubble transit. Real transit at 2400 m/s is 3.33 s
+  → ~57%, and `tests/pdc.test.ts:107-110` documents that as *"the spec's intent."*
+  It is arguing against a number the game does not have. (Its OTHER PDC claim —
+  the ammo asymmetry — is real; see Tier 2 item 8.)
+- **§5.2 routing / first-stage classifier.** Prompt caching (Tier 1 item 1) gets
+  the same cost win with none of the semantic risk of a classifier picking the
+  wrong schema subset. Do caching first, then re-evaluate; probably never needed.
+- **Compositional speech from cached fragments** (audit §5.4). Its motivating
+  example ("Coming to zero-nine-zero") already speaks NOTHING —
+  `HUD_VISIBLE_ACK_VERBS` (`match.ts:68`) deliberately suppresses speech for
+  `set_thrust`/`set_heading`/`set_pdc`/`set_overlay` because the HUD shows it. And
+  our proven technique (`spokenBearing`, `sim.ts:742-758`) already achieves
+  cache-boundedness by CAPPING VARIANTS (36 per line shape), with no clip-concat
+  machinery. No audio concatenation exists (`audio.js:547` is one buffer per line,
+  and `speech-scheduler.js` promises "one line at a time"). Not worth building.
+
+### Tier 1 — ✅ BUILT 2026-07-15 (branch `audit-tier-1`, suite 1,410 green)
+
+All five landed in one commit. Zero sim/balance change. Measured outcomes and
+corrections to what this file originally claimed:
+- **Caching is live and verified against the real API.** The prompt is
+  **16,421 tokens** (this file said "14–15k" — that was an estimate from char
+  count; 16,421 is measured). Cold call writes 16,421; every call after reads
+  16,421 with only 8–25 tokens uncached. **`temperature: 0` does NOT invalidate
+  the prefix** — that was the open question and it is answered: verified read on
+  the true production request shape. ~90% off the input cost of every utterance.
+  Boot prewarm logs `translator: prompt cache warm (16421 written, 0 read)`.
+- 🔴 **Correction — the ping pin claim in this file was too strong.** It said "a
+  future reordering would break invariant 14 with a green suite." Not quite:
+  removing the float-dust guard fails the EXISTING test 5 too (verified RED).
+  What test 5b uniquely buys is catching margin DRIFT — a grant worth 3 ticks
+  instead of 4 still never locks, so test 5 stays green while the mechanism has
+  silently moved. 5b pins `maxProgress === PING_TRACK_S - 1` exactly. Verified
+  it fails without the guard (`want 4, got 5`) before shipping.
+- **A second prompt lie was found while fixing the first** (not in the original
+  approved list, fixed anyway — same bug class, one line): `translator.ts` taught
+  the LLM *"At zero: no thrust output (setting remembered)"*. That rule was
+  REVERSED by the 2026-07-13 playtest — the code auto-safes the throttle to zero
+  (`sim.ts:5089-5107`, pinned `propellant.test.ts:67`). The prompt had kept
+  teaching the deleted rule. **This is the "state summary IS the LLM prompt"
+  lesson recurring a second time — when a rule changes in the sim, grep
+  translator.ts before closing the ticket.**
+
+The original analysis follows, kept because it is the evidence trail.
+
+**1. 🔴 PROMPT CACHING — the biggest win, and the audit missed it entirely.**
+The audit's §5.2 complains the prompt is too big. Size isn't the problem; the
+problem is we re-send it UNCACHED on every single utterance, for every captain,
+every time.
+- Evidence: `translator.ts:29-74` `buildSystemPrompt()` → `translator.ts:76`
+  `const SYSTEM_PROMPT = buildSystemPrompt()` (built ONCE at module load) →
+  `translator.ts:542` `system: SYSTEM_PROMPT` as a plain **string**. Zero hits for
+  `cache_control`/`ephemeral` anywhere in `server/`.
+- Size: **54,870 chars ≈ 14–15k tokens.** The schema is 56% of it
+  (`translator.ts:37`, `JSON.stringify(schema.definitions, null, 1)` —
+  pretty-printed, so indentation alone is thousands of tokens).
+- **The prefix is already 100% static — VERIFIED.** `translateUtterance`
+  (`translator.ts:529-547`) puts the dynamic state summary + utterance in
+  `messages`, not `system`. This is the textbook ideal caching case. It is a
+  one-line change:
+  ```ts
+  system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
+  ```
+- Model is `claude-haiku-4-5-20251001` (`constants.ts:494`). **Haiku 4.5's minimum
+  cacheable prefix is 4096 tokens** (higher than most models — Sonnet is 1024); we
+  are ~15k, well clear. Below the minimum it silently does not cache, no error.
+- **TTL: keep the 5-minute default** (`{type:"ephemeral"}`). In-match utterances
+  are far closer than 5 min apart, so real traffic keeps it warm. `ttl: "1h"`
+  doubles the write cost (2x vs 1.25x) and needs 3+ reads to pay off — only worth
+  it if we later measure long idle gaps mattering.
+- **Also pre-warm at boot.** A cache entry is only readable once the first
+  response STARTS STREAMING, so N concurrent first-utterances in an 8-captain room
+  all miss and all pay full price. `LLM_TIMEOUT_MS = 5000` (`constants.ts:495`) —
+  a cold 15k-token prefill eats into that budget. Fire one `max_tokens: 0` request
+  at boot with the same system array (returns immediately, `content: []`, zero
+  output tokens billed, normal cache-write charge). `tts.ts` already
+  pre-generates stock lines at boot — same pattern, same rationale.
+  Caveat: `max_tokens: 0` is rejected with `stream: true`, `thinking.type:
+  "enabled"`, `output_config.format`, or forced `tool_choice` — none of which we use.
+- **Verify by:** `resp.usage.cache_read_input_tokens > 0` on the second utterance.
+  If it stays 0, something is invalidating the prefix — diff the rendered bytes.
+  Note `input_tokens` then reports only the UNCACHED remainder, so the log lines
+  will look smaller; total = input + cache_creation + cache_read.
+- Do NOT minify the schema first. Once cached, the indentation costs ~nothing, and
+  changing the bytes is a one-time invalidation. Caching, then measure.
+- `phraseQueryAnswer` (`translator.ts:572-585`) is a SECOND call per query but its
+  system prompt is ~180 chars — far below the 4096 minimum. Leave it alone.
+
+**2. 🔴 The `NO RAILGUN` lie — a real invariant-12 violation, shipped in Loadout.**
+The audit's §4.7 frames this as a language choice; it is actually a bug. There is
+NO hull restriction anywhere — `landModule` (`sim.ts:3908-3917`) checks only slots
++ reactor headroom, and `tests/loadout.test.ts:144-151` deliberately pins a
+corvette looting and mounting a rail with the note *"that is a build; let it
+hurt"* (`RAIL_SLUGS_LOOTED`, `constants.ts:133`, exists ONLY to serve that case).
+A corvette can even AUTO-INSTALL a looted rail with no workshop time (reactor 6,
+rail draws 2 — headroom is trivial). So the chassis model is the built, tested
+intent, and the text is now false:
+- `client/ship-select.js:15` — "Light armor and **no railgun**"
+- `client/ship-select.js:116-122` — comment "the railgun's ABSENCE is a headline",
+  renders a literal `NO RAILGUN` headline
+- `README.md:99` — "no railgun"; `README.md:174` — "a Corvette mounts none"
+- `constants.ts:39`, `constants.ts:253` — "the corvette's keel can't take one" /
+  "can't take a spinal mount": a fiction the code does not enforce
+- `constants.ts:107` is still ACCURATE (it scopes to `STARTING_LOADOUT`) — leave it.
+Fix the text to the chassis framing (archetypes are STARTING HULLS, not permanent
+classes). Invariant 12 = same commit updates `/how-to-play` AND README.
+**Drive-by, same bug class:** `README.md:110-112` says install/uninstall "is the
+workshop rule: a full stop, ~a minute, helpless" with no salvage exception — but
+salvage-landing bypasses the workshop entirely (`sim.ts:3904-3905`: "the stop that
+landed it WAS the install"). Also false; fix in the same pass.
+
+**3. Log the `gameover` event — the cheapest 20% of the audit's Phase 0.**
+Verified: telemetry is TOTAL zero. `server/datalog.ts` is 58 lines and logs only
+utterances (`logUtterance`, `:21` — and its own comment says it's for STT tuning,
+not balance) and TTS cost (`logSynth`, `:45`). No sim/match telemetry: no
+outcomes, no win rates, no weapon events. **0 of the audit's ~14 Phase 0 metrics
+are collected.** But the `gameover` event ALREADY EXISTS with everything we need
+(`match.ts:1396-1428`: `winner`, `winnerName`, `placementNames`, `durationS`) and
+is sent to clients — it is just never written to disk. Add `logMatch()` beside
+`logUtterance` in datalog.ts, called at `match.ts:1428`. Buys archetype win rate +
+match duration immediately.
+🔴 **Invariant 18**: log the ARCHETYPE, never the player NAME. Names are a
+security boundary + display-only; `winnerName`/`placementNames` are right there on
+that event and must not land in a log we later feed anywhere near a prompt.
+Everything else in Phase 0 (time-to-first-rumble/faint/track/lock, missile
+survival by range, PDC exposure, decoy diversion, rail hit rate by tier) needs new
+`sim.ts` instrumentation — separate, bigger job; do the free one first.
+
+**4. Pin the ping/lock margin — do NOT change the constants.**
+Audit §4.4 wants `PING_TRACK_S` 5→4 or `LOCK_TIME_S` 5→6 for legibility. It is
+right that the tie is opaque, but wrong about the mechanism (it credits
+"expiration and grace sequencing"; **grace does nothing** — `sim.ts:3695-3703`, the
+non-holding branch only decrements grace and never accrues; progress caps at 4
+whether grace is 2, 0, or 200). What is actually true is worse:
+- Both are 5 (`constants.ts:246`, `constants.ts:332`). The invariant survives by
+  **exactly one tick**, purely from sampling order: timers decrement in `stepShip`
+  (`sim.ts:4705`), `updateLock` runs on the last substep (`sim.ts:3430`), so
+  `pingGrantS` is always read AFTER decrement → max progress 4 < 5.
+- 🔴 **It rests on a float-dust guard.** `sim.ts:4699-4702` snaps timers to zero
+  below 1e-9, and its own comment says why: without it, `5 - 0.1x50` in IEEE754
+  leaves ~1e-15 > 0, buying a fifth track-tick and completing the lock the design
+  forbids (invariant 14).
+- `tests/ping.test.ts:99-117` pins the OUTCOME (`!everLocked`) but NOT the margin —
+  so a future reordering of `stepShip` vs `updateLock` would break invariant 14
+  with a **green suite**. This is exactly the "pin the mechanism, not the
+  invariant" lesson from the 2026-07-15 playtest round, live again.
+- **Do:** add a pin asserting `maxProgress === 4` + a comment. Leave both
+  constants alone (`CLAUDE.md:298-301` gates them on design signoff). Blast radius
+  if we ever DO change them: `PING_TRACK_S` = 1 production read (`sim.ts:1607`) + 1
+  test file; `LOCK_TIME_S` = 5 production reads incl. the LLM prompt
+  (`translator.ts:47`) and a hardcoded "(5)" comment in `hunter.ts:296`, + 12 test
+  files. All test usages are constant-relative, so **the suite would not notice
+  either change** — another reason to pin the margin now.
+
+**5. Surface the mine fiction to the player.**
+The audit's Option B is already written — in `constants.ts:140-143` and
+`sim.ts:467-471` ("cold-gas trim"). The player just never hears it. Add it to
+`client/how-to-play.html` (and README per invariant 12), and consider one XO line
+on the first mine drop. Zero sim change. This closes the audit's §2.6 honestly
+without touching the module.
+
+### Tier 2 — real work, worth doing
+
+**6. Thermal signature memory (audit §2.10 / §7.1) — its best idea.**
+Verified TRUE: `signatureOf()` (`sim.ts:990-1010`) is a pure function of current
+state — no smoothing, no decay. `ship.thrust` has no slew rate (assigned outright,
+e.g. `sim.ts:4870`) and module power is instant by doctrine (`translator.ts:52`).
+So cut thrust / power down and the very next call returns the lower number.
+Why it lands cleanly:
+- **One chokepoint.** `sim.ts:1006-1008` says so itself: *"Every detection consumer
+  (tiers, hearing, seekers, PDC slaving) flows through here, which is the point."*
+  ~15 server call sites read it; **zero client changes** (clients are pure
+  functions of the wire — `rings-model.js:14`, `panel-model.js:206`,
+  `music-brain.js:39` all read wire fields, never compute signature).
+- **The Hunter inherits it free** — `hunter.ts` has zero `signatureOf` references;
+  it consumes the fogged `loud` scalar.
+- **The pattern already exists INSIDE the function**: `sigSpikeLaunch/Pdc/Rail`
+  rise instantly and decay on a clock (`sim.ts:4693-4695` decrement,
+  `sim.ts:996-998` consume). Square pulses rather than exponential, but the
+  state-field + tick-decrement + read-in-`signatureOf` shape is exactly it.
+- **Invariant 13 is NOT violated** (checked): the law bans THRESHOLDS in the
+  hearing channel; a continuous decay term and `max(a,b)` are continuous (C0).
+🔴 **Correction to the audit's design:** it says `max(currentEmission,
+thermalSignature)`. Applied naively that BYPASSES baffles and `sigMult`, which
+multiply the TOTAL at `sim.ts:1004-1009` — a ship could light baffles and see no
+effect while thermal dominates, contradicting the stated "honest math, no special
+case" intent at `sim.ts:999-1002`. Apply the `max()` to the PRE-multiplier sum, inside
+the multipliers.
+Other watch-items: invariant 8 says signature uses EFFECTIVE thrust, so a dry ship
+currently goes dim instantly — thermal changes that (probably desirable, but it's a
+stated rule). And a thermal floor keeps a frigate above `SIG_BASE` after any burn,
+which will perturb ring-crossover timing (`constants.ts:195-201` — the frigate
+sits exactly on that boundary; that's why `RINGS_CROSSOVER_HYSTERESIS` exists) and
+`tests/rings.test.ts`. Audit's Test C suggests 5/10/20 s; it recommends starting at 10.
+
+**7. Wreck placement fairness in MP — a concrete bug (audit §4.6).**
+Verified real. `Match.generateWrecks` (`match.ts:315-381`) does rejection sampling
+(60 tries) but rejects only two things: inside a rock (`:342`), and within 30 km of
+**one hardcoded point** (`:343`) — `(0, -SPAWN_RING_RADIUS_M)`, which is the
+CAMPAIGN south spawn (`match.ts:203`, `:400`). MP ships spawn distributed around
+the ring (`spawnShips`, `match.ts:881`), so in multiplayer that exclusion protects
+an arbitrary compass point that may be nobody's spawn, and protects no one else.
+Worse: **wreck type is rolled independently of position** (`:352`, `:369` —
+`rollType()` never sees `p`), so a `military` wreck (27%, `:320`) can land next to
+one player and 200 km from another. MP wrecks are all-marked/public from t=0
+(`match.ts:831-833`), so it's a VISIBLE unfair race — the worst case. The audit's
+prescription is right: don't demand symmetric maps, demand MEASURED ones (nearest
+high-value wreck per spawn, expected loot within 50/100 km, cover count, gate
+distance, initial LOS between spawns) and reject statistical outliers.
+🔴 This matters NOW: the two-mode Loadout playtest (1v1 + 6-player FFA) is the
+gating milestone, and it is exactly the thing this bug would poison.
+
+**8. PDC ammo-vs-targets asymmetry (audit §2.7) — real, but lower priority.**
+The HALF of its PDC section that survives verification. `stepPdc`
+(`sim.ts:2370-2436`) is three unbounded loops (missiles `:2370`, probes `:2394`,
+mines `:2414`), each rolling `Math.random()` independently per target, with no
+break/counter/cap. Ammo decrements ONCE per substep regardless of target count
+(`sim.ts:2458-2462`, `if (firing) ship.pdcAmmoS -= dt`) — `tests/pdc.test.ts:58-61`
+pins exactly that. So one mount engages unlimited objects at the same ammo cost.
+**The codebase already knows the pattern**: the ship-fire branch
+(`sim.ts:2438-2447`) deliberately tracks ONE hull, with a comment noting several
+may qualify. So a capacity limit would be idiomatic, not novel.
+**Why it's lower priority than it sounds:** with 2 tubes and a 30 s reload, nobody
+can currently saturate an 8 km bubble — it's a trap waiting for a future patch that
+makes salvos cheap, not a live balance problem. Also note: **no current test would
+fail** if we added a cap (`tests/pdc.test.ts` blocks 3 and 5 are single-missile) —
+the fairness property is untested, which is itself the finding. If built: cap
+engagement channels (audit floats corvette 1 / frigate 2 / cruiser 3) or divide
+kill rate among engaged targets. Do NOT touch the ~57% single-missile rate.
+
+### Tier 3 — needs a design call before building
+
+**9. `navigate` (audit §6.2) — right idea, wrong shape. Make it `maneuver.type`.**
+The audit wants a NEW verb `{verb:"navigate", params:{objective, target, range_m,
+offset_degrees, discipline}}`. Our own doctrine says extend enums instead —
+`HANDOFF-v4.7.md:109-112` and `:449-451` ("v5 adds values to this enum, **not new
+verbs** — that is why it is `set_overlay` and not `set_drift_marker`"),
+`CLAUDE.md:37-38`, and `HANDOFF-CAMPAIGN-v1.md:9,484-485` ("New verbs added to the
+game: one"). It's a preference, not an invariant (v5 did ship `fire_railgun`,
+`launch_probe`, `transmit`), but a `navigate` verb would be the first thing in the
+repo to DUPLICATE an existing verb's surface rather than extend it.
+The existing `maneuver` (`ship_command_schema.json:320-368`) is remarkably close:
+`objective` → `type` (add enum values), `discipline` → **already there, identical**,
+and `target`/`range_m`/`offset_degrees` → new sibling props alongside the existing
+per-type `seconds`/`percent` (the schema already uses that idiom). `sim.ts:68-70`
+was built for this: *"the executor switches on type so future macros (v5+) are
+additive."*
+**The shared relative-frame executor already exists** and is generic:
+`sim.ts:4913-5007`, taking `(dockAt{x,y}, wvx, wvy)` — `sim.ts:4915-4917` says *"a
+teammate is just a wreck that shoots back."* So `match_velocity`, `station`, and
+`range` objectives are near-free on it. `offset_degrees` and `cover` are NOT — the
+block drives `d → 0` with no offset standoff point.
+🔴 **The real cost is translator accuracy, not engine work.** `salvage` and
+`come_alongside` are ALREADY separate verbs doing rendezvous, and the schema spends
+heavy description budget disambiguating them (`schema:394`: *"'Come alongside
+KESTREL' (a ship CALLSIGN) is come_alongside ... never this verb"*). Adding
+`maneuver{type:"rendezvous"}` creates a THIRD way to say "go to that thing" and
+collides head-on with that disambiguation. Decide the grammar before building.
+The audit calls "hold or obtain range" its single most valuable addition, and that
+one does NOT collide — if we do one objective, do that.
+
+**10. Newtonian missiles (audit §2.4 / Phase 3) — NOT NOW. Its diagnosis is right.**
+The mechanism critique is TRUE and verified. Launch (`sim.ts:2156-2180`) projects
+ship velocity onto the nose (`clamp(ship.vx*fx + ship.vy*fy, 0, MISSILE_MAX_SPEED)`)
+and discards everything transverse; in flight (`sim.ts:3536-3552`) `vx/vy` are
+recomputed from `(course, speed)` every substep with **zero accumulation** — state
+is polar, `vx/vy` are a cache. Momentum is not conserved; the vector rotates
+rigidly. `MISSILE_TURN_RATE_DPS = 45` (`constants.ts:365`) with no speed term.
+(One nuance the audit missed: turning is not free — it forces `burning` and drains
+fuel at 1/s; a dry bird cannot turn at all. The cost is FUEL, not momentum.)
+**The `NEWTONIAN_MISSILES` flag is REAL** — `constants.ts:366-370`, and its comment
+describes exactly the experiment the audit proposes. But it is a **sticky note, not
+a seam**: nothing reads it (the only two hits in the repo are the declaration and
+`HANDOFF-v4.md:116`); flipping it does nothing.
+Why this is a milestone, not a prototype:
+- 🔴 **The seeker cone is measured off `m.course`** (`sim.ts:4242-4248`,
+  `MISSILE_ACQ_CONE_DEG`). Today course IS the velocity direction, so "cone off the
+  nose" and "cone off the flight path" are the same sentence. Decouple them and you
+  must decide which one the seeker looks down — and `angDiff(m.course, want)`
+  (`:3537`) stops being a steering command at all, because rotating `course` would
+  no longer move the bird.
+- 28 of 40 suites reference missiles; the load-bearing ones poke `m.speed`/`m.course`
+  DIRECTLY and would break at the type level, not just the assertion level
+  (`lock.test.ts:148` hardcodes the projection-then-ramp launch model;
+  `torpedo.test.ts:51` asserts "dry torpedo cannot turn"; `pdc.test.ts:122-123`
+  sets `m.course` to force a coast state — no `vx/vy` equivalent exists).
+- PDC code is speed-AGNOSTIC but balance is speed-SENSITIVE (`constants.ts:358`
+  justifies 2400 partly by "PDC bubble transit ~triples") — a rewrite silently
+  retunes PDC lethality without touching PDC code.
+- Hunter AI is SAFE: it goes through the command layer (`hunter.ts:324`, `:425`)
+  and never touches a `Missile`.
+If we ever do it: implement honest momentum FIRST and observe, per the audit's own
+Risk note — and **keep the 2400 cap** (see DO NOT BUILD).
+
+**11. Extraction mode (audit §7.6) — oversold as "surprisingly low complexity".**
+Its inventory is right for 8 of 9 pieces, and wrong on the one that defines the
+mode. Already in MP rooms: wrecks (`match.ts:833`, same generator, all-marked),
+salvage (`sim.ts:811` `salvagers()` = "every human" outside campaign), death hulks
+(`sim.ts:2624-2630` — "EVERY non-drone death, in EVERY mode"; solo campaign is the
+only exception), moving hulks + velocity-match rendezvous (`sim.ts:4911-4977`,
+mode-agnostic), cargo mass / modules / hold, teams, and a winner pipeline
+(`sim.winner` → `gameover` → `match.ts:1396-1428` → placements + rematch votes).
+🔴 **The gate is welded to the campaign.** `sim.ts:617-619` is explicit: *"Set by
+Match on a campaign sim, absent on every multiplayer sim — the presence of this
+object is the ONLY gate to any campaign behavior in here."* Crossing is
+mission-gated (`sim.ts:3305`), the verb rejects outside a mission (`sim.ts:1401`:
+"No gate out here, Captain."), geometry is non-nullably owned (`sim.ts:5243`,
+`:6691` — `this.mission!.gate`), and placement happens inside `buildCampaignSim`
+(`match.ts:490-492`) alongside ladder rows. Lifting it means giving the gate the
+same treatment `seedField`/wrecks already got (`sim.ts:794`). Honest framing: **MP
+already has the ECONOMY and lacks only the EXIT.**
+
+**12. `nearest_rumble` picks LOUDEST (audit Phase 1 item 3) — real, but principled.**
+`sim.ts:3149`: `rumbles.reduce((a, b) => (b.loud > a.loud ? b : a))`. The comment at
+`:3143-3146` pre-empts the audit: a rumble is bearing-only with NO range, so
+"nearest" is UNKNOWABLE — loudest is the only available proxy. So the behavior is
+not fixable and renaming (`loudest_rumble`) is the only remedy — but it's a
+player-facing grammar token (`translator.ts:80`), i.e. a vocabulary break. This is
+the ONLY real naming mismatch in the repo: the Hunter's loudest-pursuit is named
+`loudest` (`hunter.ts:212-226`, `:403-408`) and `set_lock_target` genuinely picks
+nearest (`sim.ts:3674`). Gabriel's call — it's cosmetic vs. a grammar break.
+
+### Also worth knowing (verified, no action)
+- The audit's physics arithmetic is CLEAN: corvette/frigate/cruiser accel
+  85/60/40 m/s² = **8.67 / 6.12 / 4.08 g** (`constants.ts:60-64`), and its
+  stopping-distance table (**66.7 / 102.0 / 151.1 km** at 3 km/s, flip 4.59 / 9.0 /
+  12.86 s) checks out against the current post-Anvil corvette turn rate of 39.2°/s.
+  Caveat it missed: those are BOOK values — `accelOf()` returns force/mass, so they
+  hold only at starting loadout with an empty hold. Every looted ship is worse.
+- Its detection formula is WRONG in a way that doesn't damage its argument: it says
+  `SENSOR_BASE_M * sig/100` globally, but `sim.ts:1030` uses the VIEWER's archetype
+  sensorBase (corvette 210 / frigate 180 / cruiser 160 km) x `sensorMult` x
+  `DEEP_ARRAY_SENSOR_MULT^arrays`. `SENSOR_BASE_M` is the frigate row + the
+  voice-ring reference (`sim.ts:1039-1042`).
+- Standing-order discoverability (§4.8) is MOSTLY FALSE — there's a how-to-play
+  section (`how-to-play.html:744-754`), a cheat-sheet row (`:906`), the
+  `standing_orders` query (`translator.ts:120`), and the panel list with wired ×
+  (`panel.js:85-105`). Real gap is small: no PRESETS, no "suggest standing orders"
+  query, and the empty state is a bare "none" (`panel.js:91-96`) — a wasted
+  teaching surface.
+- Salvage auto-install is real and stronger than the audit says (`landModule`
+  calls `fitModule` DIRECTLY — no timer, no abort check; `sim.ts:3904-3905`: "the
+  stop that landed it WAS the install"). Its FFA-snowball rebuttal: salvage already
+  cost a full stop, just not 60 s. Its recommendation (competitive modes: always
+  hold, installation obeys the workshop rule) is ~4 lines from current behavior if
+  we ever want it. See item 2 for the README line this makes false.
+
 ## 🔴 OPEN: the Hunter runs out of gas and drifts out of the shroud
 
 Found while building the 2026-07-14 lethality pass. **This is the actual

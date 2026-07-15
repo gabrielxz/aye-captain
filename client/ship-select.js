@@ -12,7 +12,7 @@ const ARCH_META = {
     design: "interceptor",
     size: 54,
     doctrine:
-      "The knife. Quickest hull, dimmest drive, the best sensors in the game, six decoys to spend. Light armor and no railgun — you can take a hit, not a beating. Pick the moment, strike, be gone.",
+      "The knife. Quickest hull, dimmest drive, the best sensors in the game, six decoys to spend. Light armor, and no railgun off the rack — you can take a hit, not a beating. Pick the moment, strike, be gone.",
   },
   frigate: {
     design: "saucer",
@@ -113,7 +113,12 @@ export function buildShipSelect(container, { archetypes, selected, onPick }) {
       card.appendChild(div);
     }
 
-    // §6.2 armament, explicitly — the railgun's ABSENCE is a headline
+    // §6.2 armament. This is the STARTING loadout, and the note says so: an
+    // archetype is a starting HULL, not a permanent class. Any hull can mount
+    // a salvaged rail — tests/loadout.test.ts pins a corvette doing exactly
+    // that ("that is a build; let it hurt"), and RAIL_SLUGS_LOOTED exists only
+    // to serve it. "NO RAILGUN" as a bare identity claim was a lie from the
+    // day the Loadout patch shipped.
     const arm = document.createElement("div");
     arm.className = "armament";
     const rail = document.createElement("div");
@@ -125,7 +130,10 @@ export function buildShipSelect(container, { archetypes, selected, onPick }) {
     }
     const rest = document.createElement("div");
     rest.textContent = `${stats.tubes}× tube · ${stats.magazine} missiles · PDC ${stats.pdcAmmoS}s · ${stats.decoys} decoys · ${stats.probes} probes`;
-    arm.append(rail, rest);
+    const note = document.createElement("div");
+    note.className = "starting";
+    note.textContent = "Starting loadout — any hull can mount what it salvages.";
+    arm.append(rail, rest, note);
     card.appendChild(arm);
 
     card.addEventListener("click", () => onPick(arch));

@@ -39,9 +39,9 @@ function buildSystemPrompt(): string {
     PERSONA,
 
     `## World constants
-- Max speed ${C.MAX_SPEED_MPS} m/s (all hulls). Baseline FRIGATE: acceleration ${C.ACCEL_FULL_THRUST_MPS2} m/s^2, turn ${C.TURN_RATE_DEG_PER_SEC} deg/s. v5 archetypes differ in numbers only — CORVETTE (fast, dim, 1 tube, no railgun), FRIGATE (baseline), CRUISER (heavy hull, 3 tubes, loud). CURRENT SHIP STATE names this hull's archetype; magazine/decoy/tube counts there are authoritative.
+- Max speed ${C.MAX_SPEED_MPS} m/s (all hulls). Baseline FRIGATE: acceleration ${C.ACCEL_FULL_THRUST_MPS2} m/s^2, turn ${C.TURN_RATE_DEG_PER_SEC} deg/s. v5 archetypes differ in numbers only — CORVETTE (fast, dim, 1 tube), FRIGATE (baseline), CRUISER (heavy hull, 3 tubes, loud). An archetype is a STARTING HULL, not a fixed class: only the frigate and cruiser ship with a railgun, but ANY hull can install a salvaged one and fire it. CURRENT SHIP STATE names this hull's archetype and lists what is actually installed, lit, and in the hold — it is authoritative over everything in this section.
 - Ships drift (Newtonian): rotating does not change velocity. Braking = flip 180 and burn. Turning is free (reaction wheels).
-- Propellant: tank ${C.PROPELLANT_MAX}, burns ${C.PROPELLANT_BURN_AT_FULL}/s at 100% thrust (linear). Regenerates ${C.PROPELLANT_REGEN_PER_S}/s ONLY inside the zone with throttle set <= ${C.REGEN_MAX_THRUST_PCT}%. At zero: no thrust output (setting remembered), ship coasts; turning and weapons still work.
+- Propellant: tank ${C.PROPELLANT_MAX}, burns ${C.PROPELLANT_BURN_AT_FULL}/s at 100% thrust (linear). Regenerates ${C.PROPELLANT_REGEN_PER_S}/s ONLY inside the zone with throttle set <= ${C.REGEN_MAX_THRUST_PCT}%. Run the tank dry and the engines AUTO-SAFE: the throttle setting drops to zero (belaying any timed burn) so harvesting starts at once, and the ship coasts; turning and weapons still work. With fuel aboard, the setting stands.
 - Detection: contact tiers. FAINT = approximate position only, no vector, cannot lock. TRACK = true position + velocity, lockable. ID = full detail. Detection range = ${C.SENSOR_BASE_M / 1000} km x (target signature / 100), line of sight permitting: a hard-burning ship shows ~${Math.round((C.SENSOR_BASE_M * (C.SIG_BASE + 100)) / 100 / 1000)} km out, a dark drifter ~${Math.round((C.SENSOR_BASE_M * C.SIG_BASE) / 100 / 1000)} km. Rocks and dust clouds block sensors, locks, and seekers. Region radius ${C.REGION_RADIUS_M / 1000} km.
 - PDCs (point defense): AUTOMATED, commanded by posture via set_pdc. While FREE they engage inbound missiles within ${C.PDC_RANGE_M / 1000} km (${Math.round(C.PDC_KILL_PROB_PER_S * 100)}%/s kill chance each) and enemy ships within ${C.PDC_SHIP_RANGE_M / 1000} km (${C.PDC_SHIP_DPS} hull/s), line of sight permitting. HOLD silences them (ammo conservation / staying dark). Ammo: ${C.PDC_AMMO_S}s of cumulative fire, NO regeneration. Firing spikes our signature. There is NO laser on this ship — it was traded for the PDC mounts; if the captain calls for the laser, say so in character and offer the PDCs.
 - Missiles: ${C.MISSILE_MAGAZINE} aboard total, ${C.TUBE_COUNT} launch tubes (auto-reload ${C.TUBE_RELOAD_S}s each from reserves). A LOCKED shot (default) requires a TRACK-or-better contact within ${C.LOCK_RANGE_M / 1000} km and ${C.LOCK_CONE_HALF_ANGLE_DEG} deg of our nose held ${C.LOCK_TIME_S}s; the bird then flies UPLINKED — intercept guidance off our track, immune to decoys while we hold the lock. Lose the lock and it goes autonomous (one-way): its own weak seeker (${C.MISSILE_SEEKER_BASE_M / 1000} km base, scales with target signature), decoy-susceptible. BLIND FIRE (guidance "bearing") needs no lock — autonomous from birth, a flushing tool. Missiles accelerate at ${C.MISSILE_ACCEL_MPS2} m/s^2 to ${C.MISSILE_MAX_SPEED_MPS} m/s with ${C.MISSILE_PROPELLANT_S}s of engine, ${C.MISSILE_DAMAGE} damage, proximity fuse ${C.MISSILE_PROX_FUSE_M} m. Firing spikes our signature hugely for ${C.SIG_SPIKE_LAUNCH_S}s — the enemy will likely see the launch flash.
@@ -74,6 +74,51 @@ For query commands, leave the acknowledgement empty — the answer is written af
 }
 
 const SYSTEM_PROMPT = buildSystemPrompt();
+
+// ~15k tokens, and 100% static: the per-utterance state summary and the
+// captain's words ride in `messages`, never in here. That makes it a textbook
+// cache prefix, and until 2026-07-15 we re-billed every token of it on every
+// utterance of every captain. Anything dynamic added to this array silently
+// un-caches the whole prompt — put it in the user message instead.
+// TTL: the 5-minute default. In-match utterances land far closer together than
+// that, so live traffic keeps the entry warm on its own; `ttl: "1h"` doubles
+// the write cost (2x vs 1.25x) and needs 3+ reads to pay for itself.
+const SYSTEM_BLOCKS: Anthropic.TextBlockParam[] = [
+  { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
+];
+
+// A cache entry is only readable once the first response starts streaming, so
+// a fresh room where eight captains all open their mouths at once would have
+// every one of them miss and pay full price — and a cold prefill of this thing
+// eats a real slice of LLM_TIMEOUT_MS. Pay the write once, at boot, off the
+// same hook as the TTS stock-line pregeneration. max_tokens 1 (not 0) is
+// deliberate: it is accepted by every API version, and one output token is
+// cheaper than finding out the hard way.
+export async function prewarmPromptCache(): Promise<void> {
+  if (!llmAvailable()) return;
+  try {
+    const resp = await getClient().messages.create(
+      {
+        model: C.LLM_MODEL,
+        max_tokens: 1,
+        system: SYSTEM_BLOCKS,
+        messages: [{ role: "user", content: "warmup" }],
+      },
+      { timeout: C.LLM_PREWARM_TIMEOUT_MS, maxRetries: 0 }
+    );
+    const u = resp.usage;
+    console.log(
+      `translator: prompt cache warm (${u.cache_creation_input_tokens ?? 0} written, ` +
+        `${u.cache_read_input_tokens ?? 0} read)`
+    );
+  } catch (err) {
+    // Never fatal: a cold cache costs money and latency, not correctness.
+    console.error(
+      "translator: prompt cache prewarm failed (harmless, first utterance pays full price):",
+      err instanceof Error ? err.message : err
+    );
+  }
+}
 
 // ---------- validation ----------
 
@@ -539,7 +584,7 @@ export async function translateUtterance(
         model: C.LLM_MODEL,
         max_tokens: C.LLM_MAX_TOKENS,
         temperature: 0,
-        system: SYSTEM_PROMPT,
+        system: SYSTEM_BLOCKS,
         messages: [
           {
             role: "user",
