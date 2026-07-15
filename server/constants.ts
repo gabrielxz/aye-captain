@@ -844,6 +844,28 @@ export const SALVAGE_STOP_SPEED_MPS = 25; // must be under this for the transfer
 export const SALVAGE_HOP_ALIGN = 0.8;
 export const SALVAGE_DOCK_RANGE_M = 2000; // come alongside — the XO won't grapple across the map
 export const SALVAGE_ITEM_S = 10; // per item; the haul is sequential, worst -> best (§4.2 — a greed curve, not a progress bar)
+// No wreck lands on anyone's doorstep: every site must clear EVERY spawn by
+// this much. It used to clear one hardcoded point — (0, -SPAWN_RING_RADIUS_M),
+// the solo campaign spawn — which in a multiplayer room protects an arbitrary
+// compass bearing that may be nobody's spawn, and nobody else.
+export const WRECK_SPAWN_CLEAR_M = 30000;
+// The wrecks worth crossing a map for. Used only to MEASURE field fairness;
+// the loot pools are the real economy (rollWreckLoot).
+export const WRECK_RICH_TYPES = ["military", "derelict"] as const;
+// Fairness by best-of-K, not by a threshold. Wreck TYPE is rolled independently
+// of position, so a military wreck can land 25 km from one spawn and 200 km
+// from another — a visible unfair race, since MP wrecks are public from t=0.
+// Measured across 40 seeds before choosing this: at 8 players the median spread
+// between the best- and worst-placed spawn was 177 km and the worst seed 286 km.
+// A threshold would have been invented, because perfect fairness is impossible
+// by geometry — eight spawns on a ring with ~2 rich wrecks can never be
+// equidistant (the floor is ~85 km). So: generate K candidate fields, keep the
+// fairest. Solo and practice have one spawn, spread is 0 on the first attempt,
+// and the loop exits immediately — those fields stay bit-identical.
+// If the remaining spread ever reads as unfair in play, the lever is wreck
+// COUNT (SALVAGE_* below), not a bigger K.
+export const WRECK_FAIRNESS_ATTEMPTS = 8;
+
 export const SALVAGE_MARKED_SITES = 2; // reliable contents. WATCHED by the Hunter (§4.3/§4.4)
 export const SALVAGE_RUMORED_SITES = 3; // might be empty, might be the run-maker; the Hunter doesn't know them; the richest sit in dust
 // A rumor RESOLVES by going and looking (playtest 2026-07-12: a dust rumor

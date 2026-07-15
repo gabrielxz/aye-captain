@@ -20,6 +20,7 @@ import "./hearing.test.js";
 import "./thermal.test.js";
 import "./rings.test.js";
 import "./loadout.test.js";
+import "./wreckfield.test.js";
 import "./ping.test.js";
 import "./overlay.test.js";
 import "./pingfx.test.js";
